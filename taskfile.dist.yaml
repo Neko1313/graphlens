@@ -2,7 +2,7 @@ version: "3"
 
 includes:
   python:
-    taskfile: packages/code-graph-python/Taskfile.yaml
+    taskfile: packages/graphlens-python/Taskfile.yaml
 
 tasks:
   install:
@@ -91,7 +91,7 @@ tasks:
       vars: [VERSION]
     cmds:
       - uv version {{.VERSION}} --frozen
-      - uv version {{.VERSION}} --package code-graph-python --frozen
+      - uv version {{.VERSION}} --package graphlens-python --frozen
       - uv lock
 
   release:changelog:
@@ -108,7 +108,7 @@ tasks:
     cmds:
       - |
         git add pyproject.toml \
-                packages/code-graph-python/pyproject.toml \
+                packages/graphlens-python/pyproject.toml \
                 uv.lock \
                 CHANGELOG.md
         git commit -m "chore(release): {{.TAG}}"
@@ -127,7 +127,7 @@ tasks:
     cmds:
       - rm -rf dist
       - uv build
-      - uv build --package code-graph-python
+      - uv build --package graphlens-python
       - uv publish
 
   release:github:

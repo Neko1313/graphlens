@@ -5,15 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from code_graph.exceptions import DuplicateNodeError
+from graphlens.exceptions import DuplicateNodeError
 
 if TYPE_CHECKING:
-    from code_graph.models.nodes import Node
-    from code_graph.models.relations import Relation
+    from graphlens.models.nodes import Node
+    from graphlens.models.relations import Relation
 
 
 @dataclass
-class CodeGraph:
+class GraphLens:
     """Accumulator for nodes and relations produced by language adapters."""
 
     nodes: dict[str, Node] = field(default_factory=dict)
@@ -30,7 +30,7 @@ class CodeGraph:
         """Append a relation to the graph."""
         self.relations.append(relation)
 
-    def merge(self, other: CodeGraph) -> None:
+    def merge(self, other: GraphLens) -> None:
         """
         Merge another graph into this one.
 

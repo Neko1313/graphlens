@@ -2,7 +2,7 @@
 
 import pytest
 
-from code_graph import DependencyFileParser, normalize_pkg_name
+from graphlens import DependencyFileParser, normalize_pkg_name
 
 
 class TestNormalizePkgName:

@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from code_graph.utils.span import Span
+from graphlens.utils.span import Span
 
 
 class TestSpan:

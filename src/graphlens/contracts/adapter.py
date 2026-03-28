@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from code_graph.models.graph import CodeGraph
+    from graphlens.models.graph import GraphLens
 
 _EXCLUDED_DIRS: frozenset[str] = frozenset(
     {
@@ -39,9 +39,9 @@ class LanguageAdapter(ABC):
     @abstractmethod
     def analyze(
         self, project_root: Path, files: list[Path] | None = None
-    ) -> CodeGraph:
+    ) -> GraphLens:
         """
-        Parse the project and return a CodeGraph with nodes and relations.
+        Parse the project and return a GraphLens with nodes and relations.
 
         If ``files`` is None, the adapter collects source files itself via
         ``collect_files()``. Pass an explicit list to override (e.g. for

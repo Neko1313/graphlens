@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from code_graph import CodeGraph, LanguageAdapter
+from graphlens import GraphLens, LanguageAdapter
 
 
 class ConcreteAdapter(LanguageAdapter):
@@ -19,8 +19,8 @@ class ConcreteAdapter(LanguageAdapter):
 
     def analyze(
         self, project_root: Path, files: list[Path] | None = None
-    ) -> CodeGraph:
-        return CodeGraph()
+    ) -> GraphLens:
+        return GraphLens()
 
     def file_extensions(self) -> set[str]:
         return self._extensions
@@ -35,8 +35,8 @@ class MinimalAdapter(LanguageAdapter):
     def can_handle(self, project_root: Path) -> bool:
         return False
 
-    def analyze(self, project_root: Path, files: list[Path] | None = None) -> CodeGraph:
-        return CodeGraph()
+    def analyze(self, project_root: Path, files: list[Path] | None = None) -> GraphLens:
+        return GraphLens()
 
 
 class TestLanguageAdapterABC:

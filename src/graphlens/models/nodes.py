@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from code_graph.utils.span import Span
+    from graphlens.utils.span import Span
 
 
 class NodeKind(enum.Enum):

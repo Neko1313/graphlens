@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
 
-from code_graph import CodeGraph, NodeKind, RelationKind
-from code_graph.utils.ids import make_node_id
 from conftest import nodes_of_kind, parse_and_visit
+from graphlens import GraphLens, NodeKind, RelationKind
+from graphlens.utils.ids import make_node_id
 
-from code_graph_python._visitor import (
+from graphlens_python._visitor import (
     ImportClassifier,
     PythonASTVisitor,
     VisitorContext,
@@ -350,10 +350,10 @@ class TestImportExtraction:
         source_bytes = source.encode()
         tree = parse_python(source_bytes)
 
-        graph = CodeGraph()
+        graph = GraphLens()
         # Pre-populate a MODULE node for mypkg
         mod_id = make_node_id("mypkg", "mypkg", NodeKind.MODULE.value)
-        from code_graph import Node as CGNode
+        from graphlens import Node as CGNode
         graph.add_node(
             CGNode(id=mod_id, kind=NodeKind.MODULE, qualified_name="mypkg", name="mypkg")
         )
@@ -586,8 +586,8 @@ class TestDecoratorName:
 
 class TestFindModuleNodeId:
     def test_exact_match(self):
-        graph = CodeGraph()
-        from code_graph import Node as CGNode
+        graph = GraphLens()
+        from graphlens import Node as CGNode
         mod_id = make_node_id("proj", "mypkg.utils", NodeKind.MODULE.value)
         graph.add_node(
             CGNode(id=mod_id, kind=NodeKind.MODULE, qualified_name="mypkg.utils", name="utils")
@@ -596,8 +596,8 @@ class TestFindModuleNodeId:
         assert result == mod_id
 
     def test_prefix_match(self):
-        graph = CodeGraph()
-        from code_graph import Node as CGNode
+        graph = GraphLens()
+        from graphlens import Node as CGNode
         mod_id = make_node_id("proj", "mypkg", NodeKind.MODULE.value)
         graph.add_node(
             CGNode(id=mod_id, kind=NodeKind.MODULE, qualified_name="mypkg", name="mypkg")
@@ -606,12 +606,12 @@ class TestFindModuleNodeId:
         assert result == mod_id
 
     def test_not_found_returns_none(self):
-        graph = CodeGraph()
+        graph = GraphLens()
         assert _find_module_node_id(graph, "nonexistent.module") is None
 
     def test_non_module_node_not_matched(self):
-        graph = CodeGraph()
-        from code_graph import Node as CGNode
+        graph = GraphLens()
+        from graphlens import Node as CGNode
         class_id = make_node_id("proj", "mypkg", NodeKind.CLASS.value)
         graph.add_node(
             CGNode(id=class_id, kind=NodeKind.CLASS, qualified_name="mypkg", name="mypkg")
@@ -622,9 +622,9 @@ class TestFindModuleNodeId:
 class TestHandleClassNoIdentifier:
     def test_class_without_identifier_skipped(self):
         """Covers _handle_class: if name_node is None: return."""
-        graph = CodeGraph()
+        graph = GraphLens()
         file_id = make_node_id("proj", "mod.py", NodeKind.FILE.value)
-        from code_graph import Node as CGNode
+        from graphlens import Node as CGNode
         graph.add_node(CGNode(id=file_id, kind=NodeKind.FILE, qualified_name="mod.py", name="mod.py"))
         ctx = VisitorContext(
             project_name="proj",
@@ -645,9 +645,9 @@ class TestHandleClassNoIdentifier:
 class TestHandleFunctionNoIdentifier:
     def test_function_without_identifier_skipped(self):
         """Covers _handle_function: if name_node is None: return."""
-        graph = CodeGraph()
+        graph = GraphLens()
         file_id = make_node_id("proj", "mod.py", NodeKind.FILE.value)
-        from code_graph import Node as CGNode
+        from graphlens import Node as CGNode
         graph.add_node(CGNode(id=file_id, kind=NodeKind.FILE, qualified_name="mod.py", name="mod.py"))
         ctx = VisitorContext(
             project_name="proj",
@@ -670,9 +670,9 @@ class TestDecoratedDefinitionEdgeCases:
         """Coverage for `if inner is None: return` branch."""
         source = b"x = 1\n"
         parse_python(source)
-        graph = CodeGraph()
+        graph = GraphLens()
         file_id = make_node_id("proj", "mod.py", NodeKind.FILE.value)
-        from code_graph import Node as CGNode
+        from graphlens import Node as CGNode
         graph.add_node(
             CGNode(id=file_id, kind=NodeKind.FILE, qualified_name="mod.py", name="mod.py")
         )

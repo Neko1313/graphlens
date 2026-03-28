@@ -1,12 +1,12 @@
-# code-graph — Architecture Guide
+# graphlens — Architecture Guide
 
 ## Project layout
 
 ```
-code-graph/                      ← uv workspace root (also the core library)
-  src/code_graph/                ← core: models, contracts, registry, exceptions, utils
+graphlens/                      ← uv workspace root (also the core library)
+  src/graphlens/                ← core: models, contracts, registry, exceptions, utils
   packages/
-    code-graph-python/           ← Python language adapter
+    graphlens-python/           ← Python language adapter
   tests/                         ← core library tests
   examples/                      ← runnable usage examples
 ```
@@ -15,8 +15,8 @@ All packages use the `src/` layout and `uv_build` as build backend.
 
 Each language adapter follows this internal layout:
 ```
-packages/code-graph-<lang>/
-  src/code_graph_<lang>/
+packages/graphlens-<lang>/
+  src/graphlens_<lang>/
     __init__.py              ← exports <Lang>Adapter
     _adapter.py              ← LanguageAdapter subclass + _analyze_root()
     _visitor.py              ← ASTVisitor + ImportClassifier
@@ -30,11 +30,11 @@ packages/code-graph-<lang>/
 ## Core principles
 
 ### 1. Adapters are pure data producers
-An adapter parses source files and returns a `CodeGraph`. It never writes to
+An adapter parses source files and returns a `GraphLens`. It never writes to
 any backend, database, or file system. The graph is the only output.
 
-### 2. code-graph core is minimal
-`core` lives at the workspace root under `src/code_graph/`. It contains only:
+### 2. graphlens core is minimal
+`core` lives at the workspace root under `src/graphlens/`. It contains only:
 models, contracts (ABCs), registry, exceptions, utils.
 No pipeline, no orchestration, no I/O. Orchestration belongs in a separate
 package or in user code.
@@ -44,14 +44,14 @@ Adapters register themselves via `importlib.metadata` entry points:
 
 ```toml
 # In the adapter's pyproject.toml
-[project.entry-points."code_graph.adapters"]
-python = "code_graph_python:PythonAdapter"
+[project.entry-points."graphlens.adapters"]
+python = "graphlens_python:PythonAdapter"
 ```
 
 Callers resolve adapters through the registry — no direct imports needed:
 
 ```python
-from code_graph import adapter_registry
+from graphlens import adapter_registry
 adapter = adapter_registry.load("python")()
 graph = adapter.analyze(project_root)
 ```
@@ -99,7 +99,7 @@ The visitor receives an `ImportClassifier` (see §9) and must set
 
 ### 6. Deterministic node IDs
 ```python
-# src/code_graph/utils/ids.py
+# src/graphlens/utils/ids.py
 def make_node_id(project_name: str, qualified_name: str, kind: str) -> str:
     key = f"{project_name}::{kind}::{qualified_name}"
     return hashlib.sha256(key.encode()).hexdigest()[:16]
@@ -114,7 +114,7 @@ projects even when language-specific marker files live in sub-directories.
 `analyze(root)` without explicit `files` must:
 1. Call `find_<lang>_roots(root)` to locate actual project sub-roots
 2. Detect project name and source roots **relative to each sub-root**
-3. Create one `PROJECT` node per sub-root in the shared `CodeGraph`
+3. Create one `PROJECT` node per sub-root in the shared `GraphLens`
 
 This ensures module qualified names and import mappings are correct when
 `root` is a monorepo containing multiple independent projects.
@@ -163,7 +163,7 @@ is never missing when the target file hasn't been processed yet.
   parsers or configurable key-paths within one parser.
 - Include dev/test groups so test imports classify as `third_party`.
 - Return `frozenset()` on any error — never raise.
-- Use `normalize_pkg_name()` from `code_graph` for consistent comparison:
+- Use `normalize_pkg_name()` from `graphlens` for consistent comparison:
   lowercase, hyphens→underscores, strip extras/version specifiers.
 
 Adapters expose `dep_parsers` as a constructor parameter so callers can inject
@@ -210,16 +210,16 @@ EXTERNAL_SYMBOL always carries `metadata["origin"]` = `"stdlib"` | `"third_party
 ## Adding a new language adapter
 
 Key checklist:
-1. `packages/code-graph-<lang>/` with `src/` layout
+1. `packages/graphlens-<lang>/` with `src/` layout
 2. `tree-sitter>=0.24` + `tree-sitter-<lang>` in dependencies
-3. Entry point `"code_graph.adapters"` → `"<lang>"`
+3. Entry point `"graphlens.adapters"` → `"<lang>"`
 4. `LanguageAdapter` subclass: `language()`, `can_handle()`, `file_extensions()`, `analyze()`
 5. `find_<lang>_roots()` for monorepo support
 6. `_deps.py`: `DependencyFileParser` implementations + `<LANG>_DEFAULT_DEP_PARSERS`
 7. `ImportClassifier` pre-pass in `_analyze_root()`, `origin` on every IMPORT node
 8. Adapter accepts `dep_parsers` constructor param for custom override
 9. Visitor: dispatch by `node.type`, three stacks, `make_node_id` for IDs
-10. Tests mirror `packages/code-graph-python/tests/` structure including `test_<lang>_deps.py`
+10. Tests mirror `packages/graphlens-python/tests/` structure including `test_<lang>_deps.py`
 
 ## Adding a dependency parser for an existing adapter
 

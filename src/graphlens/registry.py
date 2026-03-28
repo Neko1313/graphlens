@@ -5,10 +5,10 @@ from __future__ import annotations
 import importlib.metadata
 from typing import TYPE_CHECKING
 
-from code_graph.exceptions import AdapterNotFoundError
+from graphlens.exceptions import AdapterNotFoundError
 
 if TYPE_CHECKING:
-    from code_graph.contracts.adapter import LanguageAdapter
+    from graphlens.contracts.adapter import LanguageAdapter
 
 
 class AdapterRegistry:
@@ -19,16 +19,16 @@ class AdapterRegistry:
     1. In-memory registration via ``register()`` — for manual setup
        and testing.
     2. Automatic discovery via ``importlib.metadata`` entry points
-       under the ``"code_graph.adapters"`` group — for installed
+       under the ``"graphlens.adapters"`` group — for installed
        adapter packages.
 
     Adapter packages register themselves in their ``pyproject.toml``::
 
-        [project.entry-points."code_graph.adapters"]
-        python = "code_graph_python:PythonAdapter"
+        [project.entry-points."graphlens.adapters"]
+        python = "graphlens_python:PythonAdapter"
     """
 
-    ENTRY_POINT_GROUP = "code_graph.adapters"
+    ENTRY_POINT_GROUP = "graphlens.adapters"
 
     def __init__(self) -> None:
         """Initialise the registry with an empty in-memory store."""
@@ -58,7 +58,7 @@ class AdapterRegistry:
 
         msg = (
             f"No adapter found for language '{name}'. "
-            f"Install a code-graph-{name} package or register an adapter"
+            f"Install a graphlens-{name} package or register an adapter"
             " manually."
         )
         raise AdapterNotFoundError(msg)

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from helpers import StubAdapter
 
-from code_graph import AdapterNotFoundError, AdapterRegistry
+from graphlens import AdapterNotFoundError, AdapterRegistry
 
 
 def fresh_registry() -> AdapterRegistry:
@@ -144,6 +144,6 @@ class TestAvailable:
             assert reg.available() == []
 
     def test_real_python_adapter_available(self) -> None:
-        """The code-graph-python workspace package registers itself."""
+        """The graphlens-python workspace package registers itself."""
         reg = fresh_registry()
         assert "python" in reg.available()

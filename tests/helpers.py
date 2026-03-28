@@ -2,16 +2,16 @@
 
 from pathlib import Path
 
-from code_graph import (
-    CodeGraph,
+from graphlens import (
+    GraphLens,
     LanguageAdapter,
     Node,
     NodeKind,
     Relation,
     RelationKind,
 )
-from code_graph.utils.ids import make_node_id
-from code_graph.utils.span import Span
+from graphlens.utils.ids import make_node_id
+from graphlens.utils.span import Span
 
 
 def make_node(
@@ -51,5 +51,5 @@ class StubAdapter(LanguageAdapter):
     def can_handle(self, project_root: Path) -> bool:
         return False
 
-    def analyze(self, project_root: Path, files: list[Path] | None = None) -> CodeGraph:
-        return CodeGraph()
+    def analyze(self, project_root: Path, files: list[Path] | None = None) -> GraphLens:
+        return GraphLens()

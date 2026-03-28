@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from code_graph_python._module_resolver import (
+from graphlens_python._module_resolver import (
     file_to_qualified_name,
     find_source_roots,
     is_package_init,

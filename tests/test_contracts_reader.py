@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from code_graph import DiscoveredProject, ProjectReader
+from graphlens import DiscoveredProject, ProjectReader
 
 
 class ConcreteReader(ProjectReader):

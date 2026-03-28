@@ -1,5 +1,5 @@
 """
-Example: analyze a project using all available code-graph adapters.
+Example: analyze a project using all available graphlens adapters.
 
 Adapters are resolved automatically from installed entry points —
 no direct imports of language-specific packages are needed.
@@ -9,7 +9,7 @@ Usage:
     uv run python examples/analyze_python_project.py <path_to_project>
 
 Or analyze this repo itself:
-    uv run python examples/analyze_python_project.py packages/code-graph-python
+    uv run python examples/analyze_python_project.py packages/graphlens-python
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from code_graph import NodeKind, RelationKind, adapter_registry
-from code_graph.models import CodeGraph
+from graphlens import NodeKind, RelationKind, adapter_registry
+from graphlens.models import GraphLens
 
 
 def main(project_root: Path) -> None:
@@ -27,7 +27,7 @@ def main(project_root: Path) -> None:
         print("No adapters installed.")
         sys.exit(1)
 
-    graphs: list[tuple[str, CodeGraph]] = []
+    graphs: list[tuple[str, GraphLens]] = []
     for lang in available:
         adapter = adapter_registry.load(lang)()
         if adapter.can_handle(project_root):
@@ -46,7 +46,7 @@ def main(project_root: Path) -> None:
         _print_graph(graph)
 
 
-def _print_graph(graph: CodeGraph) -> None:
+def _print_graph(graph: GraphLens) -> None:
     by_kind: dict[NodeKind, int] = {}
     for node in graph.nodes.values():
         by_kind[node.kind] = by_kind.get(node.kind, 0) + 1

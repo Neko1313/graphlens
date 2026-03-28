@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from code_graph_python._deps import (
+from graphlens_python._deps import (
     PYTHON_DEFAULT_DEP_PARSERS,
     PyprojectDepsParser,
     RequirementsTxtParser,

@@ -5,30 +5,30 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from code_graph import (
-    CodeGraph,
+from graphlens import (
+    GraphLens,
     LanguageAdapter,
     Node,
     NodeKind,
     Relation,
     RelationKind,
 )
-from code_graph.utils import make_node_id
+from graphlens.utils import make_node_id
 
-from code_graph_python._deps import (
+from graphlens_python._deps import (
     PYTHON_DEFAULT_DEP_PARSERS,
     get_stdlib_names,
 )
-from code_graph_python._module_resolver import (
+from graphlens_python._module_resolver import (
     file_to_qualified_name,
     find_source_roots,
 )
-from code_graph_python._project_detector import (
+from graphlens_python._project_detector import (
     detect_project_name,
     find_python_roots,
     is_python_project,
 )
-from code_graph_python._visitor import (
+from graphlens_python._visitor import (
     ImportClassifier,
     PythonASTVisitor,
     VisitorContext,
@@ -38,9 +38,9 @@ from code_graph_python._visitor import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from code_graph.contracts import DependencyFileParser
+    from graphlens.contracts import DependencyFileParser
 
-logger = logging.getLogger("code_graph_python")
+logger = logging.getLogger("graphlens_python")
 
 _STDLIB = get_stdlib_names()
 
@@ -83,8 +83,8 @@ class PythonAdapter(LanguageAdapter):
         self,
         project_root: Path,
         files: list[Path] | None = None,
-    ) -> CodeGraph:
-        graph = CodeGraph()
+    ) -> GraphLens:
+        graph = GraphLens()
 
         if files is not None:
             _analyze_root(
@@ -109,7 +109,7 @@ class PythonAdapter(LanguageAdapter):
 
 
 def _analyze_root(
-    graph: CodeGraph,
+    graph: GraphLens,
     project_root: Path,
     py_root: Path,
     files: list[Path],
@@ -249,7 +249,7 @@ def _find_source_root_for(file: Path, source_roots: list[Path]) -> Path | None:
 
 
 def _ensure_module_chain(
-    graph: CodeGraph,
+    graph: GraphLens,
     project_name: str,
     module_qname: str,
     modules: dict[str, str],

@@ -1,16 +1,16 @@
 <div align="center">
 
-  <h1>code-graph</h1>
+  <h1>graphlens</h1>
 
   <p>Extensible polyglot code analysis framework that parses source projects, normalizes their structure into a shared graph IR, and exposes it for dependency analysis, navigation, and code intelligence tooling.</p>
 
-  [![PyPI](https://img.shields.io/pypi/v/code-graph?color=blue)](https://pypi.org/project/code-graph/)
-  [![Python](https://img.shields.io/pypi/pyversions/code-graph)](https://pypi.org/project/code-graph/)
-  [![License](https://img.shields.io/github/license/Neko1313/code-graph)](LICENSE)
-  [![CI](https://img.shields.io/github/actions/workflow/status/Neko1313/code-graph/ci.yml?label=CI)](https://github.com/Neko1313/code-graph/actions)
-  [![codecov](https://codecov.io/gh/Neko1313/code-graph/graph/badge.svg)](https://codecov.io/gh/Neko1313/code-graph)
+  [![PyPI](https://img.shields.io/pypi/v/graphlens?color=blue)](https://pypi.org/project/graphlens/)
+  [![Python](https://img.shields.io/pypi/pyversions/graphlens)](https://pypi.org/project/graphlens/)
+  [![License](https://img.shields.io/github/license/Neko1313/graphlens)](LICENSE)
+  [![CI](https://img.shields.io/github/actions/workflow/status/Neko1313/graphlens/ci.yml?label=CI)](https://github.com/Neko1313/graphlens/actions)
+  [![codecov](https://codecov.io/gh/Neko1313/graphlens/graph/badge.svg)](https://codecov.io/gh/Neko1313/graphlens)
 
-  [Repository](https://github.com/Neko1313/code-graph) · [Issues](https://github.com/Neko1313/code-graph/issues)
+  [Repository](https://github.com/Neko1313/graphlens) · [Issues](https://github.com/Neko1313/graphlens/issues)
 
 </div>
 
@@ -19,13 +19,13 @@
 ## Architecture
 
 ```
-Repository → Language Adapter → CodeGraph (IR) → Graph Backend
+Repository → Language Adapter → GraphLens (IR) → Graph Backend
 ```
 
 | Layer | Responsibility |
 |---|---|
-| **Language Adapter** | Parses source files, produces `CodeGraph` |
-| **CodeGraph** | Typed nodes + directed relations (the IR) |
+| **Language Adapter** | Parses source files, produces `GraphLens` |
+| **GraphLens** | Typed nodes + directed relations (the IR) |
 | **Graph Backend** | Persists or queries the graph (Neo4j, in-memory, …) |
 
 Adapters are **pure data producers** — they never write to any backend. The graph is the only output.
@@ -42,36 +42,36 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 
 ```bash
 # Core library only (models, contracts, registry)
-pip install code-graph
+pip install graphlens
 
 # Core + Python adapter
-pip install "code-graph[python]"
+pip install "graphlens[python]"
 ```
 
 With uv:
 
 ```bash
-uv add code-graph
-uv add "code-graph[python]"
+uv add graphlens
+uv add "graphlens[python]"
 ```
 
 ## Quick start
 
 ```python
 from pathlib import Path
-from code_graph import adapter_registry
+from graphlens import adapter_registry
 
 # Load and instantiate the Python adapter
 adapter = adapter_registry.load("python")()
 
-# Analyze a project — returns a CodeGraph
+# Analyze a project — returns a GraphLens
 graph = adapter.analyze(Path("./my-project"))
 
 print(f"Nodes:     {len(graph.nodes)}")
 print(f"Relations: {len(graph.relations)}")
 
 # Inspect nodes by kind
-from code_graph import NodeKind
+from graphlens import NodeKind
 
 modules = [n for n in graph.nodes.values() if n.kind == NodeKind.MODULE]
 classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
@@ -113,15 +113,15 @@ classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
 Language adapters register themselves via Python entry points — no changes to the core needed:
 
 ```toml
-# packages/code-graph-python/pyproject.toml
-[project.entry-points."code_graph.adapters"]
-python = "code_graph_python:PythonAdapter"
+# packages/graphlens-python/pyproject.toml
+[project.entry-points."graphlens.adapters"]
+python = "graphlens_python:PythonAdapter"
 ```
 
 The registry discovers installed adapters automatically at runtime:
 
 ```python
-from code_graph import adapter_registry
+from graphlens import adapter_registry
 
 adapter_registry.available()          # ["python", ...]
 adapter_cls = adapter_registry.load("python")
@@ -140,7 +140,7 @@ Subclass `LanguageAdapter` and implement four methods:
 
 ```python
 from pathlib import Path
-from code_graph import CodeGraph, LanguageAdapter
+from graphlens import GraphLens, LanguageAdapter
 
 class MyLangAdapter(LanguageAdapter):
     def language(self) -> str:
@@ -154,8 +154,8 @@ class MyLangAdapter(LanguageAdapter):
 
     def analyze(
         self, project_root: Path, files: list[Path] | None = None
-    ) -> CodeGraph:
-        graph = CodeGraph()
+    ) -> GraphLens:
+        graph = GraphLens()
         files = files or self.collect_files(project_root)
         # ... parse and populate graph ...
         return graph
@@ -166,10 +166,10 @@ Register in `pyproject.toml` and the core registry finds it automatically.
 ## Project structure
 
 ```
-code-graph/                      ← uv workspace root (core library)
-  src/code_graph/                ← models, contracts, registry, exceptions, utils
+graphlens/                      ← uv workspace root (core library)
+  src/graphlens/                ← models, contracts, registry, exceptions, utils
   packages/
-    code-graph-python/           ← Python adapter (tree-sitter)
+    graphlens-python/           ← Python adapter (tree-sitter)
   tests/                         ← core tests (100% coverage)
   examples/                      ← runnable usage examples
 ```

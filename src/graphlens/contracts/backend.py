@@ -6,14 +6,14 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from code_graph.models.graph import CodeGraph
+    from graphlens.models.graph import GraphLens
 
 
 class GraphBackend(ABC):
     """Contract for graph persistence backends."""
 
     @abstractmethod
-    def store(self, graph: CodeGraph) -> None:
+    def store(self, graph: GraphLens) -> None:
         """
         Persist the given graph.
 

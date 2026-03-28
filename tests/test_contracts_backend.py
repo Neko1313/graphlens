@@ -2,15 +2,15 @@
 
 import pytest
 
-from code_graph import CodeGraph, GraphBackend
+from graphlens import GraphBackend, GraphLens
 
 
 class ConcreteBackend(GraphBackend):
     def __init__(self) -> None:
-        self.stored: list[CodeGraph] = []
+        self.stored: list[GraphLens] = []
         self.cleared = False
 
-    def store(self, graph: CodeGraph) -> None:
+    def store(self, graph: GraphLens) -> None:
         self.stored.append(graph)
 
     def clear(self) -> None:
@@ -29,13 +29,13 @@ class TestGraphBackendABC:
 
     def test_store_called(self) -> None:
         backend = ConcreteBackend()
-        g = CodeGraph()
+        g = GraphLens()
         backend.store(g)
         assert g in backend.stored
 
     def test_clear_called(self) -> None:
         backend = ConcreteBackend()
-        g = CodeGraph()
+        g = GraphLens()
         backend.store(g)
         backend.clear()
         assert backend.cleared
@@ -43,8 +43,8 @@ class TestGraphBackendABC:
 
     def test_multiple_stores(self) -> None:
         backend = ConcreteBackend()
-        g1 = CodeGraph()
-        g2 = CodeGraph()
+        g1 = GraphLens()
+        g2 = GraphLens()
         backend.store(g1)
         backend.store(g2)
         assert len(backend.stored) == 2

@@ -1,19 +1,19 @@
-"""Tests for CodeGraph model."""
+"""Tests for GraphLens model."""
 
 import pytest
 from helpers import make_node, make_relation
 
-from code_graph import CodeGraph, DuplicateNodeError, NodeKind, RelationKind
+from graphlens import DuplicateNodeError, GraphLens, NodeKind, RelationKind
 
 
 def test_empty_graph() -> None:
-    g = CodeGraph()
+    g = GraphLens()
     assert g.nodes == {}
     assert g.relations == []
 
 
 def test_add_node() -> None:
-    g = CodeGraph()
+    g = GraphLens()
     n = make_node()
     g.add_node(n)
     assert n.id in g.nodes
@@ -21,7 +21,7 @@ def test_add_node() -> None:
 
 
 def test_add_node_duplicate_raises() -> None:
-    g = CodeGraph()
+    g = GraphLens()
     n = make_node()
     g.add_node(n)
     with pytest.raises(DuplicateNodeError, match=n.id):
@@ -29,7 +29,7 @@ def test_add_node_duplicate_raises() -> None:
 
 
 def test_add_relation() -> None:
-    g = CodeGraph()
+    g = GraphLens()
     a = make_node(qname="proj.a", name="a")
     b = make_node(qname="proj.b", name="b")
     g.add_node(a)
@@ -40,7 +40,7 @@ def test_add_relation() -> None:
 
 
 def test_add_multiple_relations() -> None:
-    g = CodeGraph()
+    g = GraphLens()
     a = make_node(qname="proj.a", name="a")
     b = make_node(qname="proj.b", name="b")
     c = make_node(qname="proj.c", name="c", kind=NodeKind.CLASS)
@@ -54,8 +54,8 @@ def test_add_multiple_relations() -> None:
 
 
 def test_merge_success() -> None:
-    g1 = CodeGraph()
-    g2 = CodeGraph()
+    g1 = GraphLens()
+    g2 = GraphLens()
     a = make_node(qname="proj.a", name="a")
     b = make_node(qname="proj.b", name="b")
     rel = make_relation(a.id, b.id)
@@ -72,8 +72,8 @@ def test_merge_success() -> None:
 
 
 def test_merge_duplicate_node_raises() -> None:
-    g1 = CodeGraph()
-    g2 = CodeGraph()
+    g1 = GraphLens()
+    g2 = GraphLens()
     n = make_node()
     g1.add_node(n)
     g2.add_node(n)
@@ -82,8 +82,8 @@ def test_merge_duplicate_node_raises() -> None:
 
 
 def test_merge_empty_into_non_empty() -> None:
-    g1 = CodeGraph()
-    g2 = CodeGraph()
+    g1 = GraphLens()
+    g2 = GraphLens()
     n = make_node()
     g1.add_node(n)
     g1.merge(g2)
@@ -92,8 +92,8 @@ def test_merge_empty_into_non_empty() -> None:
 
 
 def test_merge_non_empty_into_empty() -> None:
-    g1 = CodeGraph()
-    g2 = CodeGraph()
+    g1 = GraphLens()
+    g2 = GraphLens()
     n = make_node()
     g2.add_node(n)
     g1.merge(g2)

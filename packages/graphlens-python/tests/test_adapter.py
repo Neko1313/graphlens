@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from code_graph import NodeKind, RelationKind
 from conftest import nodes_of_kind
+from graphlens import NodeKind, RelationKind
 
-from code_graph_python import PythonAdapter
-from code_graph_python._deps import DependencyFileParser
+from graphlens_python import PythonAdapter
+from graphlens_python._deps import DependencyFileParser
 
 
 class TestAdapterMeta:
@@ -35,7 +35,7 @@ class TestCanHandle:
 
 
 class TestAnalyze:
-    def test_returns_code_graph(self, sample_python_project: Path):
+    def test_returns_graphlens(self, sample_python_project: Path):
         graph = PythonAdapter().analyze(sample_python_project)
         assert graph is not None
 
@@ -123,7 +123,7 @@ class TestAnalyze:
 class TestInternalHelpers:
     def test_find_source_root_for_returns_none(self):
         """_find_source_root_for returns None when no root contains the file."""
-        from code_graph_python._adapter import _find_source_root_for
+        from graphlens_python._adapter import _find_source_root_for
         file = Path("/tmp/some/file.py")
         roots = [Path("/other/path"), Path("/another/path")]
         assert _find_source_root_for(file, roots) is None
@@ -145,10 +145,10 @@ class TestInternalHelpers:
 
     def test_file_relative_to_py_root_fallback(self, tmp_path: Path):
         """When file is not relative to project_root, falls back to py_root."""
-        from code_graph import CodeGraph as CG
+        from graphlens import GraphLens as CG
 
-        from code_graph_python._adapter import _analyze_root
-        from code_graph_python._deps import PYTHON_DEFAULT_DEP_PARSERS
+        from graphlens_python._adapter import _analyze_root
+        from graphlens_python._deps import PYTHON_DEFAULT_DEP_PARSERS
 
         # py_root is a sibling of project_root (not a subdirectory)
         project_root = tmp_path / "project"

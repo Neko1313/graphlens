@@ -1,6 +1,6 @@
 [remote.github]
 owner = "Neko1313"
-repo = "code-graph"
+repo = "graphlens"
 
 [changelog]
 header = """

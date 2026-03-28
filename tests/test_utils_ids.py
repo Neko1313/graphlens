@@ -1,6 +1,6 @@
 """Tests for make_node_id utility."""
 
-from code_graph.utils.ids import make_node_id
+from graphlens.utils.ids import make_node_id
 
 
 class TestMakeNodeId:

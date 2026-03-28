@@ -1,25 +1,25 @@
 [project]
-name = "code-graph-python"
+name = "graphlens-python"
 version = "0.1.0"
-description = "Python language adapter for code-graph"
+description = "Python language adapter for graphlens"
 requires-python = ">=3.13"
-dependencies = ["code-graph", "tree-sitter>=0.24", "tree-sitter-python>=0.23"]
+dependencies = ["graphlens", "tree-sitter>=0.24", "tree-sitter-python>=0.23"]
 
 [build-system]
 requires = ["uv_build>=0.9.18,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-code-graph = { workspace = true }
+graphlens = { workspace = true }
 
-[project.entry-points."code_graph.adapters"]
-python = "code_graph_python:PythonAdapter"
+[project.entry-points."graphlens.adapters"]
+python = "graphlens_python:PythonAdapter"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.coverage.run]
-source = ["code_graph", "code_graph_python"]
+source = ["graphlens", "graphlens_python"]
 
 [tool.coverage.report]
 fail_under = 100

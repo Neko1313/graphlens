@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from code_graph_python._project_detector import (
+from graphlens_python._project_detector import (
     detect_project_name,
     find_python_roots,
     is_python_project,

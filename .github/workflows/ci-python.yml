@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: ["*"]
     paths:
-      - "packages/code-graph-python/**"
+      - "packages/graphlens-python/**"
       - "ci-python.yml"
       - "pyproject.toml"
   push:
@@ -64,7 +64,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/code-graph-python/reports/coverage.xml
+          files: packages/graphlens-python/reports/coverage.xml
           flags: python
           fail_ci_if_error: true
 
@@ -73,7 +73,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/code-graph-python/reports/junit.xml
+          files: packages/graphlens-python/reports/junit.xml
           flags: python
           report_type: test_results
           fail_ci_if_error: true
@@ -83,4 +83,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: python-test-results
-          path: packages/code-graph-python/reports/
+          path: packages/graphlens-python/reports/

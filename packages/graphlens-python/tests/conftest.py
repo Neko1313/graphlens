@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from code_graph import CodeGraph, Node, NodeKind
-from code_graph.utils.ids import make_node_id
+from graphlens import GraphLens, Node, NodeKind
+from graphlens.utils.ids import make_node_id
 
-from code_graph_python._visitor import (
+from graphlens_python._visitor import (
     ImportClassifier,
     PythonASTVisitor,
     VisitorContext,
@@ -63,12 +63,12 @@ def parse_and_visit(
     module_qname: str = "mypkg.mod",
     project_name: str = "mypkg",
     classifier: ImportClassifier | None = None,
-) -> tuple[CodeGraph, str]:
+) -> tuple[GraphLens, str]:
     """Parse Python source and run the visitor; returns (graph, file_node_id)."""
     source_bytes = source.encode("utf-8")
     tree = parse_python(source_bytes)
 
-    graph = CodeGraph()
+    graph = GraphLens()
     file_id = make_node_id(project_name, "src/mypkg/mod.py", NodeKind.FILE.value)
     file_node = Node(
         id=file_id,
@@ -91,5 +91,5 @@ def parse_and_visit(
     return graph, file_id
 
 
-def nodes_of_kind(graph: CodeGraph, kind: NodeKind) -> list[Node]:
+def nodes_of_kind(graph: GraphLens, kind: NodeKind) -> list[Node]:
     return [n for n in graph.nodes.values() if n.kind == kind]

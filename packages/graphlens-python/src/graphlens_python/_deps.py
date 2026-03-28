@@ -8,7 +8,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import tomllib
-from code_graph.contracts import DependencyFileParser, normalize_pkg_name
+from graphlens.contracts import DependencyFileParser, normalize_pkg_name
 
 if TYPE_CHECKING:
     from pathlib import Path

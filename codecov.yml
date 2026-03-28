@@ -28,5 +28,5 @@ flag_management:
         - src/
     - name: python
       paths:
-        - packages/code-graph-python/src/
+        - packages/graphlens-python/src/
 

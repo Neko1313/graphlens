@@ -4,9 +4,9 @@ import dataclasses
 
 import pytest
 
-from code_graph import Node, NodeKind
-from code_graph.utils.ids import make_node_id
-from code_graph.utils.span import Span
+from graphlens import Node, NodeKind
+from graphlens.utils.ids import make_node_id
+from graphlens.utils.span import Span
 
 
 def _node(**kwargs) -> Node:

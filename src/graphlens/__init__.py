@@ -1,6 +1,6 @@
 """Models, contracts, registry, and utilities for polyglot code analysis."""
 
-from code_graph.contracts import (
+from graphlens.contracts import (
     DependencyFileParser,
     DiscoveredProject,
     GraphBackend,
@@ -8,22 +8,22 @@ from code_graph.contracts import (
     ProjectReader,
     normalize_pkg_name,
 )
-from code_graph.exceptions import (
+from graphlens.exceptions import (
     AdapterError,
     AdapterNotFoundError,
     BackendError,
-    CodeGraphError,
     DiscoveryError,
     DuplicateNodeError,
+    GraphLensError,
 )
-from code_graph.models import (
-    CodeGraph,
+from graphlens.models import (
+    GraphLens,
     Node,
     NodeKind,
     Relation,
     RelationKind,
 )
-from code_graph.registry import AdapterRegistry, adapter_registry
+from graphlens.registry import AdapterRegistry, adapter_registry
 
 __all__ = [
     "AdapterError",
@@ -31,16 +31,16 @@ __all__ = [
     # registry
     "AdapterRegistry",
     "BackendError",
-    # models
-    "CodeGraph",
-    # exceptions
-    "CodeGraphError",
     # contracts
     "DependencyFileParser",
     "DiscoveredProject",
     "DiscoveryError",
     "DuplicateNodeError",
     "GraphBackend",
+    # models
+    "GraphLens",
+    # exceptions
+    "GraphLensError",
     "LanguageAdapter",
     "Node",
     "NodeKind",

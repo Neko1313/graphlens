@@ -1,4 +1,4 @@
-"""Python CST visitor using tree-sitter — builds code-graph nodes/relations."""
+"""Python CST visitor using tree-sitter — builds graphlens nodes/relations."""
 
 from __future__ import annotations
 
@@ -7,23 +7,23 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import tree_sitter_python as tspython
-from code_graph import (
-    CodeGraph,
+from graphlens import (
+    GraphLens,
     Node,
     NodeKind,
     Relation,
     RelationKind,
 )
-from code_graph.utils import Span, make_node_id
+from graphlens.utils import Span, make_node_id
 from tree_sitter import Language, Parser
 from tree_sitter import Node as TSNode
 
-from code_graph_python._module_resolver import resolve_relative_import
+from graphlens_python._module_resolver import resolve_relative_import
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-logger = logging.getLogger("code_graph_python")
+logger = logging.getLogger("graphlens_python")
 
 _PY_LANGUAGE = Language(tspython.language())
 _parser = Parser(_PY_LANGUAGE)
@@ -83,7 +83,7 @@ class VisitorContext:
 
 class PythonASTVisitor:
     """
-    Walks a tree-sitter Python CST and populates a CodeGraph.
+    Walks a tree-sitter Python CST and populates a GraphLens.
 
     Node types handled:
       module, decorated_definition, class_definition,
@@ -93,7 +93,7 @@ class PythonASTVisitor:
     def __init__(
         self,
         ctx: VisitorContext,
-        graph: CodeGraph,
+        graph: GraphLens,
         file_node_id: str,
         source: bytes,
         classifier: ImportClassifier | None = None,
@@ -696,7 +696,7 @@ def _decorator_name(decorator_node: TSNode) -> str:
     return ""
 
 
-def _find_module_node_id(graph: CodeGraph, qname: str) -> str | None:
+def _find_module_node_id(graph: GraphLens, qname: str) -> str | None:
     """
     Return the ID of a MODULE node matching qname or its longest prefix.
 

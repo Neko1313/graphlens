@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from code_graph import Relation, RelationKind
+from graphlens import Relation, RelationKind
 
 
 class TestRelationKind:
