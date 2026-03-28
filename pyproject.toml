@@ -51,6 +51,9 @@ members = ["packages/*"]
 python = [
     "graphlens-python"
 ]
+typescript = [
+    "graphlens-typescript"
+]
 
 [dependency-groups]
 lint = [
@@ -67,6 +70,7 @@ test = [
 
 [tool.uv.sources]
 graphlens-python = { workspace = true }
+graphlens-typescript = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages/graphlens-python/tests"]

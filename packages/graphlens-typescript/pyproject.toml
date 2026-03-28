@@ -1,0 +1,50 @@
+[project]
+name = "graphlens-typescript"
+version = "0.1.0"
+description = "TypeScript language adapter for graphlens"
+requires-python = ">=3.13"
+dependencies = [
+    "graphlens",
+    "tree-sitter>=0.24",
+    "tree-sitter-typescript>=0.23",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.18,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+graphlens = { workspace = true }
+
+[project.entry-points."graphlens.adapters"]
+typescript = "graphlens_typescript:TypescriptAdapter"
+
+[dependency-groups]
+lint = [
+    "bandit>=1.9.3",
+    "ruff>=0.15.0",
+    "ty>=0.0.15",
+]
+test = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["graphlens", "graphlens_typescript"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
