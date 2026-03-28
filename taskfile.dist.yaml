@@ -1,0 +1,142 @@
+version: "3"
+
+includes:
+  python:
+    taskfile: packages/code-graph-python/Taskfile.yaml
+
+tasks:
+  install:
+    desc: Install all workspace dependencies including sub-package groups
+    cmds:
+      - uv sync --all-packages --all-groups
+
+  # ---------------------------------------------------------------------------
+  # Core (src/ + tests/)
+  # ---------------------------------------------------------------------------
+
+  core:lint:
+    desc: Run linters for core package (use CI=true for reports)
+    cmds:
+      - |
+        if [[ "{{.CI}}" == "true" ]]; then
+          echo "Running core linters with CI reports..."
+          mkdir -p reports
+          uv run ruff check --output-format json --output-file reports/ruff.json src tests
+          uv run bandit -c pyproject.toml -r src -o reports/bandit.json --format json
+          uv run ty check --output-format github > reports/gl-code-quality-report.json
+        else
+          echo "Running core linters for development..."
+          uv run ruff check --fix src tests
+          uv run bandit -c pyproject.toml -r src
+          uv run ty check
+        fi
+
+  core:test:
+    desc: Run core tests (use CI=true for reports)
+    cmds:
+      - |
+        if [[ "{{.CI}}" == "true" ]]; then
+          echo "Running core tests with CI reports..."
+          mkdir -p reports
+          uv run pytest tests \
+            --junitxml=reports/junit.xml \
+            --cov=src \
+            --cov-branch \
+            --cov-report=xml:reports/coverage.xml \
+            --cov-report=term-missing
+        else
+          echo "Running core tests for development..."
+          uv run pytest tests --cov=src --cov-report=term-missing:skip-covered
+        fi
+
+  # ---------------------------------------------------------------------------
+  # All packages
+  # ---------------------------------------------------------------------------
+
+  lint:
+    desc: Run linters for core + all packages
+    deps:
+      - core:lint
+      - python:lint
+
+  tests:
+    desc: Run tests for core + all packages
+    deps:
+      - core:test
+      - python:test
+
+  # ---------------------------------------------------------------------------
+  # Release
+  # ---------------------------------------------------------------------------
+
+  release:version:
+    desc: Determine next version via conventional commits
+    cmds:
+      - |
+        NEXT=$(git cliff --bumped-version 2>/dev/null || echo "")
+        if [[ -z "$NEXT" ]]; then
+          echo "No previous tag found, bootstrapping with v0.1.0"
+          NEXT="v0.1.0"
+        fi
+        NEXT_CLEAN="${NEXT#v}"
+        echo "Next version: $NEXT ($NEXT_CLEAN)"
+        if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "version=$NEXT_CLEAN" >> "$GITHUB_OUTPUT"
+        fi
+
+  release:bump:
+    desc: Bump version in all packages (requires VERSION=x.y.z)
+    requires:
+      vars: [VERSION]
+    cmds:
+      - uv version {{.VERSION}} --frozen
+      - uv version {{.VERSION}} --package code-graph-python --frozen
+      - uv lock
+
+  release:changelog:
+    desc: Generate CHANGELOG.md (requires TAG=vX.Y.Z)
+    requires:
+      vars: [TAG]
+    cmds:
+      - git cliff --tag {{.TAG}} --output CHANGELOG.md
+
+  release:commit:
+    desc: Commit version bump and changelog, create annotated tag (requires TAG=vX.Y.Z)
+    requires:
+      vars: [TAG]
+    cmds:
+      - |
+        git add pyproject.toml \
+                packages/code-graph-python/pyproject.toml \
+                uv.lock \
+                CHANGELOG.md
+        git commit -m "chore(release): {{.TAG}}"
+        git tag -a "{{.TAG}}" -m "Release {{.TAG}}"
+
+  release:push:
+    desc: Push commit and tag to origin (requires TAG=vX.Y.Z)
+    requires:
+      vars: [TAG]
+    cmds:
+      - git push origin main
+      - git push origin {{.TAG}}
+
+  release:publish:
+    desc: Build and publish all packages to PyPI
+    cmds:
+      - rm -rf dist
+      - uv build
+      - uv build --package code-graph-python
+      - uv publish
+
+  release:github:
+    desc: Create GitHub Release with changelog notes (requires TAG=vX.Y.Z)
+    requires:
+      vars: [TAG]
+    cmds:
+      - |
+        git cliff --latest --strip all > /tmp/release-notes.md
+        gh release create {{.TAG}} \
+          --title {{.TAG}} \
+          --notes-file /tmp/release-notes.md

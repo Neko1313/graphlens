@@ -1,0 +1,32 @@
+codecov:
+  notify:
+    wait_for_ci: true
+  require_ci_to_pass: true
+
+comment:
+  behavior: default
+  layout: reach,diff,flags,tree
+  show_carryforward_flags: true
+
+coverage:
+  precision: 2
+  range:
+    - 60.0
+    - 80.0
+  round: down
+  status:
+    changes: false
+    patch: true
+    project: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: core
+      paths:
+        - src/
+    - name: python
+      paths:
+        - packages/code-graph-python/src/
+
