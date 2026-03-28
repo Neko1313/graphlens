@@ -124,7 +124,7 @@ wheels = [
 
 [[package]]
 name = "graphlens"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -164,7 +164,7 @@ test = [
 
 [[package]]
 name = "graphlens-python"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/graphlens-python" }
 dependencies = [
     { name = "graphlens" },

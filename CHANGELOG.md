@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-03-28
+### Bug Fixes
+
+- rename project by @Neko1313
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.1.0...v0.1.1
 ## [0.1.0] - 2026-03-28
 ### Bug Fixes
 
@@ -10,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ### New Contributors
 
+- @github-actions[bot] made their first contribution
 - @Neko1313 made their first contribution
 
 
