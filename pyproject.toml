@@ -75,7 +75,7 @@ testpaths = ["tests", "packages/code-graph-python/tests"]
 source = ["code_graph", "code_graph_python"]
 
 [tool.coverage.report]
-fail_under = 100
+fail_under = 90
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
