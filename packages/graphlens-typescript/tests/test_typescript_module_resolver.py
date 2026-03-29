@@ -95,3 +95,15 @@ class TestResolveRelativeImport:
     def test_nested_path(self):
         result = resolve_relative_import("myapp.core", "./sub/helper")
         assert result == "myapp.sub.helper"
+
+    def test_navigate_above_root_returns_top(self):
+        # Going above the root should clamp to the top-level module name
+        result = resolve_relative_import("a.b", "../../..")
+        assert result == "a"
+
+
+class TestFileToQualifiedNameEdgeCases:
+    def test_non_ts_extension_uses_stem(self, tmp_path: Path):
+        # A file with a non-TS extension falls to the else branch
+        f = tmp_path / "script.js"
+        assert file_to_qualified_name(f, tmp_path) == "script"

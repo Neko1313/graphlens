@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -81,12 +82,14 @@ class ImportClassifier:
 
 @dataclass
 class VisitorContext:
-    """Immutable context for one file's CST visit."""
+    """Context for one file's CST visit."""
 
     project_name: str
     file_path: Path
+    file_relative_path: str
     source_root: Path
     module_qualified_name: str
+    modules: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +122,7 @@ class TypescriptASTVisitor:
         self._file_node_id = file_node_id
         self._source = source
         self._classifier = classifier or ImportClassifier()
+        self._modules: dict[str, str] = ctx.modules
         # Stack of qualified name prefixes (current scope)
         self._scope_stack: list[str] = [ctx.module_qualified_name]
         # Stack of node IDs for emitting CONTAINS/DECLARES relations
@@ -169,14 +173,16 @@ class TypescriptASTVisitor:
         children = node.children
 
         # Check for re-export with source: export { X } from 'module'
+        # Note: tree-sitter-typescript exposes the string as a direct child
+        # of export_statement, not wrapped in a from_clause node.
         export_clause = next(
             (c for c in children if c.type == "export_clause"), None
         )
-        from_clause = next(
-            (c for c in children if c.type == "from_clause"), None
+        from_string = next(
+            (c for c in children if c.type == "string"), None
         )
-        if export_clause is not None and from_clause is not None:
-            module_path = _string_from_from_clause(from_clause)
+        if export_clause is not None and from_string is not None:
+            module_path = _strip_string_quotes(_node_text(from_string))
             if module_path:
                 self._emit_reexport(module_path)
             return
@@ -333,6 +339,14 @@ class TypescriptASTVisitor:
                     kind=RelationKind.INHERITS_FROM,
                 )
             )
+
+        self._push(qname, class_node.id, NodeKind.CLASS)
+        body = next(
+            (c for c in node.children if c.type == "interface_body"), None
+        )
+        if body:
+            self._visit_children(body)
+        self._pop()
 
     # -------------------------------------------------------------------------
     # Function / method
@@ -655,7 +669,12 @@ class TypescriptASTVisitor:
 
         resolve_target_id: str | None = None
         if origin == "internal":
-            resolve_target_id = _find_module_node_id(self._graph, ext_qname)
+            parts = ext_qname.split(".")
+            for length in range(len(parts), 0, -1):
+                candidate = ".".join(parts[:length])
+                if candidate in self._modules:
+                    resolve_target_id = self._modules[candidate]
+                    break
 
         if resolve_target_id is None:
             ext_sym = self._get_or_create_external_symbol(
@@ -733,6 +752,9 @@ class TypescriptASTVisitor:
                     _node_text(type_node).lstrip(":").strip()
                     if type_node else None
                 )
+                # required_parameter can have an = initializer (default value)
+                if any(c.type == "=" for c in child.children):
+                    has_default = True
 
             elif child.type == "optional_parameter":
                 id_node = next(
@@ -902,7 +924,7 @@ class TypescriptASTVisitor:
             kind=kind,
             qualified_name=qualified_name,
             name=name,
-            file_path=str(self._ctx.file_path),
+            file_path=self._ctx.file_relative_path,
             span=_make_span(ts_node) if ts_node else None,
             metadata=metadata or {},
         )
@@ -960,7 +982,6 @@ def _module_path_to_qname(
 
 def _path_to_safe_name(path: str) -> str:
     """Convert a module path to a safe Python identifier."""
-    import re  # noqa: PLC0415
     return re.sub(r"[^a-zA-Z0-9]", "_", path).strip("_")
 
 
@@ -1001,25 +1022,6 @@ def _extract_heritage_bases(heritage_node: TSNode) -> list[str]:
                 bases.append(_node_text(name_node))
     return bases
 
-
-def _find_module_node_id(graph: GraphLens, qname: str) -> str | None:
-    """
-    Return the ID of a MODULE node matching qname or its longest prefix.
-
-    Tries exact match first, then walks up the hierarchy so that
-    ``import { Foo } from './utils'`` resolves to the ``mypackage.utils``
-    MODULE even when Foo is not its own node yet.
-    """
-    parts = qname.split(".")
-    for length in range(len(parts), 0, -1):
-        candidate = ".".join(parts[:length])
-        for node in graph.nodes.values():
-            if (
-                node.kind == NodeKind.MODULE
-                and node.qualified_name == candidate
-            ):
-                return node.id
-    return None
 
 
 def _make_span(node: TSNode | None) -> Span | None:

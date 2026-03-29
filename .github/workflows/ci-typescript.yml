@@ -5,7 +5,7 @@ on:
     branches: ["*"]
     paths:
       - "packages/graphlens-typescript/**"
-      - "ci-typescript.yml"
+      - ".github/workflows/ci-typescript.yml"
       - "pyproject.toml"
   push:
     branches: [main]
@@ -20,9 +20,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
@@ -42,9 +42,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
@@ -59,7 +59,7 @@ jobs:
         run: task typescript:test CI=true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/graphlens-typescript/reports/coverage.xml
@@ -68,7 +68,7 @@ jobs:
 
       - name: Upload test analytics to Codecov
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/graphlens-typescript/reports/junit.xml
@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: typescript-test-results
           path: packages/graphlens-typescript/reports/

@@ -129,6 +129,10 @@ version = "0.1.1"
 source = { editable = "." }
 
 [package.optional-dependencies]
+all = [
+    { name = "graphlens-python" },
+    { name = "graphlens-typescript" },
+]
 python = [
     { name = "graphlens-python" },
 ]
@@ -151,10 +155,12 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "graphlens-python", marker = "extra == 'all'", editable = "packages/graphlens-python" },
     { name = "graphlens-python", marker = "extra == 'python'", editable = "packages/graphlens-python" },
+    { name = "graphlens-typescript", marker = "extra == 'all'", editable = "packages/graphlens-typescript" },
     { name = "graphlens-typescript", marker = "extra == 'typescript'", editable = "packages/graphlens-typescript" },
 ]
-provides-extras = ["python", "typescript"]
+provides-extras = ["python", "typescript", "all"]
 
 [package.metadata.requires-dev]
 lint = [

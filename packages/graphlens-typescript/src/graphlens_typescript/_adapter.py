@@ -229,8 +229,10 @@ def _analyze_root(
         ctx = VisitorContext(
             project_name=project_name,
             file_path=file,
+            file_relative_path=relative_path,
             source_root=source_root,
             module_qualified_name=module_qname,
+            modules=modules,
         )
         visitor = TypescriptASTVisitor(
             ctx, graph, file_id, source_bytes, classifier

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 from conftest import nodes_of_kind
 from graphlens import NodeKind, RelationKind
@@ -175,3 +176,31 @@ class TestAnalyze:
         graph = TypescriptAdapter().analyze(tmp_path)
         classes = nodes_of_kind(graph, NodeKind.CLASS)
         assert any(c.name == "AppComponent" for c in classes)
+
+    def test_file_outside_project_root_uses_lang_root(self, tmp_path: Path):
+        # Files passed explicitly may be outside project_root when lang_root differs
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "package.json").write_text('{"name": "mypkg"}')
+        src = sub / "index.ts"
+        src.write_text("export const x = 1;")
+        # Analyze with project_root = tmp_path but file is under sub/
+        graph = TypescriptAdapter().analyze(tmp_path, files=[src])
+        assert len(graph.nodes) > 0
+
+    def test_oserror_reading_file_is_skipped(self, tmp_path: Path):
+        (tmp_path / "package.json").write_text('{"name": "mypkg"}')
+        ts_file = tmp_path / "index.ts"
+        ts_file.write_text("export const x = 1;")
+        with patch.object(type(ts_file), "read_bytes", side_effect=OSError("no perm")):
+            graph = TypescriptAdapter().analyze(tmp_path, files=[ts_file])
+        # Should not raise — file is skipped
+        assert graph is not None
+
+    def test_file_with_parse_errors_continues(self, tmp_path: Path):
+        (tmp_path / "package.json").write_text('{"name": "mypkg"}')
+        ts_file = tmp_path / "broken.ts"
+        # Write bytes that will produce a parse error in tree-sitter
+        ts_file.write_bytes(b"const = = {")
+        graph = TypescriptAdapter().analyze(tmp_path, files=[ts_file])
+        assert graph is not None

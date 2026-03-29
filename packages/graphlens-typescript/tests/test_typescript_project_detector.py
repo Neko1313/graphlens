@@ -65,6 +65,20 @@ class TestFindTypescriptRoots:
     def test_fallback_when_no_markers(self, tmp_path: Path):
         assert find_typescript_roots(tmp_path) == [tmp_path]
 
+    def test_deduplicates_nested_markers(self, tmp_path: Path):
+        # If a sub-directory already has a root, deeper marker files
+        # inside it should be deduplicated (line 63 continue branch)
+        pkg = tmp_path / "packages" / "mypkg"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text('{"name": "mypkg"}')
+        # A nested marker inside the same package — should not add a duplicate
+        nested = pkg / "src"
+        nested.mkdir()
+        (nested / "tsconfig.json").write_text("{}")
+        roots = find_typescript_roots(tmp_path)
+        assert pkg in roots
+        assert nested not in roots
+
 
 class TestDetectProjectName:
     def test_from_package_json_name(self, tmp_path: Path):

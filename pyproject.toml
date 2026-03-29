@@ -41,7 +41,7 @@ Issues = "https://github.com/Neko1313/graphlens/issues"
 Changelog = "https://github.com/Neko1313/graphlens/blob/main/CHANGELOG.md"
 
 [build-system]
-requires = ["uv_build>=0.9.18,<0.11.0"]
+requires = ["uv_build>=0.9.18,<0.12.0"]
 build-backend = "uv_build"
 
 [tool.uv.workspace]
@@ -53,6 +53,10 @@ python = [
 ]
 typescript = [
     "graphlens-typescript"
+]
+all = [
+    "graphlens-typescript",
+    "graphlens-python"
 ]
 
 [dependency-groups]

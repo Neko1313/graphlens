@@ -5,9 +5,9 @@ from __future__ import annotations
 import configparser
 import re
 import sys
+import tomllib
 from typing import TYPE_CHECKING
 
-import tomllib
 from graphlens.contracts import DependencyFileParser, normalize_pkg_name
 
 if TYPE_CHECKING:

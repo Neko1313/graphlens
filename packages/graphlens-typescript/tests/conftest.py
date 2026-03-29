@@ -109,6 +109,7 @@ def parse_and_visit(
     ctx = VisitorContext(
         project_name=project_name,
         file_path=Path(rel_path),
+        file_relative_path=rel_path,
         source_root=Path("src"),
         module_qualified_name=module_qname,
     )

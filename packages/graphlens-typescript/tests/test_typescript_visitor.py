@@ -5,7 +5,14 @@ from __future__ import annotations
 from conftest import nodes_of_kind, parse_and_visit
 from graphlens import NodeKind, RelationKind
 
-from graphlens_typescript._visitor import ImportClassifier
+from graphlens_typescript._visitor import (
+    ImportClassifier,
+    _extract_heritage_bases,
+    _make_span,
+    _name_from_node,
+    _strip_string_quotes,
+    parse_typescript,
+)
 
 
 class TestVisitorDispatch:
@@ -121,37 +128,6 @@ class TestMethodDefinition:
         graph, _ = parse_and_visit(src)
         methods = nodes_of_kind(graph, NodeKind.METHOD)
         assert any(m.name == "constructor" for m in methods)
-
-
-class TestParameters:
-    def test_required_parameter(self):
-        graph, _ = parse_and_visit("function f(x: number) {}")
-        params = nodes_of_kind(graph, NodeKind.PARAMETER)
-        assert any(p.name == "x" for p in params)
-
-    def test_optional_parameter(self):
-        graph, _ = parse_and_visit("function f(x?: string) {}")
-        params = nodes_of_kind(graph, NodeKind.PARAMETER)
-        assert any(p.name == "x" for p in params)
-        param = next(p for p in params if p.name == "x")
-        assert param.metadata.get("has_default") is True
-
-    def test_rest_parameter(self):
-        graph, _ = parse_and_visit("function f(...args: string[]) {}")
-        params = nodes_of_kind(graph, NodeKind.PARAMETER)
-        assert any(p.name == "args" for p in params)
-        param = next(p for p in params if p.name == "args")
-        assert param.metadata.get("is_variadic") is True
-
-    def test_declares_relation_for_params(self):
-        graph, _ = parse_and_visit("function f(x: number, y: string) {}")
-        funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
-        func = next(f for f in funcs if f.name == "f")
-        declares = [
-            r for r in graph.relations
-            if r.kind == RelationKind.DECLARES and r.source_id == func.id
-        ]
-        assert len(declares) == 2
 
 
 class TestImportStatement:
@@ -275,3 +251,212 @@ class TestArrowFunction:
         )
         funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
         assert any(f.name == "process" for f in funcs)
+
+    def test_arrow_with_return_type_annotation(self):
+        graph, _ = parse_and_visit("const fn: () => string = () => 'hello';")
+        funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
+        assert any(f.name == "fn" for f in funcs)
+
+    def test_const_non_function_not_registered(self):
+        graph, _ = parse_and_visit("const x = 42;")
+        funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
+        assert not any(f.name == "x" for f in funcs)
+
+
+class TestNestedDefinitions:
+    def test_nested_function_in_function_body(self):
+        src = "function outer() { function inner() { return 1; } }"
+        graph, _ = parse_and_visit(src)
+        funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
+        assert any(f.name == "outer" for f in funcs)
+        assert any(f.name == "inner" for f in funcs)
+
+    def test_nested_class_in_function_body(self):
+        src = "function factory() { class LocalClass {} }"
+        graph, _ = parse_and_visit(src)
+        classes = nodes_of_kind(graph, NodeKind.CLASS)
+        assert any(c.name == "LocalClass" for c in classes)
+
+
+class TestExportStatement:
+    def test_reexport_from_external(self):
+        graph, _ = parse_and_visit(
+            "export { foo } from 'somemod';",
+            classifier=ImportClassifier(third_party=frozenset({"somemod"})),
+        )
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        assert any("__reexport" in i.name for i in imports)
+
+    def test_reexport_from_relative(self):
+        graph, _ = parse_and_visit("export { foo } from './utils';")
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        assert any("__reexport" in i.name for i in imports)
+
+    def test_reexport_is_star(self):
+        graph, _ = parse_and_visit("export { bar } from './helpers';")
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        reexport = next(i for i in imports if "__reexport" in i.name)
+        assert reexport.metadata.get("is_star") is True
+
+    def test_anonymous_default_class_skipped(self):
+        # export default class {} — no name_node → graceful skip
+        graph, _ = parse_and_visit("export default class {}")
+        assert graph is not None
+
+
+class TestSideEffectImport:
+    def test_side_effect_import(self):
+        graph, _ = parse_and_visit("import 'reflect-metadata';")
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        assert any("sideeffect" in i.name for i in imports)
+
+    def test_side_effect_import_is_star(self):
+        graph, _ = parse_and_visit("import 'polyfill';")
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        sideeffect = next(i for i in imports if "sideeffect" in i.name)
+        assert sideeffect.metadata.get("is_star") is True
+
+    def test_side_effect_import_origin_unknown(self):
+        graph, _ = parse_and_visit("import 'unknown-polyfill';")
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        sideeffect = next(i for i in imports if "sideeffect" in i.name)
+        assert sideeffect.metadata.get("origin") == "unknown"
+
+
+class TestInheritanceEdgeCases:
+    def test_class_extends_generic_base(self):
+        graph, _ = parse_and_visit("class Foo extends Bar<T> {}")
+        classes = nodes_of_kind(graph, NodeKind.CLASS)
+        foo = next(c for c in classes if c.name == "Foo")
+        assert "Bar" in foo.metadata.get("bases", [])
+
+    def test_class_extends_namespaced_base(self):
+        graph, _ = parse_and_visit("class Foo extends NS.Base {}")
+        classes = nodes_of_kind(graph, NodeKind.CLASS)
+        foo = next(c for c in classes if c.name == "Foo")
+        assert "NS.Base" in foo.metadata.get("bases", [])
+
+    def test_interface_extends_generic(self):
+        graph, _ = parse_and_visit("interface IFoo extends IBase<T> {}")
+        classes = nodes_of_kind(graph, NodeKind.CLASS)
+        ifoo = next(c for c in classes if c.name == "IFoo")
+        assert "IBase" in ifoo.metadata.get("bases", [])
+
+
+class TestImportClassifier:
+    def test_classify_stdlib(self):
+        c = ImportClassifier(stdlib=frozenset({"fs"}))
+        assert c.classify("fs") == "stdlib"
+
+    def test_classify_internal(self):
+        c = ImportClassifier(internal=frozenset({"mymod"}))
+        assert c.classify("mymod") == "internal"
+
+    def test_classify_third_party(self):
+        c = ImportClassifier(third_party=frozenset({"lodash"}))
+        assert c.classify("lodash") == "third_party"
+
+    def test_classify_unknown(self):
+        c = ImportClassifier()
+        assert c.classify("somemod") == "unknown"
+
+    def test_stdlib_takes_priority_over_internal(self):
+        c = ImportClassifier(stdlib=frozenset({"mod"}), internal=frozenset({"mod"}))
+        assert c.classify("mod") == "stdlib"
+
+
+class TestParameters:
+    def test_required_parameter(self):
+        graph, _ = parse_and_visit("function f(x: number) {}")
+        params = nodes_of_kind(graph, NodeKind.PARAMETER)
+        assert any(p.name == "x" for p in params)
+
+    def test_optional_parameter(self):
+        graph, _ = parse_and_visit("function f(x?: string) {}")
+        params = nodes_of_kind(graph, NodeKind.PARAMETER)
+        assert any(p.name == "x" for p in params)
+        param = next(p for p in params if p.name == "x")
+        assert param.metadata.get("has_default") is True
+
+    def test_rest_parameter(self):
+        graph, _ = parse_and_visit("function f(...args: string[]) {}")
+        params = nodes_of_kind(graph, NodeKind.PARAMETER)
+        assert any(p.name == "args" for p in params)
+        param = next(p for p in params if p.name == "args")
+        assert param.metadata.get("is_variadic") is True
+
+    def test_default_value_parameter(self):
+        graph, _ = parse_and_visit("function f(x = 5) {}")
+        params = nodes_of_kind(graph, NodeKind.PARAMETER)
+        assert any(p.name == "x" for p in params)
+        param = next(p for p in params if p.name == "x")
+        assert param.metadata.get("has_default") is True
+
+    def test_rest_parameter_no_annotation(self):
+        graph, _ = parse_and_visit("function f(...items) {}")
+        params = nodes_of_kind(graph, NodeKind.PARAMETER)
+        assert any(p.name == "items" for p in params)
+        param = next(p for p in params if p.name == "items")
+        assert param.metadata.get("is_variadic") is True
+
+    def test_declares_relation_for_params(self):
+        graph, _ = parse_and_visit("function f(x: number, y: string) {}")
+        funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
+        func = next(f for f in funcs if f.name == "f")
+        declares = [
+            r for r in graph.relations
+            if r.kind == RelationKind.DECLARES and r.source_id == func.id
+        ]
+        assert len(declares) == 2
+
+
+class TestHelperFunctions:
+    def test_strip_string_quotes_double(self):
+        assert _strip_string_quotes('"hello"') == "hello"
+
+    def test_strip_string_quotes_single(self):
+        assert _strip_string_quotes("'hello'") == "hello"
+
+    def test_strip_string_quotes_backtick(self):
+        assert _strip_string_quotes("`hello`") == "hello"
+
+    def test_strip_string_quotes_unquoted(self):
+        assert _strip_string_quotes("hello") == "hello"
+
+    def test_strip_string_quotes_empty(self):
+        assert _strip_string_quotes("") == ""
+
+    def test_make_span_none(self):
+        assert _make_span(None) is None
+
+    def test_extract_heritage_bases_member_expression(self):
+        src = b"class Foo extends NS.Base {}"
+        tree = parse_typescript(src)
+        program = tree.root_node
+        class_decl = next(c for c in program.children if c.type == "class_declaration")
+        heritage = next(c for c in class_decl.children if c.type == "class_heritage")
+        extends = next(c for c in heritage.children if c.type == "extends_clause")
+        bases = _extract_heritage_bases(extends)
+        assert "NS.Base" in bases
+
+    def test_extract_heritage_bases_generic_type(self):
+        src = b"class Foo extends Base<string> {}"
+        tree = parse_typescript(src)
+        program = tree.root_node
+        class_decl = next(c for c in program.children if c.type == "class_declaration")
+        heritage = next(c for c in class_decl.children if c.type == "class_heritage")
+        extends = next(c for c in heritage.children if c.type == "extends_clause")
+        bases = _extract_heritage_bases(extends)
+        assert "Base" in bases
+
+    def test_name_from_node_unexpected_type(self):
+        src = b"const x = 1 + 2;"
+        tree = parse_typescript(src)
+        program = tree.root_node
+        lexical = next(c for c in program.children if c.type == "lexical_declaration")
+        declarator = next(
+            c for c in lexical.children if c.type == "variable_declarator"
+        )
+        binary = next(c for c in declarator.children if c.type == "binary_expression")
+        number_node = binary.children[0]
+        assert _name_from_node(number_node) == ""
