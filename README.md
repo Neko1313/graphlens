@@ -8,7 +8,7 @@
   [![Python](https://img.shields.io/pypi/pyversions/graphlens)](https://pypi.org/project/graphlens/)
   [![License](https://img.shields.io/github/license/Neko1313/graphlens)](LICENSE)
   [![CI](https://img.shields.io/github/actions/workflow/status/Neko1313/graphlens/ci.yml?label=CI)](https://github.com/Neko1313/graphlens/actions)
-  [![codecov](https://codecov.io/gh/Neko1313/graphlens/graph/badge.svg)](https://codecov.io/gh/Neko1313/graphlens)
+  [![codecov](https://codecov.io/gh/Neko1313/graphlens/graph/badge.svg?token=n3oRe180jg)](https://codecov.io/gh/Neko1313/graphlens)
 
   [Repository](https://github.com/Neko1313/graphlens) · [Issues](https://github.com/Neko1313/graphlens/issues)
 
