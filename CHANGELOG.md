@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-03-29
+### Features
+
+- feat: add typescript adapter by @Neko1313 in [#6](https://github.com/Neko1313/graphlens/pull/6)
+
+### Miscellaneous
+
+- chore: add skill by @Neko1313 in [#5](https://github.com/Neko1313/graphlens/pull/5)
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.1.1...v0.2.0
 ## [0.1.1] - 2026-03-28
 ### Bug Fixes
 
