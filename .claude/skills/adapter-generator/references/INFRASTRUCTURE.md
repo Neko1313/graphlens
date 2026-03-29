@@ -202,7 +202,7 @@ on:
     branches: ["*"]
     paths:
       - "packages/graphlens-{lang}/**"
-      - "ci-{lang}.yml"
+      - ".github/workflows/ci-{lang}.yml"
       - "pyproject.toml"
   push:
     branches: [main]
@@ -256,7 +256,7 @@ jobs:
         run: task {lang}:test CI=true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/graphlens-{lang}/reports/coverage.xml
@@ -265,7 +265,7 @@ jobs:
 
       - name: Upload test analytics to Codecov
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/graphlens-{lang}/reports/junit.xml

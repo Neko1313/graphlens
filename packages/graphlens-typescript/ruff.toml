@@ -14,6 +14,7 @@ ignore = [
     "RUF003",
     "S603",
     "RUF012",
+    "S107",
 ]
 select = [
     "A",
@@ -45,26 +46,10 @@ select = [
 
 [lint.per-file-ignores]
 "tests/**" = [
-    "ANN",
-    "D",
-    "PLR",
-    "ARG",
-    "E501",
-    "S",
-    "N",
-    "PLC",
-    "PT",
-    "SIM",
+    "ANN", "D", "PLR2004", "ARG", "E501",
+    "S", "N", "PLC", "PT011", "B008",
 ]
-"tests/helpers.py" = [
-    "ANN",
-    "D",
-    "PLR",
-    "ARG",
-    "E501",
-    "S",
-    "N",
-    "PLC",
-    "PT",
-    "SIM",
+"**/tests/**" = [
+    "ANN", "D", "PLR2004", "ARG", "E501",
+    "S", "N", "PLC", "PT011", "B008",
 ]

@@ -29,4 +29,7 @@ flag_management:
     - name: python
       paths:
         - packages/graphlens-python/src/
+    - name: typescript
+      paths:
+        - packages/graphlens-typescript/src/
 

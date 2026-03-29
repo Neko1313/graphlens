@@ -3,6 +3,8 @@ version: "3"
 includes:
   python:
     taskfile: packages/graphlens-python/Taskfile.yaml
+  typescript:
+    taskfile: packages/graphlens-typescript/Taskfile.yaml
 
 tasks:
   install:
@@ -58,12 +60,14 @@ tasks:
     deps:
       - core:lint
       - python:lint
+      - typescript:lint
 
   tests:
     desc: Run tests for core + all packages
     deps:
       - core:test
       - python:test
+      - typescript:test
 
   # ---------------------------------------------------------------------------
   # Release
@@ -92,6 +96,7 @@ tasks:
     cmds:
       - uv version {{.VERSION}} --frozen
       - uv version {{.VERSION}} --package graphlens-python --frozen
+      - uv version {{.VERSION}} --package graphlens-typescript --frozen
       - uv lock
 
   release:changelog:
@@ -109,6 +114,7 @@ tasks:
       - |
         git add pyproject.toml \
                 packages/graphlens-python/pyproject.toml \
+                packages/graphlens-typescript/pyproject.toml \
                 uv.lock \
                 CHANGELOG.md
         git commit -m "chore(release): {{.TAG}}"
