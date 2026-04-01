@@ -134,6 +134,7 @@ tasks:
       - rm -rf dist
       - uv build
       - uv build --package graphlens-python
+      - uv build --package graphlens-typescript
       - uv publish
 
   release:github:
