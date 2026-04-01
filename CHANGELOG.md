@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-04-01
+### Miscellaneous
+
+- update examples
+
+
+### New Contributors
+
+- @ made their first contribution
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.2.0...v0.2.1
 ## [0.2.0] - 2026-03-29
 ### Features
 

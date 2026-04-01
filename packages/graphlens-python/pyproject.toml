@@ -1,6 +1,6 @@
 [project]
 name = "graphlens-python"
-version = "0.2.0"
+version = "0.2.1"
 description = "Python language adapter for graphlens"
 requires-python = ">=3.13"
 dependencies = ["graphlens", "tree-sitter>=0.24", "tree-sitter-python>=0.23"]
