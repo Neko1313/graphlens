@@ -14,6 +14,7 @@ from graphlens import (
     RelationKind,
 )
 from graphlens.utils import make_node_id
+from graphlens.utils.roots import filter_nested_root_files
 
 from graphlens_python._deps import (
     PYTHON_DEFAULT_DEP_PARSERS,
@@ -95,8 +96,14 @@ class PythonAdapter(LanguageAdapter):
                 self._dep_parsers,
             )
         else:
-            for py_root in find_python_roots(project_root):
+            py_roots = find_python_roots(project_root)
+            for py_root in py_roots:
                 root_files = self.collect_files(py_root)
+                root_files = filter_nested_root_files(
+                    root_files,
+                    py_root,
+                    py_roots,
+                )
                 _analyze_root(
                     graph,
                     project_root,

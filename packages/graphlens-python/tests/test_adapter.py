@@ -11,6 +11,21 @@ from graphlens_python import PythonAdapter
 from graphlens_python._deps import DependencyFileParser
 
 
+def project_top_level_module_names(graph, project_name: str) -> set[str]:
+    project = next(
+        n
+        for n in nodes_of_kind(graph, NodeKind.PROJECT)
+        if n.name == project_name
+    )
+    return {
+        graph.nodes[relation.target_id].name
+        for relation in graph.relations
+        if relation.kind == RelationKind.CONTAINS
+        and relation.source_id == project.id
+        and graph.nodes[relation.target_id].kind == NodeKind.MODULE
+    }
+
+
 class TestAdapterMeta:
     def test_language_returns_python(self):
         assert PythonAdapter().language() == "python"
@@ -183,6 +198,27 @@ class TestMonorepo:
         project_names = {p.name for p in projects}
         assert "backend" in project_names
         assert "worker" in project_names
+
+    def test_root_project_and_nested_projects_are_separate(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "monorepo"\n')
+        (tmp_path / "core.py").write_text("def root_func(): pass\n")
+
+        for name in ("core", "worker"):
+            sub = tmp_path / "packages" / name
+            sub.mkdir(parents=True)
+            (sub / "pyproject.toml").write_text(
+                f'[project]\nname = "{name}"\n'
+            )
+            pkg = sub / "src" / name
+            pkg.mkdir(parents=True)
+            (pkg / "__init__.py").write_text("")
+            (pkg / "main.py").write_text("def run(): pass\n")
+
+        graph = PythonAdapter().analyze(tmp_path)
+        project_names = {p.name for p in nodes_of_kind(graph, NodeKind.PROJECT)}
+
+        assert project_names == {"monorepo", "core", "worker"}
+        assert project_top_level_module_names(graph, "monorepo") == {"core"}
 
     def test_file_qualified_name_value_error_skipped(self, tmp_path: Path):
         """Files whose qualified name cannot be computed are skipped gracefully."""

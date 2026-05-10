@@ -14,6 +14,7 @@ from graphlens import (
     RelationKind,
 )
 from graphlens.utils import make_node_id
+from graphlens.utils.roots import filter_nested_root_files
 
 from graphlens_typescript._deps import (
     TYPESCRIPT_DEFAULT_DEP_PARSERS,
@@ -109,8 +110,14 @@ class TypescriptAdapter(LanguageAdapter):
                 self._dep_parsers,
             )
         else:
-            for lang_root in find_typescript_roots(project_root):
+            lang_roots = find_typescript_roots(project_root)
+            for lang_root in lang_roots:
                 root_files = self.collect_files(lang_root)
+                root_files = filter_nested_root_files(
+                    root_files,
+                    lang_root,
+                    lang_roots,
+                )
                 _analyze_root(
                     graph,
                     project_root,

@@ -64,6 +64,16 @@ class TestFindPythonRoots:
         roots = find_python_roots(tmp_path)
         assert roots == [tmp_path]
 
+    def test_root_marker_does_not_hide_nested_roots(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "root"\n')
+        pkg = tmp_path / "packages" / "core"
+        pkg.mkdir(parents=True)
+        (pkg / "pyproject.toml").write_text('[project]\nname = "core"\n')
+
+        roots = find_python_roots(tmp_path)
+        assert tmp_path in roots
+        assert pkg in roots
+
     def test_monorepo_multiple_roots(self, tmp_path: Path):
         for sub in ("backend", "worker"):
             d = tmp_path / sub
@@ -107,35 +117,29 @@ class TestFindPythonRoots:
         assert len(roots) == 1
         assert roots[0] == real
 
-    def test_nested_root_not_duplicated(self, tmp_path: Path):
-        # If both parent and child have markers, child is skipped (already covered by parent).
+    def test_nested_root_is_independent_project(self, tmp_path: Path):
+        # If both parent and child have markers, both are independent roots.
         (tmp_path / "setup.py").write_text("pass")
         sub = tmp_path / "subpkg"
         sub.mkdir()
         (sub / "setup.py").write_text("pass")
 
         roots = find_python_roots(tmp_path)
-        # search_root itself has markers → returns [search_root]
-        assert roots == [tmp_path]
+        assert tmp_path in roots
+        assert sub in roots
 
-    def test_nested_candidate_skipped_when_ancestor_already_found(self, tmp_path: Path):
-        """Covers line 72: skip candidate already covered by an ancestor root.
-
-        Use 'abc' as parent dir and 'xyz' as child dir — 'abc/pyproject.toml'
-        sorts before 'abc/xyz/pyproject.toml' so parent is found first.
-        """
+    def test_nested_candidate_kept_when_ancestor_already_found(self, tmp_path: Path):
         parent = tmp_path / "abc"
         parent.mkdir()
         (parent / "pyproject.toml").write_text('[project]\nname = "parent"\n')
 
-        child = parent / "xyz"  # 'xyz' sorts after 'pyproject.toml'
+        child = parent / "xyz"
         child.mkdir()
         (child / "pyproject.toml").write_text('[project]\nname = "child"\n')
 
         roots = find_python_roots(tmp_path)
-        # child is inside parent (already in roots) → should be skipped
-        assert any(r == parent for r in roots)
-        assert not any(r == child for r in roots)
+        assert parent in roots
+        assert child in roots
 
 
 class TestDetectProjectName:

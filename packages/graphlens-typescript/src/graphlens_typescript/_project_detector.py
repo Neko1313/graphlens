@@ -6,6 +6,8 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from graphlens.utils import collect_marker_roots
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -42,26 +44,30 @@ def find_typescript_roots(search_root: Path) -> list[Path]:
     """
     Find TypeScript project roots within search_root (monorepo support).
 
-    Returns [search_root] if search_root itself has markers.
-    Otherwise walks subdirectories for marker files and returns distinct roots.
-    Falls back to [search_root] if nothing found.
+    A marker at ``search_root`` does not hide nested package roots.
+    ``tsconfig`` files inside an existing ``package.json`` root are treated as
+    that package's config rather than as independent roots.
     """
-    if _has_typescript_markers(search_root):
-        return [search_root]
+    package_roots = collect_marker_roots(
+        search_root,
+        ("package.json",),
+        excluded_dirs=_EXCLUDED_DIRS,
+        fallback_to_search_root=False,
+    )
+    tsconfig_roots = collect_marker_roots(
+        search_root,
+        ("tsconfig.json",),
+        excluded_dirs=_EXCLUDED_DIRS,
+        fallback_to_search_root=False,
+    )
 
-    roots: list[Path] = []
-    for marker in TYPESCRIPT_MARKERS:
-        for marker_file in sorted(search_root.rglob(marker)):
-            rel_parts = marker_file.relative_to(search_root).parts
-            if _EXCLUDED_DIRS & set(rel_parts):
-                continue
-            candidate = marker_file.parent
-            if any(
-                candidate == r or candidate.is_relative_to(r)
-                for r in roots
-            ):
-                continue
-            roots.append(candidate)
+    roots = list(package_roots)
+    for tsconfig_root in tsconfig_roots:
+        if tsconfig_root in roots:
+            continue
+        if any(tsconfig_root.is_relative_to(root) for root in package_roots):
+            continue
+        roots.append(tsconfig_root)
 
     return sorted(roots) if roots else [search_root]
 

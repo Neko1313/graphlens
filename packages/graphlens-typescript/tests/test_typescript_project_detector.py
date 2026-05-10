@@ -44,6 +44,23 @@ class TestFindTypescriptRoots:
         (tmp_path / "package.json").write_text("{}")
         assert find_typescript_roots(tmp_path) == [tmp_path]
 
+    def test_package_json_and_tsconfig_same_root_are_deduplicated(
+        self, tmp_path: Path
+    ):
+        (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "tsconfig.json").write_text("{}")
+        assert find_typescript_roots(tmp_path) == [tmp_path]
+
+    def test_root_marker_does_not_hide_nested_roots(self, tmp_path: Path):
+        (tmp_path / "package.json").write_text('{"name": "root"}')
+        pkg = tmp_path / "packages" / "core"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text('{"name": "core"}')
+
+        roots = find_typescript_roots(tmp_path)
+        assert tmp_path in roots
+        assert pkg in roots
+
     def test_monorepo_with_packages(self, tmp_path: Path):
         pkg_a = tmp_path / "packages" / "pkg-a"
         pkg_b = tmp_path / "packages" / "pkg-b"
@@ -54,6 +71,19 @@ class TestFindTypescriptRoots:
         roots = find_typescript_roots(tmp_path)
         assert pkg_a in roots
         assert pkg_b in roots
+
+    def test_tsconfig_root_outside_package_root_is_kept(self, tmp_path: Path):
+        pkg = tmp_path / "packages" / "pkg"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text('{"name": "pkg"}')
+
+        tool = tmp_path / "tools" / "script"
+        tool.mkdir(parents=True)
+        (tool / "tsconfig.json").write_text("{}")
+
+        roots = find_typescript_roots(tmp_path)
+        assert pkg in roots
+        assert tool in roots
 
     def test_excludes_node_modules(self, tmp_path: Path):
         node_mod = tmp_path / "node_modules" / "some-lib"

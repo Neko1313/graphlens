@@ -6,6 +6,8 @@ import configparser
 import tomllib
 from typing import TYPE_CHECKING
 
+from graphlens.utils import collect_marker_roots
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -47,38 +49,21 @@ def find_python_roots(search_root: Path) -> list[Path]:
     """
     Find the actual Python project roots within search_root.
 
-    If search_root itself has Python markers, returns ``[search_root]``.
-    Otherwise walks subdirectories for marker files and returns their parent
-    directories — one per distinct Python sub-project.  This ensures that
-    ``detect_project_name`` and source-root resolution use the *correct* root
-    rather than the monorepo root, giving accurate import mappings.
+    Walks for marker files and returns their parent directories — one per
+    distinct Python sub-project. A marker at ``search_root`` does not hide
+    nested marker roots. This ensures that ``detect_project_name`` and
+    source-root resolution use the *correct* root rather than treating the
+    whole monorepo as one project.
 
     Falls back to ``[search_root]`` when no markers are found anywhere (the
     directory contains only bare .py scripts with no packaging metadata).
     """
-    if _has_python_markers(search_root):
-        return [search_root]
-
-    roots: list[Path] = []
-    for marker in PYTHON_MARKERS:
-        for marker_file in sorted(search_root.rglob(marker)):
-            rel_parts = marker_file.relative_to(search_root).parts
-            if _EXCLUDED_DIRS & set(rel_parts):
-                continue
-            if marker == "pyproject.toml" and not (
-                _pyproject_has_project_section(marker_file)
-            ):
-                continue
-            candidate = marker_file.parent
-            # Skip if already covered by a previously found (ancestor) root
-            if any(
-                candidate == r or candidate.is_relative_to(r)
-                for r in roots
-            ):
-                continue
-            roots.append(candidate)
-
-    return sorted(roots) if roots else [search_root]
+    return collect_marker_roots(
+        search_root,
+        PYTHON_MARKERS,
+        excluded_dirs=_EXCLUDED_DIRS,
+        marker_filter=_is_valid_python_marker,
+    )
 
 
 def detect_project_name(project_root: Path) -> str:
@@ -121,12 +106,15 @@ def _has_python_markers(directory: Path) -> bool:
         path = directory / marker
         if not path.exists():
             continue
-        if marker == "pyproject.toml":
-            if _pyproject_has_project_section(path):
-                return True
-        else:
+        if _is_valid_python_marker(path):
             return True
     return False
+
+
+def _is_valid_python_marker(path: Path) -> bool:
+    if path.name == "pyproject.toml":
+        return _pyproject_has_project_section(path)
+    return True
 
 
 def _pyproject_has_project_section(path: Path) -> bool:

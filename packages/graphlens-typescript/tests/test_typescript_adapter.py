@@ -15,6 +15,21 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def project_top_level_module_names(graph, project_name: str) -> set[str]:
+    project = next(
+        n
+        for n in nodes_of_kind(graph, NodeKind.PROJECT)
+        if n.name == project_name
+    )
+    return {
+        graph.nodes[relation.target_id].name
+        for relation in graph.relations
+        if relation.kind == RelationKind.CONTAINS
+        and relation.source_id == project.id
+        and graph.nodes[relation.target_id].kind == NodeKind.MODULE
+    }
+
+
 class TestAdapterMeta:
     def test_language_returns_typescript(self):
         assert TypescriptAdapter().language() == "typescript"
@@ -204,3 +219,23 @@ class TestAnalyze:
         ts_file.write_bytes(b"const = = {")
         graph = TypescriptAdapter().analyze(tmp_path, files=[ts_file])
         assert graph is not None
+
+    def test_root_project_and_nested_projects_are_separate(
+        self, tmp_path: Path
+    ):
+        (tmp_path / "package.json").write_text('{"name": "monorepo"}')
+        (tmp_path / "app.ts").write_text("export const app = 1;\n")
+
+        for name in ("core", "worker"):
+            sub = tmp_path / "packages" / name
+            sub.mkdir(parents=True)
+            (sub / "package.json").write_text(f'{{"name": "{name}"}}')
+            src = sub / "src"
+            src.mkdir()
+            (src / "index.ts").write_text("export const value = 1;\n")
+
+        graph = TypescriptAdapter().analyze(tmp_path)
+        project_names = {p.name for p in nodes_of_kind(graph, NodeKind.PROJECT)}
+
+        assert project_names == {"monorepo", "core", "worker"}
+        assert project_top_level_module_names(graph, "monorepo") == {"app"}

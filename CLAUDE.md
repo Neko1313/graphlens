@@ -116,6 +116,12 @@ projects even when language-specific marker files live in sub-directories.
 2. Detect project name and source roots **relative to each sub-root**
 3. Create one `PROJECT` node per sub-root in the shared `GraphLens`
 
+Root discovery must not stop just because `root` itself has a language marker.
+If `root` is both a project and a monorepo, return `root` **and** every valid
+nested project root for the same language. While analyzing a parent root,
+exclude files that belong to nested project roots so child projects are not
+also modeled as modules of the parent.
+
 This ensures module qualified names and import mappings are correct when
 `root` is a monorepo containing multiple independent projects.
 
@@ -215,11 +221,13 @@ Key checklist:
 3. Entry point `"graphlens.adapters"` → `"<lang>"`
 4. `LanguageAdapter` subclass: `language()`, `can_handle()`, `file_extensions()`, `analyze()`
 5. `find_<lang>_roots()` for monorepo support
-6. `_deps.py`: `DependencyFileParser` implementations + `<LANG>_DEFAULT_DEP_PARSERS`
-7. `ImportClassifier` pre-pass in `_analyze_root()`, `origin` on every IMPORT node
-8. Adapter accepts `dep_parsers` constructor param for custom override
-9. Visitor: dispatch by `node.type`, three stacks, `make_node_id` for IDs
-10. Tests mirror `packages/graphlens-python/tests/` structure including `test_<lang>_deps.py`
+6. Root discovery includes both root and nested same-language projects, and
+   parent analysis excludes files from nested roots
+7. `_deps.py`: `DependencyFileParser` implementations + `<LANG>_DEFAULT_DEP_PARSERS`
+8. `ImportClassifier` pre-pass in `_analyze_root()`, `origin` on every IMPORT node
+9. Adapter accepts `dep_parsers` constructor param for custom override
+10. Visitor: dispatch by `node.type`, three stacks, `make_node_id` for IDs
+11. Tests mirror `packages/graphlens-python/tests/` structure including `test_<lang>_deps.py`
 
 ## Adding a dependency parser for an existing adapter
 
