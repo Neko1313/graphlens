@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-05-10
+### Features
+
+- **adapters**: support nested same-language monorepo roots by @Neko1313
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.2.2...v0.3.0
 ## [0.2.2] - 2026-04-01
 ### Bug Fixes
 
