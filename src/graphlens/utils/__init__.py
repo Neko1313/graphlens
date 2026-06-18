@@ -6,9 +6,11 @@ from graphlens.utils.roots import (
     filter_nested_root_files,
 )
 from graphlens.utils.span import Span
+from graphlens.utils.span_index import SpanIndex
 
 __all__ = [
     "Span",
+    "SpanIndex",
     "collect_marker_roots",
     "filter_nested_root_files",
     "make_node_id",
