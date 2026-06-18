@@ -20,7 +20,26 @@ class TestFindSourceRoots:
         f.parent.mkdir(parents=True)
         f.touch()
         roots = find_source_roots(tmp_path, [f])
-        assert roots == [src]
+        assert roots == [src, tmp_path]
+
+    def test_src_layout_includes_project_root_for_outside_files(
+        self, tmp_path: Path
+    ):
+        (tmp_path / "src" / "pkg").mkdir(parents=True)
+        (tmp_path / "src" / "pkg" / "mod.py").write_text("")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_mod.py").write_text("")
+        files = [
+            tmp_path / "src" / "pkg" / "mod.py",
+            tmp_path / "tests" / "test_mod.py",
+        ]
+        roots = find_source_roots(tmp_path, files)
+        # src/ must remain first (package namespace), project root appended
+        assert roots[0] == tmp_path / "src"
+        assert tmp_path in roots
+        # the src file resolves against src/, the test file against project root
+        assert file_to_qualified_name(files[0], roots[0]) == "pkg.mod"
+        assert file_to_qualified_name(files[1], tmp_path) == "tests.test_mod"
 
     def test_flat_layout_fallback(self, tmp_path: Path):
         f = tmp_path / "mypkg" / "mod.py"

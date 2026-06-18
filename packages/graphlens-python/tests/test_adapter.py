@@ -143,20 +143,27 @@ class TestInternalHelpers:
         roots = [Path("/other/path"), Path("/another/path")]
         assert _find_source_root_for(file, roots) is None
 
-    def test_file_outside_source_root_skipped(self, tmp_path: Path):
-        """Files outside the source root are skipped in both pre-pass and main loop."""
+    def test_file_outside_source_root_skipped(self, tmp_path: Path, tmp_path_factory):
+        """Files completely outside the project root are skipped gracefully."""
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "test"\n')
         src = tmp_path / "src" / "testpkg"
         src.mkdir(parents=True)
         (src / "__init__.py").write_text("")
 
-        # extra.py is outside src/ — triggers ValueError in file_to_qualified_name
-        extra = tmp_path / "extra.py"
-        extra.write_text("x = 1")
+        # alien.py lives in a completely different tmp dir — not under tmp_path
+        # at all, so _find_source_root_for returns None and the fallback
+        # source_roots[0] (= src/) still raises ValueError.
+        alien_dir = tmp_path_factory.mktemp("alien")
+        alien = alien_dir / "alien.py"
+        alien.write_text("x = 1")
 
-        # Pass both files: the good one and the one outside src/
-        graph = PythonAdapter().analyze(tmp_path, files=[src / "__init__.py", extra])
+        # Pass both files: the good one and the alien one outside the project
+        graph = PythonAdapter().analyze(tmp_path, files=[src / "__init__.py", alien])
         assert graph is not None
+        # The alien file should be skipped; the good file must still appear
+        file_names = {n.name for n in graph.nodes.values() if n.kind.value == "file"}
+        assert "__init__.py" in file_names
+        assert "alien.py" not in file_names
 
     def test_file_relative_to_py_root_fallback(self, tmp_path: Path):
         """When file is not relative to project_root, falls back to py_root."""

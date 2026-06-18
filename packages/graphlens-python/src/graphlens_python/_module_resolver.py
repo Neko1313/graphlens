@@ -17,7 +17,7 @@ def find_source_roots(project_root: Path, files: list[Path]) -> list[Path]:
         and any(files)
         and any(f.is_relative_to(src) for f in files)
     ):
-        return [src]
+        return [src, project_root]
     return [project_root]
 
 
