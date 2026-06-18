@@ -18,19 +18,23 @@ logger = logging.getLogger("graphlens_python")
 
 
 class JediResolver(SymbolResolver):
-    """Resolve Python symbols via jedi. Never raises; returns None/[] on miss."""
+    """
+    Resolve Python symbols via jedi.
+
+    Never raises; returns None/[] on miss.
+    """
 
     def __init__(self, stdlib_names: frozenset[str]) -> None:
         self._stdlib_names = stdlib_names
         self._project: jedi.Project | None = None
         self._root: Path | None = None
 
-    def prepare(self, project_root: Path, files: list[Path]) -> None:
+    def prepare(self, project_root: Path, files: list[Path]) -> None:  # noqa: ARG002
         """Set up jedi.Project for a project root before any queries."""
         self._root = project_root
         try:
             self._project = jedi.Project(str(project_root))
-        except Exception:  # noqa: BLE001 — never raise out of the resolver
+        except Exception:
             logger.warning("jedi.Project failed for %s", project_root)
             self._project = None
 
@@ -39,7 +43,7 @@ class JediResolver(SymbolResolver):
             return None
         try:
             return jedi.Script(path=str(file), project=self._project)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     def definition_at(
@@ -51,7 +55,7 @@ class JediResolver(SymbolResolver):
             return None
         try:
             names = script.goto(line, col - 1, follow_imports=True)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         return self._to_ref(names[0]) if names else None
 
@@ -64,7 +68,7 @@ class JediResolver(SymbolResolver):
             return None
         try:
             names = script.infer(line, col - 1)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
         return self._to_ref(names[0]) if names else None
 
@@ -77,7 +81,7 @@ class JediResolver(SymbolResolver):
             return []
         try:
             names = script.get_references(line, col - 1, scope="project")
-        except Exception:  # noqa: BLE001
+        except Exception:
             return []
         out: list[Occurrence] = []
         for n in names:
