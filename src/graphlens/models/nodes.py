@@ -24,6 +24,9 @@ class NodeKind(enum.Enum):
     DEPENDENCY = "dependency"
     SYMBOL = "symbol"
     EXTERNAL_SYMBOL = "external_symbol"
+    VARIABLE = "variable"
+    ATTRIBUTE = "attribute"
+    TYPE_ALIAS = "type_alias"
 
 
 @dataclass(frozen=True, slots=True)

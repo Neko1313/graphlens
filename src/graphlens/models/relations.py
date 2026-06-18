@@ -17,6 +17,7 @@ class RelationKind(enum.Enum):
     DEPENDS_ON = "depends_on"
     RESOLVES_TO = "resolves_to"
     INHERITS_FROM = "inherits_from"
+    HAS_TYPE = "has_type"
 
 
 @dataclass(frozen=True, slots=True)

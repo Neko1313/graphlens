@@ -12,6 +12,7 @@ class TestRelationKind:
         expected = {
             "CONTAINS", "DECLARES", "IMPORTS", "CALLS",
             "REFERENCES", "DEPENDS_ON", "RESOLVES_TO", "INHERITS_FROM",
+            "HAS_TYPE",
         }
         assert {m.name for m in RelationKind} == expected
 
@@ -26,7 +27,7 @@ class TestRelationKind:
         assert RelationKind.INHERITS_FROM.value == "inherits_from"
 
     def test_count(self) -> None:
-        assert len(RelationKind) == 8
+        assert len(RelationKind) == 9
 
 
 class TestRelation:
@@ -61,3 +62,7 @@ class TestRelation:
     def test_metadata_default_is_empty_dict(self) -> None:
         r = Relation(source_id="a", target_id="b", kind=RelationKind.IMPORTS)
         assert isinstance(r.metadata, dict)
+
+
+def test_has_type_relation_kind_exists() -> None:
+    assert RelationKind.HAS_TYPE.value == "has_type"

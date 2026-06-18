@@ -25,6 +25,7 @@ class TestNodeKind:
         expected = {
             "PROJECT", "MODULE", "FILE", "CLASS", "FUNCTION", "METHOD",
             "PARAMETER", "IMPORT", "DEPENDENCY", "SYMBOL", "EXTERNAL_SYMBOL",
+            "VARIABLE", "ATTRIBUTE", "TYPE_ALIAS",
         }
         assert {m.name for m in NodeKind} == expected
 
@@ -42,7 +43,7 @@ class TestNodeKind:
         assert NodeKind.EXTERNAL_SYMBOL.value == "external_symbol"
 
     def test_count(self) -> None:
-        assert len(NodeKind) == 11
+        assert len(NodeKind) == 14
 
 
 class TestNode:
@@ -88,3 +89,9 @@ class TestNode:
         assert n.span is not None
         assert n.span.start_line == 10
         assert n.span.end_line == 20
+
+
+def test_new_node_kinds_exist() -> None:
+    assert NodeKind.VARIABLE.value == "variable"
+    assert NodeKind.ATTRIBUTE.value == "attribute"
+    assert NodeKind.TYPE_ALIAS.value == "type_alias"
