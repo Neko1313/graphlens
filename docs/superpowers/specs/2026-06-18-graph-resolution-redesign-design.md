@@ -170,6 +170,7 @@ Caveat: jedi often resolves stdlib/third-party to typeshed `.pyi` stubs inside i
 - **Dedicated `READS`/`WRITES`/`IMPLEMENTS`/`EXPORTS` edges** — SCIP shows these promote from metadata without a schema break; add when needed.
 - **`ENUM_MEMBER` / `TYPE_PARAMETER` nodes, generics-aware edges** — YAGNI for find-usages.
 - **Incrementality / per-commit cache, cross-language API links** — separate concerns; the "fast per-commit" target is addressed in a later spec.
+- **`infer_type_at` in the resolution pass** — kept on the `SymbolResolver` contract for future explicit type queries; the current resolution pass uses `definition_at`, which jedi already resolves in a type-aware manner via `goto(follow_imports=True)` (receiver type inference for `obj.method()` is included). `infer_type_at` will be invoked when a future pass needs standalone type inference decoupled from a name occurrence.
 
 ## 10. Known Risks / jedi Limitations
 

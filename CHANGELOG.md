@@ -14,6 +14,10 @@ All notable changes to this project will be documented in this file.
 - Core `SpanIndex` (location→node bridge) and `SymbolResolver` contract
   with `ResolvedRef`/`Occurrence` DTOs.
 - `graphlens-python` now depends on `jedi>=0.19.2`.
+- Module-level and class-body calls now produce `CALLS` edges (previously
+  only function-body calls were recorded).
+- `infer_type_at` is kept on `SymbolResolver` for future explicit type
+  queries; the resolution pass uses `definition_at` (type-aware via jedi).
 
 ## [0.3.0] - 2026-05-10
 ### Features
