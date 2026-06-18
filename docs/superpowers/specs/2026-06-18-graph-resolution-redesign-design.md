@@ -85,7 +85,9 @@ Existing: `CONTAINS, DECLARES, IMPORTS, RESOLVES_TO, INHERITS_FROM` (kept). `CAL
 
 Built from the graph's structural nodes; maps a source position to a node:
 - `enclosing(file, line, col) -> node_id | None` — innermost definition whose span contains the position (the caller / usage owner).
-- `at(file, line, col) -> node_id | None` — the definition whose name/selection span is at the position (the resolved target, when internal).
+- `at(file, line, col) -> node_id | None` — the definition whose **name span** is at the position (the resolved target, when internal).
+
+Because jedi returns a definition's location as the *name* position (not the `def`/`class` keyword), every structural node carries `metadata["name_span"]: Span` (the identifier's span). `SpanIndex` indexes `enclosing` by the node's full `span` and `at` by its `name_span`.
 
 This is the reusable bridge (LSP/Glean lesson: map a bare `Location` back to its enclosing/declaring node).
 
@@ -121,7 +123,7 @@ New module `packages/graphlens-python/src/graphlens_python/_resolver.py` (`JediR
 
 ### 5.1 `_analyze_root` flow (occurrence-driven)
 
-1. **tree-sitter pass** (`_visitor.py`): build structural nodes (`CLASS/FUNCTION/METHOD/PARAMETER/VARIABLE/ATTRIBUTE/TYPE_ALIAS/IMPORT`) and collect a list of **occurrences** `{file, position, role, enclosing_node_id}` where `role ∈ {call, read, write, annotation, base}`. The enclosing node is known from the visitor's scope stack. No resolution here.
+1. **tree-sitter pass** (`_visitor.py`): build structural nodes (`CLASS/FUNCTION/METHOD/PARAMETER/VARIABLE/ATTRIBUTE/TYPE_ALIAS/IMPORT`), each storing `metadata["name_span"]` (identifier position) for the location→node bridge, and collect a list of **occurrences** `{file, position, role, enclosing_node_id}` where `role ∈ {call, read, write, annotation, base}`. The enclosing node is known from the visitor's scope stack. No resolution here.
 2. Build `SpanIndex` from the structural nodes.
 3. **jedi pass** (`_resolver.py`): for each occurrence, resolve the target:
    - `call` → `definition_at` (with `infer_type_at` for `obj.method()` receivers); emit `CALLS enclosing → target`.
