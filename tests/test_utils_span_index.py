@@ -37,3 +37,12 @@ def test_missing_file_returns_none():
     idx = SpanIndex()
     assert idx.at("/nope.py", 1, 1) is None
     assert idx.enclosing("/nope.py", 1, 1) is None
+
+
+def test_manual_build_via_add_full_and_add_name():
+    idx = SpanIndex()
+    idx.add_full("/abs/m.py", "fn", Span(1, 1, 5, 1))
+    idx.add_name("/abs/m.py", "fn", Span(1, 5, 1, 8))
+    assert idx.enclosing("/abs/m.py", 3, 1) == "fn"
+    assert idx.at("/abs/m.py", 1, 6) == "fn"
+    assert idx.at("/abs/m.py", 3, 1) is None

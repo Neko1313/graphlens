@@ -26,17 +26,21 @@ class SpanIndex:
     """Per-file lists of (node_id, span); supports innermost/name lookups."""
 
     def __init__(self) -> None:
+        """Initialize an empty span index."""
         self._full: dict[str, list[_Entry]] = {}
         self._name: dict[str, list[_Entry]] = {}
 
     def add_full(self, file_path: str, node_id: str, span: Span) -> None:
+        """Register a node's full extent span under its file."""
         self._full.setdefault(file_path, []).append((node_id, span))
 
     def add_name(self, file_path: str, node_id: str, name_span: Span) -> None:
+        """Register a node's name (identifier) span under its file."""
         self._name.setdefault(file_path, []).append((node_id, name_span))
 
     @classmethod
     def from_graph(cls, graph: GraphLens) -> SpanIndex:
+        """Build a span index from all spanned nodes in the graph."""
         idx = cls()
         for node in graph.nodes.values():
             if not isinstance(node.file_path, str) or node.span is None:
@@ -65,11 +69,20 @@ class SpanIndex:
         return best_id
 
     def enclosing(self, file_path: str, line: int, col: int) -> str | None:
-        """Return the id of the innermost node whose full span contains the
-        given 1-based (line, col) position, or None if no node matches."""
+        """
+        Return innermost node whose full span contains the position.
+
+        Given a 1-based (line, col) position, return the id of the
+        innermost node whose full span contains it, or None if no node
+        matches.
+        """
         return self._smallest_containing(self._full, file_path, line, col)
 
     def at(self, file_path: str, line: int, col: int) -> str | None:
-        """Return the id of the node whose name_span contains the given
-        1-based (line, col) position, or None if no node matches."""
+        """
+        Return node id whose name span contains the position.
+
+        Given a 1-based (line, col) position, return the id of the
+        node whose name_span contains it, or None if no node matches.
+        """
         return self._smallest_containing(self._name, file_path, line, col)
