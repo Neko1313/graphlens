@@ -424,13 +424,14 @@ class PythonASTVisitor:
         body = next((c for c in node.children if c.type == "block"), None)
         if body:
             self._extract_calls(body, func_node.id)
-            # Visit nested defs and expression statements (for assignments)
+            # Visit nested defs, expression statements, and return statements
             for child in body.children:
                 if child.type in (
                     "function_definition",
                     "class_definition",
                     "decorated_definition",
                     "expression_statement",
+                    "return_statement",
                 ):
                     self.visit(child)
 
@@ -591,6 +592,18 @@ class PythonASTVisitor:
     # -------------------------------------------------------------------------
     # Assignment / variable handling
     # -------------------------------------------------------------------------
+
+    def _visit_return_statement(self, node: TSNode) -> None:
+        """
+        Record ``read`` occurrences for identifiers in a return expression.
+
+        Only the non-keyword children are inspected (the ``return`` keyword
+        is skipped). Calls within the returned expression are handled by
+        ``_extract_calls``; this method covers plain identifier reads.
+        """
+        for child in node.children:
+            if child.type != "return":
+                self._record_reads(child)
 
     def _visit_expression_statement(self, node: TSNode) -> None:
         """Dispatch expression_statement children — handle assignments."""

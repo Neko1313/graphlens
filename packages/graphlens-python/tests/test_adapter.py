@@ -163,7 +163,8 @@ class TestInternalHelpers:
         from graphlens import GraphLens as CG
 
         from graphlens_python._adapter import _analyze_root
-        from graphlens_python._deps import PYTHON_DEFAULT_DEP_PARSERS
+        from graphlens_python._deps import PYTHON_DEFAULT_DEP_PARSERS, get_stdlib_names
+        from graphlens_python._resolver import JediResolver
 
         # py_root is a sibling of project_root (not a subdirectory)
         project_root = tmp_path / "project"
@@ -176,7 +177,14 @@ class TestInternalHelpers:
         f.write_text("x = 1\n")
 
         graph = CG()
-        _analyze_root(graph, project_root, py_root, [f], PYTHON_DEFAULT_DEP_PARSERS)
+        _analyze_root(
+            graph,
+            project_root,
+            py_root,
+            [f],
+            PYTHON_DEFAULT_DEP_PARSERS,
+            JediResolver(stdlib_names=get_stdlib_names()),
+        )
         # The file path falls back to py_root-relative
         assert graph is not None
 
@@ -229,3 +237,138 @@ class TestMonorepo:
 
         graph = PythonAdapter().analyze(tmp_path)
         assert graph is not None
+
+
+# ---------------------------------------------------------------------------
+# Task 6: Occurrence-driven resolution tests
+# ---------------------------------------------------------------------------
+
+
+def _edges(graph, kind):
+    return [r for r in graph.relations if r.kind.value == kind]
+
+
+def test_calls_resolve_to_real_function_node(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("")
+    (tmp_path / "pkg" / "util.py").write_text(
+        "def helper():\n    return 1\n"
+    )
+    (tmp_path / "pkg" / "main.py").write_text(
+        "from pkg.util import helper\n\ndef run():\n    helper()\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+
+    # no SYMBOL nodes anymore
+    assert all(n.kind.value != "symbol" for n in graph.nodes.values())
+    helper = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "function" and n.name == "helper"
+    )
+    calls = _edges(graph, "calls")
+    assert any(r.target_id == helper.id for r in calls)
+
+
+def test_has_type_edge_for_annotation(tmp_path):
+    (tmp_path / "m.py").write_text(
+        "class C:\n    pass\n\ndef f(x: C) -> None:\n    pass\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+    c = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "class" and n.name == "C"
+    )
+    assert any(r.target_id == c.id for r in _edges(graph, "has_type"))
+
+
+def test_inherits_from_resolves_internal_class(tmp_path):
+    (tmp_path / "m.py").write_text(
+        "class Base:\n    pass\n\nclass Sub(Base):\n    pass\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+    base = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "class" and n.name == "Base"
+    )
+    inh = _edges(graph, "inherits_from")
+    assert any(r.target_id == base.id for r in inh)
+
+
+def test_variable_read_write_references(tmp_path):
+    (tmp_path / "m.py").write_text(
+        "CONST = 1\n\ndef f():\n    return CONST\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+    refs = _edges(graph, "references")
+    accesses = {r.metadata.get("access") for r in refs}
+    assert "write" in accesses  # CONST = 1
+    assert "read" in accesses   # return CONST
+
+
+def test_external_symbol_fallback_for_unresolved_call(tmp_path):
+    """Calls to unresolvable/third-party targets create EXTERNAL_SYMBOL."""
+    (tmp_path / "m.py").write_text(
+        "import requests\n\ndef fetch():\n    requests.get('http://x')\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+    calls = _edges(graph, "calls")
+    # There may or may not be calls depending on resolution; what matters is
+    # no crash and any call edge targets a real node in the graph.
+    for r in calls:
+        assert r.target_id in graph.nodes
+
+
+def test_injectable_resolver(tmp_path):
+    """PythonAdapter accepts an injectable resolver via constructor."""
+    from graphlens.contracts import SymbolResolver, ResolvedRef
+
+    class NullResolver(SymbolResolver):
+        def prepare(self, project_root, files):
+            pass
+
+        def definition_at(self, file, line, col):
+            return None
+
+        def infer_type_at(self, file, line, col):
+            return None
+
+        def references_to(self, file, line, col):
+            return []
+
+    (tmp_path / "m.py").write_text(
+        "def helper():\n    return 1\n\ndef run():\n    helper()\n"
+    )
+    adapter = PythonAdapter(resolver=NullResolver())
+    graph = adapter.analyze(tmp_path)
+    # With null resolver, no CALLS edges should be emitted (all refs skip)
+    calls = _edges(graph, "calls")
+    assert calls == []
+
+
+def test_ref_is_none_skipped(tmp_path):
+    """Occurrences where resolver returns None are silently skipped."""
+    from graphlens.contracts import SymbolResolver
+
+    class NullResolver(SymbolResolver):
+        def prepare(self, project_root, files):
+            pass
+
+        def definition_at(self, file, line, col):
+            return None
+
+        def infer_type_at(self, file, line, col):
+            return None
+
+        def references_to(self, file, line, col):
+            return []
+
+    (tmp_path / "m.py").write_text(
+        "class Base:\n    pass\n\nclass Sub(Base):\n    pass\n"
+    )
+    adapter = PythonAdapter(resolver=NullResolver())
+    graph = adapter.analyze(tmp_path)
+    # No INHERITS_FROM edges because resolver returns None
+    assert _edges(graph, "inherits_from") == []

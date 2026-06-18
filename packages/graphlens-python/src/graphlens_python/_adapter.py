@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from graphlens import (
@@ -13,7 +14,7 @@ from graphlens import (
     Relation,
     RelationKind,
 )
-from graphlens.utils import make_node_id
+from graphlens.utils import SpanIndex, make_node_id
 from graphlens.utils.roots import filter_nested_root_files
 
 from graphlens_python._deps import (
@@ -29,21 +30,33 @@ from graphlens_python._project_detector import (
     find_python_roots,
     is_python_project,
 )
+from graphlens_python._resolver import JediResolver
 from graphlens_python._visitor import (
     ImportClassifier,
+    OccurrenceRef,
     PythonASTVisitor,
     VisitorContext,
     parse_python,
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-    from graphlens.contracts import DependencyFileParser
+    from graphlens.contracts import DependencyFileParser, SymbolResolver
 
 logger = logging.getLogger("graphlens_python")
 
 _STDLIB = get_stdlib_names()
+
+# ---------------------------------------------------------------------------
+# Role → RelationKind mapping
+# ---------------------------------------------------------------------------
+
+_ROLE_TO_KIND: dict[str, RelationKind] = {
+    "call": RelationKind.CALLS,
+    "base": RelationKind.INHERITS_FROM,
+    "annotation": RelationKind.HAS_TYPE,
+    "read": RelationKind.REFERENCES,
+    "write": RelationKind.REFERENCES,
+}
 
 
 class PythonAdapter(LanguageAdapter):
@@ -52,6 +65,7 @@ class PythonAdapter(LanguageAdapter):
     def __init__(
         self,
         dep_parsers: list[DependencyFileParser] | None = None,
+        resolver: SymbolResolver | None = None,
     ) -> None:
         """
         Initialize the Python adapter.
@@ -63,12 +77,21 @@ class PythonAdapter(LanguageAdapter):
                 non-standard package managers (poetry-only setup,
                 pip-tools, pnpm, etc.).
                 Defaults to ``PYTHON_DEFAULT_DEP_PARSERS``.
+            resolver: symbol resolver used for cross-file resolution of
+                calls, references, annotations, and base classes.
+                Defaults to ``JediResolver``. Inject a custom or null
+                resolver to override resolution behaviour.
 
         """
         self._dep_parsers = (
             dep_parsers
             if dep_parsers is not None
             else PYTHON_DEFAULT_DEP_PARSERS
+        )
+        self._resolver = (
+            resolver
+            if resolver is not None
+            else JediResolver(stdlib_names=_STDLIB)
         )
 
     def language(self) -> str:
@@ -94,6 +117,7 @@ class PythonAdapter(LanguageAdapter):
                 project_root,
                 files,
                 self._dep_parsers,
+                self._resolver,
             )
         else:
             py_roots = find_python_roots(project_root)
@@ -110,17 +134,19 @@ class PythonAdapter(LanguageAdapter):
                     py_root,
                     root_files,
                     self._dep_parsers,
+                    self._resolver,
                 )
 
         return graph
 
 
-def _analyze_root(
+def _analyze_root(  # noqa: PLR0913, PLR0915
     graph: GraphLens,
     project_root: Path,
     py_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
+    resolver: SymbolResolver,
 ) -> None:
     """Analyze one Python project root and populate graph in-place."""
     project_name = detect_project_name(py_root)
@@ -164,6 +190,7 @@ def _analyze_root(
         )
 
     modules: dict[str, str] = {}
+    all_occurrences: list[tuple[str, OccurrenceRef]] = []
 
     for file in files:
         source_root = (
@@ -232,6 +259,16 @@ def _analyze_root(
             ctx, graph, file_id, source_bytes, classifier
         )
         visitor.visit(tree.root_node)
+        all_occurrences.extend(
+            (visitor.abs_file_path, o) for o in visitor.occurrences
+        )
+
+    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL
+    span_index = SpanIndex.from_graph(graph)
+    resolver.prepare(py_root, files)
+    _resolve_occurrences(
+        graph, project_name, resolver, span_index, all_occurrences
+    )
 
     # PROJECT --CONTAINS--> top-level modules
     top_level = {qn: mid for qn, mid in modules.items() if "." not in qn}
@@ -241,6 +278,100 @@ def _analyze_root(
                 source_id=project_id,
                 target_id=module_id,
                 kind=RelationKind.CONTAINS,
+            )
+        )
+
+
+def _ensure_external_symbol(
+    graph: GraphLens, project_name: str, qname: str, origin: str
+) -> str:
+    """
+    Return the id of an EXTERNAL_SYMBOL node for ``qname``.
+
+    Creates the node if it does not yet exist in ``graph``.
+
+    Args:
+        graph: the graph to update in-place.
+        project_name: used as the namespace for ``make_node_id``.
+        qname: fully-qualified name of the external symbol.
+        origin: one of ``"stdlib"``, ``"third_party"``, ``"unknown"``,
+            or ``"internal"`` (fallback when the module node is absent).
+
+    Returns:
+        The node id of the EXTERNAL_SYMBOL.
+
+    """
+    sym_id = make_node_id(
+        project_name, qname, NodeKind.EXTERNAL_SYMBOL.value
+    )
+    if sym_id not in graph.nodes:
+        graph.add_node(
+            Node(
+                id=sym_id,
+                kind=NodeKind.EXTERNAL_SYMBOL,
+                qualified_name=qname,
+                name=qname.rsplit(".", maxsplit=1)[-1],
+                metadata={"origin": origin},
+            )
+        )
+    return sym_id
+
+
+def _resolve_occurrences(
+    graph: GraphLens,
+    project_name: str,
+    resolver: SymbolResolver,
+    span_index: SpanIndex,
+    occurrences: list[tuple[str, OccurrenceRef]],
+) -> None:
+    """
+    Resolve all accumulated occurrences and emit edges.
+
+    For each ``(abs_path, occ)`` pair:
+
+    1. Ask the resolver for the definition site.
+    2. If the definition is internal, look up the target node id via
+       ``span_index.at()``.
+    3. If the node is not found (or origin is external), create/reuse an
+       ``EXTERNAL_SYMBOL`` fallback node.
+    4. Emit a ``Relation`` of the appropriate kind, with span metadata
+       and, for read/write occurrences, an ``access`` key.
+
+    Args:
+        graph: the graph to update in-place.
+        project_name: namespace used for EXTERNAL_SYMBOL node ids.
+        resolver: the symbol resolver that was already ``prepare()``d.
+        span_index: pre-built index of node spans from ``graph``.
+        occurrences: list of ``(absolute_file_path, OccurrenceRef)`` pairs
+            collected during the file-visit loop.
+
+    """
+    for abs_path, occ in occurrences:
+        rel_kind = _ROLE_TO_KIND[occ.role]
+        ref = resolver.definition_at(Path(abs_path), occ.line, occ.col)
+        if ref is None:
+            continue
+        target_id: str | None = None
+        if ref.origin == "internal" and ref.file_path is not None:
+            target_id = span_index.at(
+                str(ref.file_path), ref.line, ref.col
+            )
+        if target_id is None:
+            target_id = _ensure_external_symbol(
+                graph,
+                project_name,
+                ref.full_name or occ.role,
+                ref.origin,
+            )
+        metadata: dict[str, object] = {"span": occ.span}
+        if occ.role in ("read", "write"):
+            metadata["access"] = occ.role
+        graph.add_relation(
+            Relation(
+                source_id=occ.enclosing_id,
+                target_id=target_id,
+                kind=rel_kind,
+                metadata=metadata,
             )
         )
 

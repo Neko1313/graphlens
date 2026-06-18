@@ -764,3 +764,64 @@ class TestDecoratedDefinitionEdgeCases:
         mock_node.children = [mock_decorator, mock_other]
         # Should return without error
         visitor._visit_decorated_definition(mock_node)
+
+
+class TestHandleAssignmentEdgeCases:
+    def test_assignment_no_name_node_skipped(self, parse_and_visit_visitor):
+        """Covers `if name_node is None: return` in _handle_assignment.
+
+        An assignment like ``[] = []`` has an empty list_pattern as LHS so
+        ``_first_identifier`` returns None and the assignment is skipped.
+        """
+        # [] = [] has a list_pattern with no identifier children
+        graph, visitor = parse_and_visit_visitor("[] = []\n")
+        # No VARIABLE node should be created
+        from graphlens import NodeKind as NK
+        variables = [n for n in graph.nodes.values() if n.kind == NK.VARIABLE]
+        assert variables == []
+
+
+class TestRecordOccurrenceSpanNone:
+    def test_record_occurrence_with_span_none_skipped(self):
+        """Covers `if span is None: return` in _record_occurrence.
+
+        A TSNode that raises in start_point/end_point causes _make_span to
+        return None, so the occurrence is silently dropped.
+        """
+        from graphlens import GraphLens, Node, NodeKind
+        from graphlens.utils.ids import make_node_id
+
+        graph = GraphLens()
+        file_id = make_node_id("proj", "mod.py", NodeKind.FILE.value)
+        from graphlens import Node as CGNode
+        graph.add_node(
+            CGNode(id=file_id, kind=NodeKind.FILE, qualified_name="mod.py", name="mod.py")
+        )
+        ctx = VisitorContext(
+            project_name="proj",
+            file_path=Path("mod.py"),
+            source_root=Path("."),
+            module_qualified_name="mod",
+        )
+        visitor = PythonASTVisitor(ctx, graph, file_id, b"", None)
+
+        # Mock a TSNode whose start_point raises, so _make_span returns None
+        bad_node = MagicMock()
+        type(bad_node).start_point = PropertyMock(
+            side_effect=AttributeError("no start_point")
+        )
+        visitor._record_occurrence("call", bad_node, file_id)
+        # No occurrences should be recorded
+        assert visitor.occurrences == []
+
+
+class TestVisitReturnStatement:
+    def test_return_statement_records_read_occurrence(
+        self, parse_and_visit_visitor
+    ):
+        """``return x`` records a ``read`` occurrence for ``x``."""
+        graph, visitor = parse_and_visit_visitor(
+            "def f(x):\n    return x\n"
+        )
+        reads = [o for o in visitor.occurrences if o.role == "read"]
+        assert any(o.col >= 1 for o in reads)
