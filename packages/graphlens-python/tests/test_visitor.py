@@ -833,3 +833,40 @@ class TestVisitReturnStatement:
             f"expected a read occurrence at col=12 for 'x' in 'return x'; "
             f"got read cols: {[o.col for o in reads]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: module-level and class-body calls
+# ---------------------------------------------------------------------------
+
+
+def test_module_level_call_occurrence_recorded(parse_and_visit_visitor):
+    """Module-level call produces exactly one ``call`` occurrence (Fix 1)."""
+    src = "def run():\n    pass\n\nrun()\n"
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    assert len(call_occs) == 1
+    assert call_occs[0].line == 4
+
+
+def test_class_body_call_occurrence_recorded(parse_and_visit_visitor):
+    """A call in a class body produces a ``call`` occurrence (Fix 1)."""
+    src = (
+        "def setup():\n    pass\n\n"
+        "class C:\n    setup()\n"
+    )
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    assert len(call_occs) == 1
+    assert call_occs[0].line == 5
+
+
+def test_no_double_counting_call_in_function(parse_and_visit_visitor):
+    """A function body with a single call ``b()`` inside ``def a()`` produces
+    exactly ONE ``call`` occurrence — not two (no double-counting, Fix 1)."""
+    src = "def b():\n    pass\n\ndef a():\n    b()\n"
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    assert len(call_occs) == 1, (
+        f"expected exactly 1 call occurrence, got {len(call_occs)}: {call_occs}"
+    )

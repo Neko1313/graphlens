@@ -357,10 +357,17 @@ def _resolve_occurrences(
                 str(ref.file_path), ref.line, ref.col
             )
         if target_id is None:
+            # When full_name is absent, use a position-qualified key so that
+            # distinct unresolved sites don't collapse into the same node.
+            fallback_qname = (
+                ref.full_name
+                if ref.full_name
+                else f"{occ.role}@{occ.line}:{occ.col}"
+            )
             target_id = _ensure_external_symbol(
                 graph,
                 project_name,
-                ref.full_name or occ.role,
+                fallback_qname,
                 ref.origin,
             )
         metadata: dict[str, object] = {"span": occ.span}

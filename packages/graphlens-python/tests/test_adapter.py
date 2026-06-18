@@ -387,3 +387,65 @@ def test_ref_is_none_skipped(tmp_path):
     graph = adapter.analyze(tmp_path)
     # No INHERITS_FROM edges because resolver returns None
     assert _edges(graph, "inherits_from") == []
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: module-level call resolves to a real FUNCTION node
+# ---------------------------------------------------------------------------
+
+
+def test_module_level_call_resolves_to_real_function_node(tmp_path):
+    """A module-level ``run()`` call resolves to the real FUNCTION node (Fix 1).
+
+    RED before fix (no CALLS edge); GREEN after fix.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "main.py").write_text(
+        "def run():\n    return 1\n\nrun()\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+
+    run_node = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "function" and n.name == "run"
+    )
+    calls = _edges(graph, "calls")
+    assert any(r.target_id == run_node.id for r in calls), (
+        f"expected a CALLS edge targeting the real 'run' FUNCTION node; "
+        f"calls={[(r.source_id, r.target_id) for r in calls]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 2a: obj.method() resolves to the real METHOD node
+# ---------------------------------------------------------------------------
+
+
+def test_obj_method_call_resolves_to_real_method_node(tmp_path):
+    """``c.m()`` in a typed parameter resolves to the real METHOD node (Fix 2a).
+
+    jedi performs receiver type inference inside ``goto``, so ``c: C`` is
+    enough for it to resolve ``c.m()`` to ``C.m``.
+
+    RED before resolution redesign (no CALLS edge or wrong target);
+    GREEN with the current jedi-backed resolver.
+    """
+    (tmp_path / "m.py").write_text(
+        "class C:\n    def m(self): ...\n\ndef use(c: C):\n    c.m()\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+
+    m_node = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "method" and n.name == "m"
+    )
+    calls = _edges(graph, "calls")
+    assert any(r.target_id == m_node.id for r in calls), (
+        f"expected CALLS edge targeting real METHOD 'm'; "
+        f"calls={[(r.source_id, r.target_id) for r in calls]}; "
+        f"m_node.id={m_node.id}"
+    )

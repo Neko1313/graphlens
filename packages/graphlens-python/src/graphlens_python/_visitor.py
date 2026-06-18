@@ -606,14 +606,28 @@ class PythonASTVisitor:
                 self._record_reads(child)
 
     def _visit_expression_statement(self, node: TSNode) -> None:
-        """Dispatch expression_statement children — handle assignments."""
+        """
+        Dispatch expression_statement children — handle assignments.
+
+        When the current scope is NOT a function/method (i.e. the enclosing
+        kind is FILE, MODULE, or CLASS) we also record call occurrences here,
+        because ``_extract_calls`` is only invoked from ``_handle_function``.
+        Inside functions the body loop already called ``_extract_calls``, so
+        we guard against re-recording by checking the kind stack.
+        """
+        _non_function_kinds = {NodeKind.FILE, NodeKind.MODULE, NodeKind.CLASS}
+        in_function = self._kind_stack[-1] not in _non_function_kinds
         for child in node.children:
             if child.type == "assignment":
                 self._handle_assignment(child)
             else:
+                if not in_function:
+                    self._find_calls_in_node(child, self._container_stack[-1])
                 self.visit(child)
 
     def _handle_assignment(self, node: TSNode) -> None:
+        # TODO(deferred): tuple-unpacking / augmented / walrus assignments not
+        # modeled (see spec §9 deferred)
         """
         Create a VARIABLE, ATTRIBUTE, or TYPE_ALIAS node from an assignment.
 
