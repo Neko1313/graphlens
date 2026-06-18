@@ -186,12 +186,13 @@ is never missing when the target file hasn't been processed yet.
 5. Call `SymbolResolver.prepare(project_root, files)` to initialise the
    type-aware engine (e.g. jedi).
 6. For each `OccurrenceRef` collected by the visitor, call
-   `SymbolResolver.definition_at(file, line, col)` (for `call`/`annotation`/
-   `base` roles) or `SymbolResolver.infer_type_at()` (for `annotation`/`base`
-   where a type is needed). The returned `ResolvedRef.origin` field carries
-   the same four-value vocabulary (`"stdlib"` / `"internal"` / `"third_party"`
-   / `"unknown"`) — now derived from the resolver, not from the import
-   manifest.
+   `SymbolResolver.definition_at(file, line, col)` to resolve the use-site to
+   its definition. The current resolution pass uses `definition_at` for every
+   occurrence role; `infer_type_at()` is available on the contract for type
+   inference but is not invoked by this pass. The returned `ResolvedRef.origin`
+   field carries the same four-value vocabulary (`"stdlib"` / `"internal"` /
+   `"third_party"` / `"unknown"`) — now derived from the resolver, not from the
+   import manifest.
 7. Use `SpanIndex.at(file_path, line, col)` to look up the target declaration
    node. If found, emit the appropriate edge (CALLS, REFERENCES, HAS_TYPE,
    INHERITS_FROM) between the `enclosing_id` from the occurrence and the
