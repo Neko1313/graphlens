@@ -326,6 +326,10 @@ class PythonASTVisitor:
                     bases.append(base_name)
 
         is_abstract = "ABC" in bases or "ABCMeta" in bases
+        _enum_names = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}
+        is_enum = any(
+            b.rsplit(".", 1)[-1] in _enum_names for b in bases
+        )
         class_node = self._make_node(
             NodeKind.CLASS,
             qname,
@@ -335,21 +339,21 @@ class PythonASTVisitor:
                 "decorators": decorators,
                 "bases": bases,
                 "is_abstract": is_abstract,
+                "is_enum": is_enum,
             },
             name_node=name_node,
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
 
-        # INHERITS_FROM
-        for base_name in bases:
-            sym = self._get_or_create_external_symbol(base_name)
-            self._graph.add_relation(
-                Relation(
-                    source_id=class_node.id,
-                    target_id=sym.id,
-                    kind=RelationKind.INHERITS_FROM,
-                )
-            )
+        # Record base occurrences (resolver emits INHERITS_FROM later)
+        if arg_list:
+            for c in arg_list.children:
+                if c.type in ("identifier", "attribute"):
+                    base_name_node = _first_identifier(c)
+                    if base_name_node is not None:
+                        self._record_occurrence(
+                            "base", base_name_node, class_node.id
+                        )
 
         self._push(qname, class_node.id, NodeKind.CLASS)
         body = next((c for c in node.children if c.type == "block"), None)
@@ -403,6 +407,10 @@ class PythonASTVisitor:
         )
         self._add_node_with_relation(func_node, RelationKind.DECLARES)
 
+        # Record return annotation occurrence
+        if type_node is not None:
+            self._record_annotation(type_node, func_node.id)
+
         self._push(qname, func_node.id, kind)
 
         # Parameters
@@ -440,6 +448,7 @@ class PythonASTVisitor:
             has_default = False
             is_variadic = False
             id_node: TSNode | None = None
+            ann_type_node: TSNode | None = None
 
             if child.type == "identifier":
                 id_node = child
@@ -457,20 +466,20 @@ class PythonASTVisitor:
                     (c for c in child.children if c.type == "identifier"), None
                 )
                 param_name = _node_text(id_node) if id_node else None
-                type_node = next(
+                ann_type_node = next(
                     (c for c in child.children if c.type == "type"), None
                 )
-                annotation = _node_text(type_node) if type_node else None
+                annotation = _node_text(ann_type_node) if ann_type_node else None
 
             elif child.type == "typed_default_parameter":
                 id_node = next(
                     (c for c in child.children if c.type == "identifier"), None
                 )
                 param_name = _node_text(id_node) if id_node else None
-                type_node = next(
+                ann_type_node = next(
                     (c for c in child.children if c.type == "type"), None
                 )
-                annotation = _node_text(type_node) if type_node else None
+                annotation = _node_text(ann_type_node) if ann_type_node else None
                 has_default = True
 
             elif child.type in {
@@ -508,6 +517,9 @@ class PythonASTVisitor:
                     kind=RelationKind.DECLARES,
                 )
             )
+            # Record annotation occurrence for typed parameters
+            if ann_type_node is not None:
+                self._record_annotation(ann_type_node, param_node.id)
 
     # -------------------------------------------------------------------------
     # Call extraction (occurrence-based — no SYMBOL nodes emitted)
@@ -557,6 +569,17 @@ class PythonASTVisitor:
                 span=span,
             )
         )
+
+    def _record_annotation(
+        self, type_node: TSNode, enclosing_id: str
+    ) -> None:
+        """
+        Record an ``annotation`` occurrence for the leading identifier in
+        a ``type`` node (return annotation or parameter annotation).
+        """
+        ident = _first_identifier(type_node)
+        if ident is not None:
+            self._record_occurrence("annotation", ident, enclosing_id)
 
     # -------------------------------------------------------------------------
     # Import helper
@@ -773,3 +796,19 @@ def _make_span(node: TSNode | None) -> Span | None:
         )
     except Exception:
         return None
+
+
+def _first_identifier(node: TSNode) -> TSNode | None:
+    """
+    Return the first ``identifier`` leaf reachable from *node* (pre-order).
+
+    Used to resolve the leading name in a composite type expression such as
+    ``list[int]``, ``Optional[str]``, or ``dict[str, int]``.
+    """
+    if node.type == "identifier":
+        return node
+    for child in node.children:
+        found = _first_identifier(child)
+        if found is not None:
+            return found
+    return None

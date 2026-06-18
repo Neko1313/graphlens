@@ -114,14 +114,15 @@ class TestClassExtraction:
         ]
         assert len(declares) == 1
 
-    def test_class_inherits_from_relation(self):
-        graph, _ = parse_and_visit("class Child(Base):\n    pass\n")
+    def test_class_base_recorded_as_occurrence(self, parse_and_visit_visitor):
+        """Visitor records a 'base' occurrence instead of INHERITS_FROM edge."""
+        graph, visitor = parse_and_visit_visitor("class Child(Base):\n    pass\n")
         cls = nodes_of_kind(graph, NodeKind.CLASS)[0]
-        inherits = [
-            r for r in graph.relations
-            if r.source_id == cls.id and r.kind == RelationKind.INHERITS_FROM
+        base_occs = [
+            o for o in visitor.occurrences
+            if o.role == "base" and o.enclosing_id == cls.id
         ]
-        assert len(inherits) == 1
+        assert len(base_occs) == 1
 
     def test_decorated_class(self):
         graph, _ = parse_and_visit("@dataclass\nclass Foo:\n    pass\n")
@@ -463,6 +464,22 @@ class TestCallExtraction:
         src = "def foo():\n    my_func()\n"
         graph, visitor = parse_and_visit_visitor(src)
         assert all(n.kind.value != "symbol" for n in graph.nodes.values())
+
+
+# ---------------------------------------------------------------------------
+# Base and annotation occurrences
+# ---------------------------------------------------------------------------
+
+
+def test_base_and_annotation_occurrences(parse_and_visit_visitor):
+    graph, visitor = parse_and_visit_visitor(
+        "class Base:\n    pass\n\n"
+        "class Sub(Base):\n    pass\n\n"
+        "def f(x: Base) -> Base:\n    pass\n"
+    )
+    roles = [o.role for o in visitor.occurrences]
+    assert "base" in roles
+    assert "annotation" in roles
 
 
 # ---------------------------------------------------------------------------
