@@ -483,6 +483,27 @@ def test_base_and_annotation_occurrences(parse_and_visit_visitor):
 
 
 # ---------------------------------------------------------------------------
+# Variable / attribute / type-alias nodes + read/write occurrences
+# ---------------------------------------------------------------------------
+
+
+def test_module_variable_node_and_write_occurrence(parse_and_visit_visitor):
+    graph, visitor = parse_and_visit_visitor("CONST = 1\nx = CONST\n")
+    kinds = {n.kind.value for n in graph.nodes.values()}
+    assert "variable" in kinds
+    roles = [o.role for o in visitor.occurrences]
+    assert "write" in roles   # assignment target
+    assert "read" in roles    # CONST on the rhs
+
+
+def test_type_alias_node(parse_and_visit_visitor):
+    graph, _ = parse_and_visit_visitor(
+        "from typing import TypeAlias\nVector: TypeAlias = list[float]\n"
+    )
+    assert any(n.kind.value == "type_alias" for n in graph.nodes.values())
+
+
+# ---------------------------------------------------------------------------
 # Nested definitions
 # ---------------------------------------------------------------------------
 

@@ -424,12 +424,13 @@ class PythonASTVisitor:
         body = next((c for c in node.children if c.type == "block"), None)
         if body:
             self._extract_calls(body, func_node.id)
-            # Visit nested class/function definitions
+            # Visit nested defs and expression statements (for assignments)
             for child in body.children:
                 if child.type in (
                     "function_definition",
                     "class_definition",
                     "decorated_definition",
+                    "expression_statement",
                 ):
                     self.visit(child)
 
@@ -580,6 +581,89 @@ class PythonASTVisitor:
         ident = _first_identifier(type_node)
         if ident is not None:
             self._record_occurrence("annotation", ident, enclosing_id)
+
+    # -------------------------------------------------------------------------
+    # Assignment / variable handling
+    # -------------------------------------------------------------------------
+
+    def _visit_expression_statement(self, node: TSNode) -> None:
+        """Dispatch expression_statement children — handle assignments."""
+        for child in node.children:
+            if child.type == "assignment":
+                self._handle_assignment(child)
+            else:
+                self.visit(child)
+
+    def _handle_assignment(self, node: TSNode) -> None:
+        """
+        Create a VARIABLE, ATTRIBUTE, or TYPE_ALIAS node from an assignment.
+
+        Dispatch rules:
+        - ``x: TypeAlias = v``  → TYPE_ALIAS
+        - ``self.attr = v``     → ATTRIBUTE
+        - inside class body     → ATTRIBUTE
+        - otherwise             → VARIABLE
+        """
+        lhs = node.children[0]
+        annotation = next(
+            (c for c in node.children if c.type == "type"), None
+        )
+        rhs = node.children[-1] if node.children[-1] is not lhs else None
+        name_node = _first_identifier(lhs)
+        if name_node is None:
+            return
+        name = _node_text(name_node)
+        is_alias = (
+            annotation is not None
+            and _node_text(annotation) == "TypeAlias"
+        )
+        # Attribute: inside class body or lhs is self.<attr>
+        in_class = self._kind_stack[-1] == NodeKind.CLASS
+        is_self_attr = (
+            lhs.type == "attribute"
+            and lhs.children
+            and _node_text(lhs.children[0]) == "self"
+        )
+        kind: NodeKind
+        if is_alias:
+            kind = NodeKind.TYPE_ALIAS
+        elif in_class or is_self_attr:
+            kind = NodeKind.ATTRIBUTE
+        else:
+            kind = NodeKind.VARIABLE
+        qname = f"{self._scope_stack[-1]}.{name}"
+        var_node = self._make_node(
+            kind,
+            qname,
+            name,
+            node,
+            metadata={"is_constant": name.isupper()},
+            name_node=name_node,
+        )
+        self._add_node_with_relation(var_node, RelationKind.DECLARES)
+        self._record_occurrence("write", name_node, self._container_stack[-1])
+        if rhs is not None and not is_alias:
+            self._record_reads(rhs)
+        elif is_alias and rhs is not None:
+            ident = _first_identifier(rhs)
+            if ident is not None:
+                self._record_occurrence(
+                    "annotation", ident, self._container_stack[-1]
+                )
+
+    def _record_reads(self, node: TSNode) -> None:
+        """Recursively record ``read`` occurrences for all identifiers."""
+        if node.type == "call":
+            # calls are recorded as call occurrences elsewhere; still read args
+            for c in node.children:
+                if c.type == "argument_list":
+                    self._record_reads(c)
+            return
+        if node.type == "identifier":
+            self._record_occurrence("read", node, self._container_stack[-1])
+            return
+        for child in node.children:
+            self._record_reads(child)
 
     # -------------------------------------------------------------------------
     # Import helper
