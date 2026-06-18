@@ -163,7 +163,10 @@ class TestInternalHelpers:
         from graphlens import GraphLens as CG
 
         from graphlens_python._adapter import _analyze_root
-        from graphlens_python._deps import PYTHON_DEFAULT_DEP_PARSERS, get_stdlib_names
+        from graphlens_python._deps import (
+            PYTHON_DEFAULT_DEP_PARSERS,
+            get_stdlib_names,
+        )
         from graphlens_python._resolver import JediResolver
 
         # py_root is a sibling of project_root (not a subdirectory)
@@ -308,22 +311,34 @@ def test_variable_read_write_references(tmp_path):
     assert "read" in accesses   # return CONST
 
 
-def test_external_symbol_fallback_for_unresolved_call(tmp_path):
-    """Calls to unresolvable/third-party targets create EXTERNAL_SYMBOL."""
+def test_inherits_from_stdlib_creates_external_symbol(tmp_path):
+    """A class inheriting a stdlib base creates EXTERNAL_SYMBOL via _ensure_external_symbol."""
     (tmp_path / "m.py").write_text(
-        "import requests\n\ndef fetch():\n    requests.get('http://x')\n"
+        "import enum\n\nclass Color(enum.Enum):\n    RED = 1\n"
     )
     graph = PythonAdapter().analyze(tmp_path)
-    calls = _edges(graph, "calls")
-    # There may or may not be calls depending on resolution; what matters is
-    # no crash and any call edge targets a real node in the graph.
-    for r in calls:
-        assert r.target_id in graph.nodes
+
+    ext = [n for n in graph.nodes.values() if n.kind.value == "external_symbol"]
+    assert ext, "expected at least one EXTERNAL_SYMBOL for the stdlib base"
+
+    # Jedi resolves enum.Enum as stdlib — assert the real origin, not a loose set
+    assert all(e.metadata.get("origin") == "stdlib" for e in ext), (
+        f"expected all external symbols to have origin='stdlib', got: "
+        f"{[e.metadata.get('origin') for e in ext]}"
+    )
+
+    # INHERITS_FROM edge must target one of those EXTERNAL_SYMBOL nodes
+    inh = _edges(graph, "inherits_from")
+    assert inh, "expected at least one INHERITS_FROM edge"
+    ext_ids = {e.id for e in ext}
+    assert any(r.target_id in ext_ids for r in inh), (
+        "expected INHERITS_FROM to target the EXTERNAL_SYMBOL for the stdlib base"
+    )
 
 
 def test_injectable_resolver(tmp_path):
     """PythonAdapter accepts an injectable resolver via constructor."""
-    from graphlens.contracts import SymbolResolver, ResolvedRef
+    from graphlens.contracts import SymbolResolver
 
     class NullResolver(SymbolResolver):
         def prepare(self, project_root, files):

@@ -774,7 +774,7 @@ class TestHandleAssignmentEdgeCases:
         ``_first_identifier`` returns None and the assignment is skipped.
         """
         # [] = [] has a list_pattern with no identifier children
-        graph, visitor = parse_and_visit_visitor("[] = []\n")
+        graph, _visitor = parse_and_visit_visitor("[] = []\n")
         # No VARIABLE node should be created
         from graphlens import NodeKind as NK
         variables = [n for n in graph.nodes.values() if n.kind == NK.VARIABLE]
@@ -788,7 +788,7 @@ class TestRecordOccurrenceSpanNone:
         A TSNode that raises in start_point/end_point causes _make_span to
         return None, so the occurrence is silently dropped.
         """
-        from graphlens import GraphLens, Node, NodeKind
+        from graphlens import GraphLens, NodeKind
         from graphlens.utils.ids import make_node_id
 
         graph = GraphLens()
@@ -819,9 +819,17 @@ class TestVisitReturnStatement:
     def test_return_statement_records_read_occurrence(
         self, parse_and_visit_visitor
     ):
-        """``return x`` records a ``read`` occurrence for ``x``."""
-        graph, visitor = parse_and_visit_visitor(
+        """``return x`` records a ``read`` occurrence on the ``x`` identifier.
+
+        Source: "def f(x):\\n    return x\\n"
+        Line 2 is "    return x": 4 spaces + "return " (7 chars) = 11 chars
+        before 'x', so 1-based column of 'x' is 12.
+        """
+        _graph, visitor = parse_and_visit_visitor(
             "def f(x):\n    return x\n"
         )
         reads = [o for o in visitor.occurrences if o.role == "read"]
-        assert any(o.col >= 1 for o in reads)
+        assert any(o.col == 12 for o in reads), (
+            f"expected a read occurrence at col=12 for 'x' in 'return x'; "
+            f"got read cols: {[o.col for o in reads]}"
+        )
