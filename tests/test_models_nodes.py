@@ -24,7 +24,7 @@ class TestNodeKind:
     def test_all_values(self) -> None:
         expected = {
             "PROJECT", "MODULE", "FILE", "CLASS", "FUNCTION", "METHOD",
-            "PARAMETER", "IMPORT", "DEPENDENCY", "SYMBOL", "EXTERNAL_SYMBOL",
+            "PARAMETER", "IMPORT", "DEPENDENCY", "EXTERNAL_SYMBOL",
             "VARIABLE", "ATTRIBUTE", "TYPE_ALIAS",
         }
         assert {m.name for m in NodeKind} == expected
@@ -39,11 +39,14 @@ class TestNodeKind:
         assert NodeKind.PARAMETER.value == "parameter"
         assert NodeKind.IMPORT.value == "import"
         assert NodeKind.DEPENDENCY.value == "dependency"
-        assert NodeKind.SYMBOL.value == "symbol"
         assert NodeKind.EXTERNAL_SYMBOL.value == "external_symbol"
 
+    def test_symbol_removed(self) -> None:
+        """SYMBOL was removed in favour of occurrence-based resolution."""
+        assert not hasattr(NodeKind, "SYMBOL")
+
     def test_count(self) -> None:
-        assert len(NodeKind) == 14
+        assert len(NodeKind) == 13
 
 
 class TestNode:

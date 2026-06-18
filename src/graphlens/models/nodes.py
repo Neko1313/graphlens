@@ -22,7 +22,6 @@ class NodeKind(enum.Enum):
     PARAMETER = "parameter"
     IMPORT = "import"
     DEPENDENCY = "dependency"
-    SYMBOL = "symbol"
     EXTERNAL_SYMBOL = "external_symbol"
     VARIABLE = "variable"
     ATTRIBUTE = "attribute"

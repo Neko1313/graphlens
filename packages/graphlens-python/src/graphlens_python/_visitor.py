@@ -26,6 +26,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger("graphlens_python")
 
 _PY_LANGUAGE = Language(tspython.language())
+
+
+# ---------------------------------------------------------------------------
+# Occurrence reference (use-site record)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OccurrenceRef:
+    """
+    A use-site that the resolver will bind to a definition.
+
+    Coordinates are 1-based (matching Span convention).
+
+    Roles:
+      ``call``       — call-site of a function/method
+      ``read``       — identifier read on the right-hand side
+      ``write``      — assignment target
+      ``annotation`` — type annotation or TypeAlias RHS
+      ``base``       — class base in the heritage list
+    """
+
+    role: str
+    line: int
+    col: int
+    enclosing_id: str
+    span: Span
 _parser = Parser(_PY_LANGUAGE)
 
 
@@ -109,6 +136,9 @@ class PythonASTVisitor:
         self._container_stack: list[str] = [file_node_id]
         # Stack of NodeKind to know if we're inside a class
         self._kind_stack: list[NodeKind] = [NodeKind.FILE]
+        # Occurrence use-sites collected during this visit
+        self.occurrences: list[OccurrenceRef] = []
+        self.abs_file_path: str = str(ctx.file_path)
 
     # -------------------------------------------------------------------------
     # Dispatch
@@ -480,49 +510,28 @@ class PythonASTVisitor:
             )
 
     # -------------------------------------------------------------------------
-    # Call extraction
+    # Call extraction (occurrence-based — no SYMBOL nodes emitted)
     # -------------------------------------------------------------------------
 
     def _extract_calls(self, body: TSNode, caller_id: str) -> None:
-        """Find all call nodes in body and emit CALLS relations."""
+        """Find all call nodes in body and record call occurrences."""
         for child in body.children:
             self._find_calls_in_node(child, caller_id)
 
     def _find_calls_in_node(self, node: TSNode, caller_id: str) -> None:
+        """Recursively find call nodes and record occurrence refs."""
         if node.type == "call":
             func_node = next(
-                (
-                    c
-                    for c in node.children
-                    if c.type in ("identifier", "attribute")
-                ),
+                (c for c in node.children
+                 if c.type in ("identifier", "attribute")),
                 None,
             )
-            if func_node:
-                callee_name = _name_from_node(func_node)
-                if callee_name:
-                    sym_id = make_node_id(
-                        self._ctx.project_name,
-                        callee_name,
-                        NodeKind.SYMBOL.value,
-                    )
-                    if sym_id not in self._graph.nodes:
-                        self._graph.add_node(
-                            Node(
-                                id=sym_id,
-                                kind=NodeKind.SYMBOL,
-                                qualified_name=callee_name,
-                                name=callee_name.split(".")[-1],
-                                span=_make_span(node),
-                            )
-                        )
-                    self._graph.add_relation(
-                        Relation(
-                            source_id=caller_id,
-                            target_id=sym_id,
-                            kind=RelationKind.CALLS,
-                        )
-                    )
+            if func_node is not None:
+                name_node = (
+                    func_node.children[-1]
+                    if func_node.type == "attribute" else func_node
+                )
+                self._record_occurrence("call", name_node, caller_id)
         # Don't recurse into nested function/class definitions
         if node.type not in (
             "function_definition",
@@ -531,6 +540,23 @@ class PythonASTVisitor:
         ):
             for child in node.children:
                 self._find_calls_in_node(child, caller_id)
+
+    def _record_occurrence(
+        self, role: str, name_node: TSNode, enclosing_id: str
+    ) -> None:
+        """Append an OccurrenceRef for the given name node and role."""
+        span = _make_span(name_node)
+        if span is None:
+            return
+        self.occurrences.append(
+            OccurrenceRef(
+                role=role,
+                line=span.start_line,
+                col=span.start_col,
+                enclosing_id=enclosing_id,
+                span=span,
+            )
+        )
 
     # -------------------------------------------------------------------------
     # Import helper

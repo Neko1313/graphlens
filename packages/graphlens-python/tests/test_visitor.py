@@ -412,44 +412,57 @@ class TestImportExtraction:
 
 
 # ---------------------------------------------------------------------------
-# Call extraction
+# Call extraction — occurrences (not CALLS→SYMBOL)
 # ---------------------------------------------------------------------------
 
 
+def test_calls_collected_as_occurrences_not_symbol(parse_and_visit_visitor):
+    # parse_and_visit_visitor returns (graph, visitor)
+    graph, visitor = parse_and_visit_visitor(
+        "def a():\n    b()\n\ndef b():\n    pass\n"
+    )
+    assert all(n.kind.value != "symbol" for n in graph.nodes.values())
+    roles = [o.role for o in visitor.occurrences]
+    assert "call" in roles
+
+
 class TestCallExtraction:
-    def test_simple_call(self):
+    def test_simple_call_occurrence(self, parse_and_visit_visitor):
         src = "def foo():\n    bar()\n"
-        graph, _ = parse_and_visit(src)
-        calls = [r for r in graph.relations if r.kind == RelationKind.CALLS]
-        assert len(calls) == 1
+        graph, visitor = parse_and_visit_visitor(src)
+        call_occs = [o for o in visitor.occurrences if o.role == "call"]
+        assert len(call_occs) == 1
 
-    def test_method_call(self):
+    def test_method_call_occurrence(self, parse_and_visit_visitor):
         src = "def foo():\n    obj.method()\n"
-        graph, _ = parse_and_visit(src)
-        calls = [r for r in graph.relations if r.kind == RelationKind.CALLS]
-        assert len(calls) == 1
-        sym_id = calls[0].target_id
-        sym = graph.nodes[sym_id]
-        assert "method" in sym.name
+        graph, visitor = parse_and_visit_visitor(src)
+        call_occs = [o for o in visitor.occurrences if o.role == "call"]
+        assert len(call_occs) == 1
+        # The name recorded is the last identifier ('method')
+        assert call_occs[0].span is not None
 
-    def test_multiple_calls(self):
+    def test_multiple_calls_occurrences(self, parse_and_visit_visitor):
         src = "def foo():\n    a()\n    b()\n    c()\n"
-        graph, _ = parse_and_visit(src)
-        calls = [r for r in graph.relations if r.kind == RelationKind.CALLS]
-        assert len(calls) == 3
+        graph, visitor = parse_and_visit_visitor(src)
+        call_occs = [o for o in visitor.occurrences if o.role == "call"]
+        assert len(call_occs) == 3
 
-    def test_call_not_extracted_from_nested_function(self):
+    def test_call_not_extracted_from_nested_function(self, parse_and_visit_visitor):
         src = "def outer():\n    def inner():\n        nested_call()\n"
-        graph, _ = parse_and_visit(src)
-        outer = next(f for f in nodes_of_kind(graph, NodeKind.FUNCTION) if f.name == "outer")
-        calls_from_outer = [r for r in graph.relations if r.source_id == outer.id and r.kind == RelationKind.CALLS]
+        graph, visitor = parse_and_visit_visitor(src)
+        outer = next(
+            f for f in nodes_of_kind(graph, NodeKind.FUNCTION) if f.name == "outer"
+        )
+        calls_from_outer = [
+            o for o in visitor.occurrences
+            if o.role == "call" and o.enclosing_id == outer.id
+        ]
         assert len(calls_from_outer) == 0
 
-    def test_call_symbol_node_created(self):
+    def test_no_symbol_nodes(self, parse_and_visit_visitor):
         src = "def foo():\n    my_func()\n"
-        graph, _ = parse_and_visit(src)
-        symbols = nodes_of_kind(graph, NodeKind.SYMBOL)
-        assert any(s.name == "my_func" for s in symbols)
+        graph, visitor = parse_and_visit_visitor(src)
+        assert all(n.kind.value != "symbol" for n in graph.nodes.values())
 
 
 # ---------------------------------------------------------------------------

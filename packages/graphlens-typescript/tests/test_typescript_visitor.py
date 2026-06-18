@@ -232,11 +232,11 @@ class TestCallExtraction:
         calls = [r for r in graph.relations if r.kind == RelationKind.CALLS]
         assert len(calls) >= 1
 
-    def test_call_creates_symbol_node(self):
+    def test_call_creates_external_symbol_node(self):
         src = "function greet() { doSomething(); }"
         graph, _ = parse_and_visit(src)
-        symbols = nodes_of_kind(graph, NodeKind.SYMBOL)
-        assert any(s.name == "doSomething" for s in symbols)
+        ext_syms = nodes_of_kind(graph, NodeKind.EXTERNAL_SYMBOL)
+        assert any(s.name == "doSomething" for s in ext_syms)
 
 
 class TestArrowFunction:

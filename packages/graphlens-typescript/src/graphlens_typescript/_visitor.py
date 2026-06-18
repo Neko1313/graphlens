@@ -838,16 +838,17 @@ class TypescriptASTVisitor:
                     sym_id = make_node_id(
                         self._ctx.project_name,
                         callee_name,
-                        NodeKind.SYMBOL.value,
+                        NodeKind.EXTERNAL_SYMBOL.value,
                     )
                     if sym_id not in self._graph.nodes:
                         self._graph.add_node(
                             Node(
                                 id=sym_id,
-                                kind=NodeKind.SYMBOL,
+                                kind=NodeKind.EXTERNAL_SYMBOL,
                                 qualified_name=callee_name,
                                 name=callee_name.split(".")[-1],
                                 span=_make_span(node),
+                                metadata={"origin": "unknown"},
                             )
                         )
                     self._graph.add_relation(
