@@ -306,6 +306,7 @@ class PythonASTVisitor:
                 "bases": bases,
                 "is_abstract": is_abstract,
             },
+            name_node=name_node,
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
 
@@ -368,6 +369,7 @@ class PythonASTVisitor:
                 "is_property": "property" in decorators,
                 "return_annotation": return_annotation,
             },
+            name_node=name_node,
         )
         self._add_node_with_relation(func_node, RelationKind.DECLARES)
 
@@ -407,8 +409,10 @@ class PythonASTVisitor:
             annotation: str | None = None
             has_default = False
             is_variadic = False
+            id_node: TSNode | None = None
 
             if child.type == "identifier":
+                id_node = child
                 param_name = _node_text(child)
 
             elif child.type == "default_parameter":
@@ -464,6 +468,7 @@ class PythonASTVisitor:
                     "has_default": has_default,
                     "is_variadic": is_variadic,
                 },
+                name_node=id_node,
             )
             self._safe_add_node(param_node)
             self._graph.add_relation(
@@ -637,7 +642,17 @@ class PythonASTVisitor:
         name: str,
         ts_node: TSNode | None = None,
         metadata: dict[str, object] | None = None,
+        name_node: TSNode | None = None,
     ) -> Node:
+        """
+        Create a graph Node, optionally recording a ``name_span`` for the
+        identifier token so jedi can map definition locations back to nodes.
+        """
+        md = dict(metadata or {})
+        if name_node is not None:
+            name_span = _make_span(name_node)
+            if name_span is not None:
+                md["name_span"] = name_span
         return Node(
             id=make_node_id(
                 self._ctx.project_name, qualified_name, kind.value
@@ -647,7 +662,7 @@ class PythonASTVisitor:
             name=name,
             file_path=str(self._ctx.file_path),
             span=_make_span(ts_node) if ts_node else None,
-            metadata=metadata or {},
+            metadata=md,
         )
 
     def _push(self, qname: str, node_id: str, kind: NodeKind) -> None:

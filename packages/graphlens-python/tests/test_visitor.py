@@ -56,6 +56,14 @@ class TestImportClassifier:
 # ---------------------------------------------------------------------------
 
 
+def test_class_node_carries_name_span(parse_and_visit):
+    graph = parse_and_visit("class Foo:\n    pass\n")
+    cls = next(n for n in graph.nodes.values() if n.kind.value == "class")
+    ns = cls.metadata["name_span"]
+    # 'Foo' starts at line 1, col 7 (1-based)
+    assert (ns.start_line, ns.start_col) == (1, 7)
+
+
 class TestClassExtraction:
     def test_simple_class(self):
         graph, _ = parse_and_visit("class Foo:\n    pass\n")
