@@ -7,12 +7,20 @@ from graphlens.contracts.deps import (
     normalize_pkg_name,
 )
 from graphlens.contracts.reader import DiscoveredProject, ProjectReader
+from graphlens.contracts.resolver import (
+    Occurrence,
+    ResolvedRef,
+    SymbolResolver,
+)
 
 __all__ = [
     "DependencyFileParser",
     "DiscoveredProject",
     "GraphBackend",
     "LanguageAdapter",
+    "Occurrence",
     "ProjectReader",
+    "ResolvedRef",
+    "SymbolResolver",
     "normalize_pkg_name",
 ]
