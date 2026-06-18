@@ -598,6 +598,7 @@ version = "0.3.0"
 source = { editable = "packages/graphlens-python" }
 dependencies = [
     { name = "graphlens" },
+    { name = "jedi" },
     { name = "tree-sitter" },
     { name = "tree-sitter-python" },
 ]
@@ -605,6 +606,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "graphlens", editable = "." },
+    { name = "jedi", specifier = ">=0.19.2" },
     { name = "tree-sitter", specifier = ">=0.24" },
     { name = "tree-sitter-python", specifier = ">=0.23" },
 ]
