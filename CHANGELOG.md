@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed (breaking)
+- Graph model: removed `NodeKind.SYMBOL`; added `VARIABLE`, `ATTRIBUTE`,
+  `TYPE_ALIAS` node kinds and the `HAS_TYPE` relation kind.
+- Python adapter: `CALLS`/`INHERITS_FROM` now resolve to real declaration
+  nodes (via jedi); added resolved `REFERENCES` (read/write) and `HAS_TYPE`.
+
+### Added
+- Core `SpanIndex` (location→node bridge) and `SymbolResolver` contract
+  with `ResolvedRef`/`Occurrence` DTOs.
+- `graphlens-python` now depends on `jedi>=0.19.2`.
+
 ## [0.3.0] - 2026-05-10
 ### Features
 

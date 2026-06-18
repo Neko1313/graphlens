@@ -27,7 +27,7 @@ def test_dtos_are_frozen():
 
 def test_concrete_subclass_must_implement_all():
     class Partial(SymbolResolver):
-        def prepare(self, project_root, files):  # noqa: ANN001, ANN201
+        def prepare(self, project_root, files):
             ...
     with pytest.raises(TypeError):
         Partial()  # type: ignore[abstract]

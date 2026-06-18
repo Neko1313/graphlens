@@ -17,9 +17,10 @@ Each language adapter follows this internal layout:
 ```
 packages/graphlens-<lang>/
   src/graphlens_<lang>/
-    __init__.py              ← exports <Lang>Adapter
+    __init__.py              ← exports <Lang>Adapter (+ <Lang>Resolver if public)
     _adapter.py              ← LanguageAdapter subclass + _analyze_root()
-    _visitor.py              ← ASTVisitor + ImportClassifier
+    _visitor.py              ← ASTVisitor + ImportClassifier + OccurrenceRef
+    _resolver.py             ← SymbolResolver subclass (e.g. JediResolver)
     _deps.py                 ← DependencyFileParser implementations + default list
     _project_detector.py     ← is_<lang>_project(), find_<lang>_roots(), detect_project_name()
     _module_resolver.py      ← file→qualified_name, source root detection
@@ -56,11 +57,13 @@ adapter = adapter_registry.load("python")()
 graph = adapter.analyze(project_root)
 ```
 
-### 4. Tree-sitter for all language adapters
-Every adapter must use Tree-sitter as its parser. This gives:
-- A single unified traversal pattern across all languages
-- Error-tolerant parsing (`root_node.has_error` instead of exceptions)
-- CST with exact byte positions for `Span`
+### 4. Tree-sitter + type-aware resolver
+Every adapter uses Tree-sitter for structure extraction, occurrence roles
+(call/read/write/annotation/base), and spans. A language-specific
+`SymbolResolver` (jedi for Python) handles type-aware resolution — mapping
+occurrence positions to definition nodes and emitting CALLS/REFERENCES/
+HAS_TYPE/INHERITS_FROM edges. Tree-sitter is no longer the sole engine;
+it hands off precise position data that the resolver consumes.
 
 Parser setup (one module-level singleton per adapter):
 ```python
@@ -96,6 +99,16 @@ All state lives on three stacks pushed/popped as scope changes:
 
 The visitor receives an `ImportClassifier` (see §9) and must set
 `metadata["origin"]` on every `IMPORT` node.
+
+The visitor also records `metadata["name_span"]` on every structural node
+(CLASS, FUNCTION, METHOD, VARIABLE, ATTRIBUTE, TYPE_ALIAS, PARAMETER) so
+the `SpanIndex` can map a definition position back to a node ID. During
+traversal the visitor collects `OccurrenceRef` objects for every use-site,
+each carrying a role (`call` / `read` / `write` / `annotation` / `base`),
+the 1-based position of the name token, and the enclosing node ID. The
+visitor does **not** emit CALLS, INHERITS_FROM, REFERENCES, or HAS_TYPE
+directly — those edges are produced by the adapter's post-visit resolution
+pass (see §9).
 
 ### 6. Deterministic node IDs
 ```python
@@ -137,7 +150,7 @@ Span(
 )
 ```
 
-### 9. Import origin classification
+### 9. Import origin classification and occurrence-driven resolution
 
 Every `IMPORT` node must have `metadata["origin"]` set to one of:
 
@@ -148,10 +161,12 @@ Every `IMPORT` node must have `metadata["origin"]` set to one of:
 | `"third_party"` | Package listed in a dependency manifest |
 | `"unknown"` | None of the above (transitive dep, missing, etc.) |
 
-Classification pipeline in `_analyze_root()`, before visiting any file:
+Full analysis pipeline in `_analyze_root()`:
 
-1. **Internal** — pre-pass: derive top-level module names from file paths via
-   the module resolver (no source parsing needed).
+**Before visiting any file (pre-pass):**
+
+1. **Internal** — derive top-level module names from file paths via the module
+   resolver (no source parsing needed).
 2. **Third-party** — run all `DependencyFileParser` instances that `can_parse()`
    the project root, union results.
 3. **Stdlib** — language built-ins (e.g. `sys.stdlib_module_names` for Python).
@@ -162,6 +177,25 @@ visitor. Relative imports are always `"internal"` regardless of the classifier.
 For `"internal"` imports: resolve `RESOLVES_TO` to the existing `MODULE` node
 when it is present in the graph; fall back to `EXTERNAL_SYMBOL` so the edge
 is never missing when the target file hasn't been processed yet.
+
+**After visiting all files (resolution pass):**
+
+4. Build a `SpanIndex` from the completed graph — this is the
+   location→node bridge that maps any `(file_path, line, col)` to the node
+   whose `name_span` contains that position.
+5. Call `SymbolResolver.prepare(project_root, files)` to initialise the
+   type-aware engine (e.g. jedi).
+6. For each `OccurrenceRef` collected by the visitor, call
+   `SymbolResolver.definition_at(file, line, col)` (for `call`/`annotation`/
+   `base` roles) or `SymbolResolver.infer_type_at()` (for `annotation`/`base`
+   where a type is needed). The returned `ResolvedRef.origin` field carries
+   the same four-value vocabulary (`"stdlib"` / `"internal"` / `"third_party"`
+   / `"unknown"`) — now derived from the resolver, not from the import
+   manifest.
+7. Use `SpanIndex.at(file_path, line, col)` to look up the target declaration
+   node. If found, emit the appropriate edge (CALLS, REFERENCES, HAS_TYPE,
+   INHERITS_FROM) between the `enclosing_id` from the occurrence and the
+   resolved node. If not found, fall back to an `EXTERNAL_SYMBOL` node.
 
 `DependencyFileParser` rules:
 - One parser per file format — compose via a `<LANG>_DEFAULT_DEP_PARSERS` list.
@@ -186,10 +220,11 @@ implementation. Callers must not build file lists manually. Pass explicit
 
 ```
 NodeKind:     PROJECT  MODULE  FILE  CLASS  METHOD  FUNCTION
-              PARAMETER  IMPORT  SYMBOL  EXTERNAL_SYMBOL  DEPENDENCY
+              PARAMETER  IMPORT  EXTERNAL_SYMBOL  DEPENDENCY
+              VARIABLE  ATTRIBUTE  TYPE_ALIAS
 
 RelationKind: CONTAINS  DECLARES  IMPORTS  RESOLVES_TO
-              CALLS  REFERENCES  INHERITS_FROM  DEPENDS_ON
+              CALLS  REFERENCES  INHERITS_FROM  DEPENDS_ON  HAS_TYPE
 ```
 
 Typical hierarchy built by an adapter:
@@ -202,10 +237,13 @@ PROJECT
                                                   └─(DECLARES)─ CLASS
                                                                   └─(DECLARES)─ METHOD
                                                   └─(DECLARES)─ FUNCTION
+                                                  └─(DECLARES)─ VARIABLE / ATTRIBUTE / TYPE_ALIAS
                                                   └─(DECLARES)─ IMPORT ─(RESOLVES_TO)─ MODULE (internal)
                                                                         └─(RESOLVES_TO)─ EXTERNAL_SYMBOL (stdlib/third_party/unknown)
-FUNCTION/METHOD ─(CALLS)─ SYMBOL
-CLASS ─(INHERITS_FROM)─ EXTERNAL_SYMBOL
+FUNCTION/METHOD ─(CALLS)─ FUNCTION/METHOD (resolved) or EXTERNAL_SYMBOL
+CLASS ─(INHERITS_FROM)─ CLASS (resolved) or EXTERNAL_SYMBOL
+FUNCTION/METHOD/PARAMETER ─(HAS_TYPE)─ CLASS (resolved) or EXTERNAL_SYMBOL
+FILE/FUNCTION/METHOD ─(REFERENCES)─ VARIABLE/ATTRIBUTE (resolved) or EXTERNAL_SYMBOL
 ```
 
 EXTERNAL_SYMBOL always carries `metadata["origin"]` = `"stdlib"` | `"third_party"` |
@@ -217,7 +255,7 @@ EXTERNAL_SYMBOL always carries `metadata["origin"]` = `"stdlib"` | `"third_party
 
 Key checklist:
 1. `packages/graphlens-<lang>/` with `src/` layout
-2. `tree-sitter>=0.24` + `tree-sitter-<lang>` in dependencies
+2. `tree-sitter>=0.24` + `tree-sitter-<lang>` + type-aware resolver dep in dependencies
 3. Entry point `"graphlens.adapters"` → `"<lang>"`
 4. `LanguageAdapter` subclass: `language()`, `can_handle()`, `file_extensions()`, `analyze()`
 5. `find_<lang>_roots()` for monorepo support
@@ -226,8 +264,13 @@ Key checklist:
 7. `_deps.py`: `DependencyFileParser` implementations + `<LANG>_DEFAULT_DEP_PARSERS`
 8. `ImportClassifier` pre-pass in `_analyze_root()`, `origin` on every IMPORT node
 9. Adapter accepts `dep_parsers` constructor param for custom override
-10. Visitor: dispatch by `node.type`, three stacks, `make_node_id` for IDs
-11. Tests mirror `packages/graphlens-python/tests/` structure including `test_<lang>_deps.py`
+10. Visitor: dispatch by `node.type`, three stacks, `make_node_id` for IDs; records
+    `metadata["name_span"]` on structural nodes; collects `OccurrenceRef`s (does NOT
+    emit CALLS/INHERITS_FROM/REFERENCES/HAS_TYPE directly)
+11. `_resolver.py`: `SymbolResolver` subclass; never raises — all errors return None/[]
+12. Post-visit resolution pass: build `SpanIndex`, call `resolver.prepare()`, then
+    for each occurrence call `definition_at()` / `infer_type_at()` and emit edges
+13. Tests mirror `packages/graphlens-python/tests/` structure including `test_<lang>_deps.py`
 
 ## Adding a dependency parser for an existing adapter
 
