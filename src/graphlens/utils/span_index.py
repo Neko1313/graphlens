@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from graphlens.utils.span import Span
+
 if TYPE_CHECKING:
     from graphlens.models.graph import GraphLens
-    from graphlens.utils.span import Span
 
 _Entry = tuple[str, "Span"]  # (node_id, span)
 
@@ -47,8 +48,8 @@ class SpanIndex:
                 continue
             idx.add_full(node.file_path, node.id, node.span)
             name_span = node.metadata.get("name_span")
-            if name_span is not None:
-                idx.add_name(node.file_path, node.id, name_span)  # type: ignore[arg-type]
+            if isinstance(name_span, Span):
+                idx.add_name(node.file_path, node.id, name_span)
         return idx
 
     def _smallest_containing(

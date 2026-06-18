@@ -20,9 +20,9 @@ def test_dtos_are_frozen():
         is_definition=False, access="call",
     )
     with pytest.raises(AttributeError):
-        ref.full_name = "x"  # type: ignore[misc]
+        ref.full_name = "x"  # ty: ignore[invalid-assignment]
     with pytest.raises(AttributeError):
-        occ.access = "x"  # type: ignore[misc]
+        occ.access = "x"  # ty: ignore[invalid-assignment]
 
 
 def test_concrete_subclass_must_implement_all():
