@@ -430,21 +430,21 @@ def test_calls_collected_as_occurrences_not_symbol(parse_and_visit_visitor):
 class TestCallExtraction:
     def test_simple_call_occurrence(self, parse_and_visit_visitor):
         src = "def foo():\n    bar()\n"
-        graph, visitor = parse_and_visit_visitor(src)
+        _graph, visitor = parse_and_visit_visitor(src)
         call_occs = [o for o in visitor.occurrences if o.role == "call"]
         assert len(call_occs) == 1
 
     def test_method_call_occurrence(self, parse_and_visit_visitor):
         src = "def foo():\n    obj.method()\n"
-        graph, visitor = parse_and_visit_visitor(src)
+        _graph, visitor = parse_and_visit_visitor(src)
         call_occs = [o for o in visitor.occurrences if o.role == "call"]
         assert len(call_occs) == 1
-        # The name recorded is the last identifier ('method')
-        assert call_occs[0].span is not None
+        # The name recorded is the last identifier ('method'), at col 9 (1-based)
+        assert call_occs[0].col == 9
 
     def test_multiple_calls_occurrences(self, parse_and_visit_visitor):
         src = "def foo():\n    a()\n    b()\n    c()\n"
-        graph, visitor = parse_and_visit_visitor(src)
+        _graph, visitor = parse_and_visit_visitor(src)
         call_occs = [o for o in visitor.occurrences if o.role == "call"]
         assert len(call_occs) == 3
 
@@ -462,7 +462,7 @@ class TestCallExtraction:
 
     def test_no_symbol_nodes(self, parse_and_visit_visitor):
         src = "def foo():\n    my_func()\n"
-        graph, visitor = parse_and_visit_visitor(src)
+        graph, _visitor = parse_and_visit_visitor(src)
         assert all(n.kind.value != "symbol" for n in graph.nodes.values())
 
 
@@ -472,7 +472,7 @@ class TestCallExtraction:
 
 
 def test_base_and_annotation_occurrences(parse_and_visit_visitor):
-    graph, visitor = parse_and_visit_visitor(
+    _graph, visitor = parse_and_visit_visitor(
         "class Base:\n    pass\n\n"
         "class Sub(Base):\n    pass\n\n"
         "def f(x: Base) -> Base:\n    pass\n"
@@ -722,6 +722,18 @@ class TestHandleFunctionNoIdentifier:
         visitor._handle_function(mock_node, decorators=[])
         # Should return without adding any function nodes
         assert len(nodes_of_kind(graph, NodeKind.FUNCTION)) == 0
+
+
+def test_self_attribute_named_correctly(parse_and_visit_visitor):
+    graph, visitor = parse_and_visit_visitor(
+        "class C:\n    def __init__(self):\n        self.y = 1\n"
+    )
+    attrs = [n for n in graph.nodes.values() if n.kind.value == "attribute"]
+    assert any(a.name == "y" for a in attrs)
+    assert not any(a.name == "self" for a in attrs)
+    # write occurrence lands on the 'y' identifier (col 14, 1-based), not 'self' (col 9)
+    writes = [o for o in visitor.occurrences if o.role == "write"]
+    assert any(o.col == 14 for o in writes)
 
 
 class TestDecoratedDefinitionEdgeCases:

@@ -470,7 +470,9 @@ class PythonASTVisitor:
                 ann_type_node = next(
                     (c for c in child.children if c.type == "type"), None
                 )
-                annotation = _node_text(ann_type_node) if ann_type_node else None
+                annotation = (
+                    _node_text(ann_type_node) if ann_type_node else None
+                )
 
             elif child.type == "typed_default_parameter":
                 id_node = next(
@@ -480,7 +482,9 @@ class PythonASTVisitor:
                 ann_type_node = next(
                     (c for c in child.children if c.type == "type"), None
                 )
-                annotation = _node_text(ann_type_node) if ann_type_node else None
+                annotation = (
+                    _node_text(ann_type_node) if ann_type_node else None
+                )
                 has_default = True
 
             elif child.type in {
@@ -575,8 +579,10 @@ class PythonASTVisitor:
         self, type_node: TSNode, enclosing_id: str
     ) -> None:
         """
-        Record an ``annotation`` occurrence for the leading identifier in
-        a ``type`` node (return annotation or parameter annotation).
+        Record an ``annotation`` occurrence for the leading identifier.
+
+        The leading identifier is taken from a ``type`` node (return
+        annotation or parameter annotation).
         """
         ident = _first_identifier(type_node)
         if ident is not None:
@@ -609,7 +615,15 @@ class PythonASTVisitor:
             (c for c in node.children if c.type == "type"), None
         )
         rhs = node.children[-1] if node.children[-1] is not lhs else None
-        name_node = _first_identifier(lhs)
+        # For self.attr = v, use the LAST identifier child (the attribute
+        # name), not the first (which would be 'self').
+        if lhs.type == "attribute":
+            name_node = next(
+                (c for c in reversed(lhs.children) if c.type == "identifier"),
+                None,
+            )
+        else:
+            name_node = _first_identifier(lhs)
         if name_node is None:
             return
         name = _node_text(name_node)
@@ -768,7 +782,7 @@ class PythonASTVisitor:
         if node.id not in self._graph.nodes:
             self._graph.add_node(node)
 
-    def _make_node(
+    def _make_node(  # noqa: PLR0913
         self,
         kind: NodeKind,
         qualified_name: str,
@@ -778,8 +792,10 @@ class PythonASTVisitor:
         name_node: TSNode | None = None,
     ) -> Node:
         """
-        Create a graph Node, optionally recording a ``name_span`` for the
-        identifier token so jedi can map definition locations back to nodes.
+        Create a graph Node, optionally recording a ``name_span``.
+
+        The ``name_span`` captures the identifier token position so jedi
+        can map definition locations back to nodes.
         """
         md = dict(metadata or {})
         if name_node is not None:

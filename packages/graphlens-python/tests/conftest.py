@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 from graphlens import GraphLens, Node, NodeKind
@@ -15,9 +14,6 @@ from graphlens_python._visitor import (
     VisitorContext,
     parse_python,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture
