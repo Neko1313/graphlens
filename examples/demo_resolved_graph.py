@@ -70,10 +70,16 @@ def main() -> None:
         src_name = src.qualified_name if src else r.source_id
         print(f"  {src_name}  --calls-->  {dst.qualified_name}")
 
-    # find-usages: who calls X (X = [symbol] arg, else the most-called func).
-    incoming: dict[str, list[str]] = {}
-    for r in resolved:
-        incoming.setdefault(r.target_id, []).append(r.source_id)
+    # find-usages: who USES X — both CALLS (direct calls) and REFERENCES
+    # (used as a value: Depends(X), callbacks, decorator args). X = [symbol]
+    # arg, else the most-called function.
+    usage_kinds = (RelationKind.CALLS, RelationKind.REFERENCES)
+    incoming: dict[str, list[tuple[str, str]]] = {}
+    for r in graph.relations:
+        if r.kind in usage_kinds:
+            incoming.setdefault(r.target_id, []).append(
+                (r.source_id, r.kind.value)
+            )
 
     target_id = None
     if want:
@@ -91,14 +97,16 @@ def main() -> None:
 
     if target_id is not None:
         tgt = nodes[target_id]
-        callers = incoming.get(target_id, [])
+        users = incoming.get(target_id, [])
+        n_calls = sum(1 for _, k in users if k == "calls")
+        n_refs = sum(1 for _, k in users if k == "references")
         print(
-            f"\nfind-usages: '{tgt.qualified_name}' is called "
-            f"{len(callers)}x by:"
+            f"\nfind-usages: '{tgt.qualified_name}' used {len(users)}x "
+            f"({n_calls} calls, {n_refs} references) by:"
         )
-        for cid in callers:
-            c = nodes.get(cid)
-            print(f"  - {c.qualified_name if c else cid}")
+        for sid, kind in users:
+            c = nodes.get(sid)
+            print(f"  [{kind:10}] {c.qualified_name if c else sid}")
 
 
 if __name__ == "__main__":
