@@ -163,9 +163,8 @@ class PythonASTVisitor:
         self._visit_children(node)
 
     def _visit_decorated_definition(self, node: TSNode) -> None:
-        decorators = [
-            _decorator_name(c) for c in node.children if c.type == "decorator"
-        ]
+        decorator_nodes = [c for c in node.children if c.type == "decorator"]
+        decorators = [_decorator_name(c) for c in decorator_nodes]
         inner = next(
             (
                 c
@@ -177,15 +176,15 @@ class PythonASTVisitor:
         if inner is None:
             return
         if inner.type == "class_definition":
-            self._handle_class(inner, decorators)
+            self._handle_class(inner, decorators, decorator_nodes)
         else:
-            self._handle_function(inner, decorators)
+            self._handle_function(inner, decorators, decorator_nodes)
 
     def _visit_class_definition(self, node: TSNode) -> None:
-        self._handle_class(node, decorators=[])
+        self._handle_class(node, decorators=[], decorator_nodes=[])
 
     def _visit_function_definition(self, node: TSNode) -> None:
-        self._handle_function(node, decorators=[])
+        self._handle_function(node, decorators=[], decorator_nodes=[])
 
     def _visit_import_statement(self, node: TSNode) -> None:
         # import X  /  import X.Y  /  import X as Y
@@ -305,7 +304,12 @@ class PythonASTVisitor:
     # Class and function handlers
     # -------------------------------------------------------------------------
 
-    def _handle_class(self, node: TSNode, decorators: list[str]) -> None:
+    def _handle_class(
+        self,
+        node: TSNode,
+        decorators: list[str],
+        decorator_nodes: list[TSNode] | None = None,
+    ) -> None:
         name_node = next(
             (c for c in node.children if c.type == "identifier"), None
         )
@@ -345,6 +349,9 @@ class PythonASTVisitor:
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
 
+        # Decorator arguments used as values (e.g. @deco(handler)).
+        self._scan_decorators(decorator_nodes, class_node.id)
+
         # Record base occurrences (resolver emits INHERITS_FROM later)
         if arg_list:
             for c in arg_list.children:
@@ -361,7 +368,12 @@ class PythonASTVisitor:
             self._visit_children(body)
         self._pop()
 
-    def _handle_function(self, node: TSNode, decorators: list[str]) -> None:
+    def _handle_function(
+        self,
+        node: TSNode,
+        decorators: list[str],
+        decorator_nodes: list[TSNode] | None = None,
+    ) -> None:
         is_async = any(c.type == "async" for c in node.children)
         parent_kind = self._kind_stack[-1]
         kind = (
@@ -407,9 +419,13 @@ class PythonASTVisitor:
         )
         self._add_node_with_relation(func_node, RelationKind.DECLARES)
 
+        # Decorator arguments used as values (e.g. @deco(handler)).
+        self._scan_decorators(decorator_nodes, func_node.id)
+
         # Record return annotation occurrence
         if type_node is not None:
             self._record_annotation(type_node, func_node.id)
+            self._scan_annotation_calls(type_node, func_node.id)
 
         self._push(qname, func_node.id, kind)
 
@@ -420,20 +436,11 @@ class PythonASTVisitor:
         if params_node:
             self._extract_parameters(params_node, func_node.id, qname)
 
-        # Body: extract calls + visit nested defs
+        # Body: single traversal records calls + reads + dispatches nested
+        # defs, with no double-counting.
         body = next((c for c in node.children if c.type == "block"), None)
         if body:
-            self._extract_calls(body, func_node.id)
-            # Visit nested defs, expression statements, and return statements
-            for child in body.children:
-                if child.type in (
-                    "function_definition",
-                    "class_definition",
-                    "decorated_definition",
-                    "expression_statement",
-                    "return_statement",
-                ):
-                    self.visit(child)
+            self._walk_body(body, func_node.id)
 
         self._pop()
 
@@ -526,38 +533,116 @@ class PythonASTVisitor:
             # Record annotation occurrence for typed parameters
             if ann_type_node is not None:
                 self._record_annotation(ann_type_node, param_node.id)
+                # Calls embedded in the annotation (e.g. Depends(get_dep))
+                # are value uses enclosed by the function, not the parameter.
+                self._scan_annotation_calls(ann_type_node, function_id)
 
     # -------------------------------------------------------------------------
-    # Call extraction (occurrence-based — no SYMBOL nodes emitted)
+    # Value scanning (single source of truth for read + call occurrences)
     # -------------------------------------------------------------------------
 
-    def _extract_calls(self, body: TSNode, caller_id: str) -> None:
-        """Find all call nodes in body and record call occurrences."""
-        for child in body.children:
-            self._find_calls_in_node(child, caller_id)
+    _NESTED_DEF_TYPES = (
+        "function_definition",
+        "class_definition",
+        "decorated_definition",
+    )
 
-    def _find_calls_in_node(self, node: TSNode, caller_id: str) -> None:
-        """Recursively find call nodes and record occurrence refs."""
+    def _scan_value(self, node: TSNode, enclosing_id: str) -> None:
+        """
+        Record ``read`` and ``call`` occurrences for a value expression.
+
+        This is the single place that turns a value-position subtree into
+        occurrences, so each identifier yields exactly one ``read`` and each
+        call yields exactly one ``call``. Used for assignment right-hand
+        sides, return expressions, standalone expression statements, call
+        argument lists, decorator arguments, and ``Annotated[...]`` /
+        ``Depends(...)`` annotations.
+
+        Rules:
+        - ``call`` → record a ``call`` on the callee name, then scan each
+          argument (nested calls + identifier args become occurrences).
+          The callee's receiver (``obj`` in ``obj.m()``) is not recorded.
+        - ``identifier`` → record a ``read``.
+        - otherwise → recurse into children.
+
+        Value expressions never contain nested definitions (those are
+        statements), so no def-skipping guard is needed here.
+        """
         if node.type == "call":
-            func_node = next(
+            callee = next(
                 (c for c in node.children
                  if c.type in ("identifier", "attribute")),
                 None,
             )
-            if func_node is not None:
+            if callee is not None:
                 name_node = (
-                    func_node.children[-1]
-                    if func_node.type == "attribute" else func_node
+                    callee.children[-1]
+                    if callee.type == "attribute" else callee
                 )
-                self._record_occurrence("call", name_node, caller_id)
-        # Don't recurse into nested function/class definitions
-        if node.type not in (
-            "function_definition",
-            "class_definition",
-            "decorated_definition",
-        ):
+                self._record_occurrence("call", name_node, enclosing_id)
+            arg_list = next(
+                (c for c in node.children if c.type == "argument_list"),
+                None,
+            )
+            if arg_list is not None:
+                for c in arg_list.children:
+                    if c.type not in ("(", ")", ","):
+                        self._scan_value(c, enclosing_id)
+            return
+        if node.type == "identifier":
+            self._record_occurrence("read", node, enclosing_id)
+            return
+        for child in node.children:
+            self._scan_value(child, enclosing_id)
+
+    def _walk_body(self, body: TSNode, enclosing_id: str) -> None:
+        """
+        Walk a function/module/class body once, recording occurrences.
+
+        A single traversal records calls and reads with no double-counting:
+        assignments and return statements go through their dedicated
+        handlers; every other value-position expression goes through
+        ``_scan_value``. Nested definitions are dispatched to ``visit`` so
+        their own nodes/bodies are built. Compound statements (if/for/while/
+        with/try/...) are descended into so calls and reads in nested blocks
+        and headers are captured.
+        """
+        for child in body.children:
+            self._walk_statement(child, enclosing_id)
+
+    def _walk_statement(self, node: TSNode, enclosing_id: str) -> None:
+        """
+        Dispatch a single statement (or clause) node (see ``_walk_body``).
+
+        Assignments and returns go through their dedicated handlers; nested
+        definitions are dispatched to ``visit``; ``block`` children and
+        block-bearing clauses (``else_clause``, ``except_clause``, ...) are
+        recursed into; every remaining child is a value expression scanned
+        via ``_scan_value``.
+        """
+        if node.type in self._NESTED_DEF_TYPES:
+            self.visit(node)
+            return
+        if node.type == "expression_statement":
             for child in node.children:
-                self._find_calls_in_node(child, caller_id)
+                if child.type == "assignment":
+                    self._handle_assignment(child)
+                else:
+                    self._scan_value(child, enclosing_id)
+            return
+        if node.type == "return_statement":
+            self._visit_return_statement(node)
+            return
+        # Compound / clause / other statements. Direct children are either
+        # blocks, block-bearing clauses (else/except/elif/finally/...), or
+        # header value expressions (conditions, iterables, context managers).
+        for child in node.children:
+            if child.type == "block":
+                self._walk_body(child, enclosing_id)
+            elif _has_block(child):
+                self._walk_statement(child, enclosing_id)
+            else:
+                self._scan_value(child, enclosing_id)
 
     def _record_occurrence(
         self, role: str, name_node: TSNode, enclosing_id: str
@@ -589,41 +674,67 @@ class PythonASTVisitor:
         if ident is not None:
             self._record_occurrence("annotation", ident, enclosing_id)
 
+    def _scan_decorators(
+        self, decorator_nodes: list[TSNode] | None, enclosing_id: str
+    ) -> None:
+        """
+        Record call/read occurrences for decorator call arguments.
+
+        For ``@deco(handler)`` this records a ``call`` on ``deco`` and a
+        ``read`` on the ``handler`` value argument. Bare decorators
+        (``@deco``) have no call node, so nothing is recorded.
+        """
+        for dec in decorator_nodes or []:
+            call = next(
+                (c for c in dec.children if c.type == "call"), None
+            )
+            if call is not None:
+                self._scan_value(call, enclosing_id)
+
+    def _scan_annotation_calls(
+        self, type_node: TSNode, enclosing_id: str
+    ) -> None:
+        """
+        Scan ``call`` nodes embedded in a type annotation as values.
+
+        Covers ``Annotated[T, Depends(get_dep)]`` and similar: the
+        ``Depends(...)`` call records a ``call`` on ``Depends`` and a
+        ``read`` on ``get_dep``. Plain type identifiers are left to
+        ``_record_annotation`` (HAS_TYPE), not recorded here.
+        """
+        for call in _find_calls(type_node):
+            self._scan_value(call, enclosing_id)
+
     # -------------------------------------------------------------------------
     # Assignment / variable handling
     # -------------------------------------------------------------------------
 
     def _visit_return_statement(self, node: TSNode) -> None:
         """
-        Record ``read`` occurrences for identifiers in a return expression.
+        Record ``read``/``call`` occurrences for a return expression.
 
         Only the non-keyword children are inspected (the ``return`` keyword
-        is skipped). Calls within the returned expression are handled by
-        ``_extract_calls``; this method covers plain identifier reads.
+        is skipped). Value scanning is delegated to ``_scan_value`` so reads
+        and calls in the returned expression are recorded exactly once.
         """
         for child in node.children:
             if child.type != "return":
-                self._record_reads(child)
+                self._scan_value(child, self._container_stack[-1])
 
     def _visit_expression_statement(self, node: TSNode) -> None:
         """
-        Dispatch expression_statement children — handle assignments.
+        Dispatch expression_statement children at module/class scope.
 
-        When the current scope is NOT a function/method (i.e. the enclosing
-        kind is FILE, MODULE, or CLASS) we also record call occurrences here,
-        because ``_extract_calls`` is only invoked from ``_handle_function``.
-        Inside functions the body loop already called ``_extract_calls``, so
-        we guard against re-recording by checking the kind stack.
+        Assignments create VARIABLE/ATTRIBUTE/TYPE_ALIAS nodes; every other
+        value-position expression is scanned via ``_scan_value`` so calls and
+        their argument reads are recorded exactly once. Function bodies do
+        not reach this method (they are driven by ``_walk_body``).
         """
-        _non_function_kinds = {NodeKind.FILE, NodeKind.MODULE, NodeKind.CLASS}
-        in_function = self._kind_stack[-1] not in _non_function_kinds
         for child in node.children:
             if child.type == "assignment":
                 self._handle_assignment(child)
             else:
-                if not in_function:
-                    self._find_calls_in_node(child, self._container_stack[-1])
-                self.visit(child)
+                self._scan_value(child, self._container_stack[-1])
 
     def _handle_assignment(self, node: TSNode) -> None:
         # TODO(deferred): tuple-unpacking / augmented / walrus assignments not
@@ -684,27 +795,13 @@ class PythonASTVisitor:
         self._add_node_with_relation(var_node, RelationKind.DECLARES)
         self._record_occurrence("write", name_node, self._container_stack[-1])
         if rhs is not None and not is_alias:
-            self._record_reads(rhs)
+            self._scan_value(rhs, self._container_stack[-1])
         elif is_alias and rhs is not None:
             ident = _first_identifier(rhs)
             if ident is not None:
                 self._record_occurrence(
                     "annotation", ident, self._container_stack[-1]
                 )
-
-    def _record_reads(self, node: TSNode) -> None:
-        """Recursively record ``read`` occurrences for all identifiers."""
-        if node.type == "call":
-            # calls are recorded as call occurrences elsewhere; still read args
-            for c in node.children:
-                if c.type == "argument_list":
-                    self._record_reads(c)
-            return
-        if node.type == "identifier":
-            self._record_occurrence("read", node, self._container_stack[-1])
-            return
-        for child in node.children:
-            self._record_reads(child)
 
     # -------------------------------------------------------------------------
     # Import helper
@@ -923,6 +1020,28 @@ def _make_span(node: TSNode | None) -> Span | None:
         )
     except Exception:
         return None
+
+
+def _has_block(node: TSNode) -> bool:
+    """Return True if *node* directly contains a ``block`` child."""
+    return any(c.type == "block" for c in node.children)
+
+
+def _find_calls(node: TSNode) -> list[TSNode]:
+    """
+    Return the outermost ``call`` nodes reachable from *node*.
+
+    Does not descend into a call's own children, so nested calls inside
+    arguments are left to the value scanner that processes each returned
+    call. Used to locate ``Depends(...)``-style calls embedded inside type
+    annotations.
+    """
+    if node.type == "call":
+        return [node]
+    out: list[TSNode] = []
+    for child in node.children:
+        out.extend(_find_calls(child))
+    return out
 
 
 def _first_identifier(node: TSNode) -> TSNode | None:

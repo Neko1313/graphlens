@@ -456,3 +456,62 @@ def test_obj_method_call_resolves_to_real_method_node(tmp_path):
         f"calls={[(r.source_id, r.target_id) for r in calls]}; "
         f"m_node.id={m_node.id}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature #2: function used as a value (Depends, decorator arg) → REFERENCES
+# ---------------------------------------------------------------------------
+
+
+def test_fastapi_depends_in_annotation_references_function(tmp_path):
+    """A FastAPI-style ``Depends(get_dep)`` inside an ``Annotated[...]``
+    parameter annotation produces a REFERENCES edge from the enclosing
+    function to the real ``get_dep`` FUNCTION node (Feature #2)."""
+    (tmp_path / "m.py").write_text(
+        "from typing import Annotated\n\n"
+        "def Depends(x):\n    return x\n\n"
+        "def get_dep():\n    return 1\n\n"
+        "def view(dep: Annotated[int, Depends(get_dep)]):\n"
+        "    return dep\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+
+    get_dep = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "function" and n.name == "get_dep"
+    )
+    view = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "function" and n.name == "view"
+    )
+    refs = _edges(graph, "references")
+    assert any(
+        r.target_id == get_dep.id and r.source_id == view.id for r in refs
+    ), (
+        f"expected a REFERENCES edge from 'view' to real 'get_dep' FUNCTION; "
+        f"refs to get_dep={[r.source_id for r in refs if r.target_id == get_dep.id]}"
+    )
+
+
+def test_decorator_argument_references_internal_function(tmp_path):
+    """A decorator call argument that is a real internal function produces a
+    REFERENCES edge to that function (Feature #2)."""
+    (tmp_path / "m.py").write_text(
+        "def deco(fn):\n    def wrap(f):\n        return f\n    return wrap\n\n"
+        "def handler():\n    return 1\n\n"
+        "@deco(handler)\ndef view():\n    return 2\n"
+    )
+    graph = PythonAdapter().analyze(tmp_path)
+
+    handler = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind.value == "function" and n.name == "handler"
+    )
+    refs = _edges(graph, "references")
+    assert any(r.target_id == handler.id for r in refs), (
+        f"expected a REFERENCES edge targeting real 'handler' FUNCTION; "
+        f"refs={[(r.source_id, r.target_id) for r in refs]}"
+    )

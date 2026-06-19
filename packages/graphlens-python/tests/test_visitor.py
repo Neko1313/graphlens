@@ -870,3 +870,158 @@ def test_no_double_counting_call_in_function(parse_and_visit_visitor):
     assert len(call_occs) == 1, (
         f"expected exactly 1 call occurrence, got {len(call_occs)}: {call_occs}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature #2: function/variable used as a VALUE → read occurrence
+# ---------------------------------------------------------------------------
+
+
+def test_statement_level_call_arg_records_read(parse_and_visit_visitor):
+    """``f(a)`` at statement level records exactly one ``call`` (on ``f``)
+    and exactly one ``read`` (on the ``a`` argument)."""
+    src = "def f(x):\n    pass\n\ndef a():\n    pass\n\nf(a)\n"
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    read_occs = [o for o in visitor.occurrences if o.role == "read"]
+    assert len(call_occs) == 1, (
+        f"expected exactly 1 call occurrence, got {len(call_occs)}: "
+        f"{[(o.line, o.col) for o in call_occs]}"
+    )
+    assert len(read_occs) == 1, (
+        f"expected exactly 1 read occurrence, got {len(read_occs)}: "
+        f"{[(o.line, o.col) for o in read_occs]}"
+    )
+
+
+def test_no_double_count_read_in_assignment_rhs(parse_and_visit_visitor):
+    """``x = f(a)`` records exactly ONE ``read`` for ``a`` (not two) and
+    exactly ONE ``call`` for ``f`` — assignment-rhs and call-arg scanning
+    must not double-record the same identifier."""
+    src = "def f(y):\n    pass\n\ndef a():\n    pass\n\ndef use():\n    x = f(a)\n"
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    read_occs = [o for o in visitor.occurrences if o.role == "read"]
+    assert len(call_occs) == 1, (
+        f"expected exactly 1 call occurrence, got {len(call_occs)}: "
+        f"{[(o.line, o.col) for o in call_occs]}"
+    )
+    assert len(read_occs) == 1, (
+        f"expected exactly 1 read occurrence for 'a', got {len(read_occs)}: "
+        f"{[(o.line, o.col) for o in read_occs]}"
+    )
+
+
+def test_decorator_call_arg_records_read(parse_and_visit_visitor):
+    """A decorator call argument that is an identifier records a ``read``
+    on that identifier and a ``call`` on the decorator."""
+    src = (
+        "def handler():\n    pass\n\n"
+        "@deco(handler)\ndef view():\n    pass\n"
+    )
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    read_occs = [o for o in visitor.occurrences if o.role == "read"]
+    # one call on 'deco'
+    assert len(call_occs) == 1, (
+        f"expected 1 call (deco), got {len(call_occs)}: "
+        f"{[(o.line, o.col) for o in call_occs]}"
+    )
+    # one read on 'handler' (line 4)
+    assert any(o.line == 4 for o in read_occs), (
+        f"expected a read on 'handler' at line 4; "
+        f"got reads: {[(o.line, o.col) for o in read_occs]}"
+    )
+
+
+def test_call_in_if_else_block_records_occurrences(parse_and_visit_visitor):
+    """Calls inside ``if``/``else`` blocks and the condition record call +
+    read occurrences (single-traversal compound-statement walking)."""
+    src = (
+        "def cond(x):\n    return x\n\n"
+        "def foo(x):\n    pass\n\n"
+        "def bar(x):\n    pass\n\n"
+        "def use(a, b, c):\n"
+        "    if cond(a):\n        foo(b)\n    else:\n        bar(c)\n"
+    )
+    graph, visitor = parse_and_visit_visitor(src)
+    use = next(
+        f for f in nodes_of_kind(graph, NodeKind.FUNCTION) if f.name == "use"
+    )
+    call_occs = [
+        o for o in visitor.occurrences
+        if o.role == "call" and o.enclosing_id == use.id
+    ]
+    read_occs = [
+        o for o in visitor.occurrences
+        if o.role == "read" and o.enclosing_id == use.id
+    ]
+    # three calls: cond, foo, bar — all attributed to 'use'
+    assert len(call_occs) == 3, (
+        f"expected 3 calls (cond/foo/bar) in 'use', got {len(call_occs)}: "
+        f"{[(o.line, o.col) for o in call_occs]}"
+    )
+    # three arg reads: a, b, c — all attributed to 'use'
+    assert len(read_occs) == 3, (
+        f"expected 3 reads (a/b/c) in 'use', got {len(read_occs)}: "
+        f"{[(o.line, o.col) for o in read_occs]}"
+    )
+
+
+def test_call_in_for_block_records_occurrences(parse_and_visit_visitor):
+    """A call in a ``for`` iterable and body records call + read once each."""
+    src = (
+        "def gen(x):\n    return [x]\n\n"
+        "def foo(x):\n    pass\n\n"
+        "def use(a, b):\n    for i in gen(a):\n        foo(b)\n"
+    )
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    assert len(call_occs) == 2, (
+        f"expected 2 calls (gen/foo), got {len(call_occs)}: "
+        f"{[(o.line, o.col) for o in call_occs]}"
+    )
+
+
+def test_nested_def_inside_compound_block_is_visited(parse_and_visit_visitor):
+    """A nested ``def`` inside a compound (``if``) block is still built as a
+    FUNCTION node and its calls are not attributed to the outer function."""
+    src = (
+        "def use(flag):\n"
+        "    if flag:\n"
+        "        def inner():\n            helper()\n"
+    )
+    graph, visitor = parse_and_visit_visitor(src)
+    names = {f.name for f in nodes_of_kind(graph, NodeKind.FUNCTION)}
+    assert "inner" in names
+    use = next(
+        f for f in nodes_of_kind(graph, NodeKind.FUNCTION) if f.name == "use"
+    )
+    # helper() is recorded under 'inner', not 'use'
+    use_calls = [
+        o for o in visitor.occurrences
+        if o.role == "call" and o.enclosing_id == use.id
+    ]
+    assert use_calls == []
+
+
+def test_annotated_depends_records_call_and_read(parse_and_visit_visitor):
+    """``x: Annotated[T, Depends(get_dep)]`` records a ``call`` on ``Depends``
+    and a ``read`` on the ``get_dep`` argument."""
+    src = (
+        "def get_dep():\n    return 1\n\n"
+        "def view(x: Annotated[int, Depends(get_dep)]):\n    pass\n"
+    )
+    _graph, visitor = parse_and_visit_visitor(src)
+    call_occs = [o for o in visitor.occurrences if o.role == "call"]
+    read_occs = [o for o in visitor.occurrences if o.role == "read"]
+    # 'Depends' recorded as a call
+    assert any(o.line == 4 for o in call_occs), (
+        f"expected a call on 'Depends' at line 4; "
+        f"got calls: {[(o.line, o.col) for o in call_occs]}"
+    )
+    # 'get_dep' recorded as a read
+    assert any(o.line == 4 for o in read_occs), (
+        f"expected a read on 'get_dep' at line 4; "
+        f"got reads: {[(o.line, o.col) for o in read_occs]}"
+    )
