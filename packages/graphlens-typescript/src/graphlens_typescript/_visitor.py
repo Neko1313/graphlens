@@ -223,6 +223,8 @@ class TypescriptASTVisitor:
                 "interface_declaration",
                 "function_declaration",
                 "generator_function_declaration",
+                "type_alias_declaration",
+                "enum_declaration",
             ):
                 self.visit(child)
                 return
@@ -256,6 +258,177 @@ class TypescriptASTVisitor:
 
     def _visit_abstract_class_declaration(self, node: TSNode) -> None:
         self._handle_class(node, decorators=[], is_abstract=True)
+
+    # -------------------------------------------------------------------------
+    # Type alias
+    # -------------------------------------------------------------------------
+
+    def _visit_type_alias_declaration(self, node: TSNode) -> None:
+        """
+        Handle ``type Alias = SomeType;`` declarations.
+
+        Creates a ``TYPE_ALIAS`` node and records an ``annotation``
+        occurrence on the aliased type's leading identifier.
+        """
+        name_node = next(
+            (c for c in node.children if c.type == "type_identifier"), None
+        )
+        if name_node is None:
+            return
+        name = _node_text(name_node)
+        qname = f"{self._scope_stack[-1]}.{name}"
+
+        alias_node = self._make_node(
+            NodeKind.TYPE_ALIAS,
+            qname,
+            name,
+            node,
+            metadata={},
+            name_node=name_node,
+        )
+        self._add_node_with_relation(alias_node, RelationKind.DECLARES)
+
+        # Record annotation occurrence on the aliased type
+        # The aliased type is the named child after '='
+        past_eq = False
+        for child in node.children:
+            if not child.is_named and child.type == "=":
+                past_eq = True
+                continue
+            if past_eq and child.is_named:
+                self._record_annotation(child, alias_node.id)
+                break
+
+    # -------------------------------------------------------------------------
+    # Enum
+    # -------------------------------------------------------------------------
+
+    def _visit_enum_declaration(self, node: TSNode) -> None:
+        """
+        Handle ``enum E { A, B = 1 }`` declarations.
+
+        Creates a ``CLASS`` node with ``metadata["is_enum"] = True`` and
+        one ``ATTRIBUTE`` node per member.
+        """
+        name_node = next(
+            (c for c in node.children if c.type == "identifier"), None
+        )
+        if name_node is None:
+            return
+        name = _node_text(name_node)
+        qname = f"{self._scope_stack[-1]}.{name}"
+
+        enum_node = self._make_node(
+            NodeKind.CLASS,
+            qname,
+            name,
+            node,
+            metadata={"is_enum": True},
+            name_node=name_node,
+        )
+        self._add_node_with_relation(enum_node, RelationKind.DECLARES)
+
+        self._push(qname, enum_node.id, NodeKind.CLASS)
+        body = next(
+            (c for c in node.children if c.type == "enum_body"), None
+        )
+        if body:
+            for child in body.children:
+                if child.type == "property_identifier":
+                    # Bare member: E { A, B }
+                    mem_name = _node_text(child)
+                    mem_qname = f"{qname}.{mem_name}"
+                    mem_node = self._make_node(
+                        NodeKind.ATTRIBUTE,
+                        mem_qname,
+                        mem_name,
+                        child,
+                        metadata={},
+                        name_node=child,
+                    )
+                    self._add_node_with_relation(
+                        mem_node, RelationKind.DECLARES
+                    )
+                elif child.type == "enum_assignment":
+                    # Member with value: E { B = 1 }
+                    prop_node = next(
+                        (
+                            c for c in child.children
+                            if c.type == "property_identifier"
+                        ),
+                        None,
+                    )
+                    if prop_node is None:
+                        continue
+                    mem_name = _node_text(prop_node)
+                    mem_qname = f"{qname}.{mem_name}"
+                    mem_node = self._make_node(
+                        NodeKind.ATTRIBUTE,
+                        mem_qname,
+                        mem_name,
+                        child,
+                        metadata={},
+                        name_node=prop_node,
+                    )
+                    self._add_node_with_relation(
+                        mem_node, RelationKind.DECLARES
+                    )
+        self._pop()
+
+    # -------------------------------------------------------------------------
+    # Public field definition (class body)
+    # -------------------------------------------------------------------------
+
+    def _visit_public_field_definition(self, node: TSNode) -> None:
+        """
+        Handle a class-body field declaration (``x: T = value;``).
+
+        Creates an ``ATTRIBUTE`` node and records a ``write`` occurrence.
+        """
+        prop_node = next(
+            (c for c in node.children if c.type == "property_identifier"),
+            None,
+        )
+        if prop_node is None:
+            return
+        name = _node_text(prop_node)
+        qname = f"{self._scope_stack[-1]}.{name}"
+
+        attr_node = self._make_node(
+            NodeKind.ATTRIBUTE,
+            qname,
+            name,
+            node,
+            metadata={},
+            name_node=prop_node,
+        )
+        self._add_node_with_relation(attr_node, RelationKind.DECLARES)
+        self._record_occurrence("write", prop_node, attr_node.id)
+
+        # Scan the type annotation
+        type_ann = next(
+            (c for c in node.children if c.type == "type_annotation"), None
+        )
+        if type_ann is not None:
+            self._record_annotation(type_ann, attr_node.id)
+
+        # Scan the initializer
+        init_value = next(
+            (
+                c for c in node.children
+                if c.is_named
+                and c.type not in (
+                    "property_identifier",
+                    "type_annotation",
+                    "accessibility_modifier",
+                )
+                and c.type not in ("abstract", "readonly", "static",
+                                   "override")
+            ),
+            None,
+        )
+        if init_value is not None:
+            self._scan_value(init_value, attr_node.id)
 
     def _handle_class(
         self,
@@ -442,7 +615,14 @@ class TypescriptASTVisitor:
     # -------------------------------------------------------------------------
 
     def _handle_lexical_declaration(self, node: TSNode) -> None:
-        """Handle ``const/let foo = () => ...`` declarations."""
+        """
+        Handle ``const/let`` declarations.
+
+        Dispatches each declarator to either the function path (when the
+        value is an arrow/function expression) or the variable path (all
+        other values, including literals, objects, identifiers, calls).
+        """
+        is_const = any(c.type == "const" for c in node.children)
         for declarator in node.children:
             if declarator.type != "variable_declarator":
                 continue
@@ -450,75 +630,134 @@ class TypescriptASTVisitor:
                 (c for c in declarator.children if c.type == "identifier"),
                 None,
             )
+            if name_node is None:
+                continue
+
             _fn_types = ("arrow_function", "function", "function_expression")
             value_node = next(
                 (c for c in declarator.children if c.type in _fn_types),
                 None,
             )
-            if name_node is None or value_node is None:
-                continue
-            name = _node_text(name_node)
-            qname = f"{self._scope_stack[-1]}.{name}"
 
-            is_async = any(c.type == "async" for c in value_node.children)
-            parent_kind = self._kind_stack[-1]
-            kind = (
-                NodeKind.METHOD
-                if parent_kind == NodeKind.CLASS
-                else NodeKind.FUNCTION
-            )
+            if value_node is not None:
+                # ---- Function / method path --------------------------------
+                self._handle_lexical_function(
+                    declarator, name_node, value_node
+                )
+            else:
+                # ---- Plain variable / attribute path -----------------------
+                self._handle_lexical_variable(
+                    declarator, name_node, is_const=is_const
+                )
 
-            return_annotation: str | None = None
-            type_ann = next(
-                (
-                    c
-                    for c in declarator.children
-                    if c.type == "type_annotation"
-                ),
-                None,
-            )
-            if type_ann is not None:
-                return_annotation = _node_text(type_ann).lstrip(":").strip()
+    def _handle_lexical_function(
+        self,
+        declarator: TSNode,
+        name_node: TSNode,
+        value_node: TSNode,
+    ) -> None:
+        """Build a FUNCTION/METHOD node from an arrow/function expression."""
+        name = _node_text(name_node)
+        qname = f"{self._scope_stack[-1]}.{name}"
 
-            func_node = self._make_node(
-                kind,
-                qname,
-                name,
-                value_node,
-                metadata={
-                    "decorators": [],
-                    "is_async": is_async,
-                    "return_annotation": return_annotation,
-                },
-                name_node=name_node,
-            )
-            self._add_node_with_relation(func_node, RelationKind.DECLARES)
+        is_async = any(c.type == "async" for c in value_node.children)
+        parent_kind = self._kind_stack[-1]
+        kind = (
+            NodeKind.METHOD if parent_kind == NodeKind.CLASS
+            else NodeKind.FUNCTION
+        )
 
-            self._push(qname, func_node.id, kind)
+        return_annotation: str | None = None
+        type_ann = next(
+            (
+                c for c in declarator.children
+                if c.type == "type_annotation"
+            ),
+            None,
+        )
+        if type_ann is not None:
+            return_annotation = _node_text(type_ann).lstrip(":").strip()
 
-            params_node = next(
-                (
-                    c
-                    for c in value_node.children
-                    if c.type == "formal_parameters"
-                ),
-                None,
-            )
-            if params_node:
-                self._extract_parameters(params_node, func_node.id, qname)
+        func_node = self._make_node(
+            kind,
+            qname,
+            name,
+            value_node,
+            metadata={
+                "decorators": [],
+                "is_async": is_async,
+                "return_annotation": return_annotation,
+            },
+            name_node=name_node,
+        )
+        self._add_node_with_relation(func_node, RelationKind.DECLARES)
 
-            body = next(
-                (
-                    c
-                    for c in value_node.children
-                    if c.type == "statement_block"
-                ),
-                None,
-            )
-            if body:
-                self._walk_body(body, func_node.id)
+        self._push(qname, func_node.id, kind)
 
-            self._pop()
+        params_node = next(
+            (
+                c for c in value_node.children
+                if c.type == "formal_parameters"
+            ),
+            None,
+        )
+        if params_node:
+            self._extract_parameters(params_node, func_node.id, qname)
+
+        body = next(
+            (
+                c for c in value_node.children
+                if c.type == "statement_block"
+            ),
+            None,
+        )
+        if body:
+            self._walk_body(body, func_node.id)
+
+        self._pop()
+
+    def _handle_lexical_variable(
+        self,
+        declarator: TSNode,
+        name_node: TSNode,
+        *,
+        is_const: bool,
+    ) -> None:
+        """
+        Build a VARIABLE/ATTRIBUTE node for a non-function declarator.
+
+        A class-body declarator becomes an ``ATTRIBUTE``; otherwise a
+        ``VARIABLE``. Records a ``write`` occurrence on the name token and
+        scans the initializer via ``_scan_value`` for further reads/calls.
+        """
+        name = _node_text(name_node)
+        qname = f"{self._scope_stack[-1]}.{name}"
+        parent_kind = self._kind_stack[-1]
+        var_kind = (
+            NodeKind.ATTRIBUTE if parent_kind == NodeKind.CLASS
+            else NodeKind.VARIABLE
+        )
+        var_node = self._make_node(
+            var_kind,
+            qname,
+            name,
+            declarator,
+            metadata={"is_constant": is_const},
+            name_node=name_node,
+        )
+        self._add_node_with_relation(var_node, RelationKind.DECLARES)
+        # The write/read occurrences are enclosed by the current scope
+        # (file, function, or class) — not by the variable node itself.
+        enclosing_id = self._container_stack[-1]
+        self._record_occurrence("write", name_node, enclosing_id)
+        # Scan the initializer for reads/calls. The initializer is the named
+        # child after the '=' operator: the second named child of the
+        # declarator (the first named child is the binding identifier).
+        named_children = [c for c in declarator.children if c.is_named]
+        _init_index = 1
+        if len(named_children) > _init_index:
+            init_value = named_children[_init_index]
+            self._scan_value(init_value, enclosing_id)
 
     # -------------------------------------------------------------------------
     # Import statement
@@ -823,13 +1062,12 @@ class TypescriptASTVisitor:
     # Occurrence model helpers
     # -------------------------------------------------------------------------
 
-    def _first_identifier(self, node: TSNode) -> TSNode | None:
+    def _first_identifier(self, node: TSNode) -> TSNode | None:  # noqa: PLR0911
         """
         Return the leading type identifier from a type annotation node.
 
-        Handles: ``type_annotation``, ``predefined_type``,
-        ``type_identifier``, ``identifier``, ``generic_type``,
-        ``member_expression``.
+        Handles ``type_annotation``, ``predefined_type``, ``type_identifier``,
+        ``identifier``, ``generic_type``, and ``member_expression``.
         """
         if node.type == "type_annotation":
             # Strip the leading ':' token and recurse into the type
@@ -846,14 +1084,13 @@ class TypescriptASTVisitor:
             return None
         if node.type == "generic_type":
             # Base<T> — extract just the base name
-            id_child = next(
+            return next(
                 (
                     c for c in node.children
                     if c.type in ("type_identifier", "identifier")
                 ),
                 None,
             )
-            return id_child
         if node.type == "member_expression":
             # NS.Type — use the trailing property
             return node.children[-1]
@@ -869,13 +1106,10 @@ class TypescriptASTVisitor:
         self, type_ann_node: TSNode, enclosing_id: str
     ) -> None:
         """
-        Record an ``annotation`` occurrence for the leading type name in a
-        ``type_annotation`` CST node.
+        Record an ``annotation`` occurrence for the leading type name.
 
-        Parameters
-        ----------
-        type_ann_node: The ``type_annotation`` (or bare type) CST node.
-        enclosing_id:  Node ID of the enclosing function or class.
+        ``type_ann_node`` is the ``type_annotation`` (or bare type) CST node;
+        ``enclosing_id`` is the node ID of the enclosing function or class.
         """
         id_node = self._first_identifier(type_ann_node)
         if id_node is not None:
@@ -901,11 +1135,9 @@ class TypescriptASTVisitor:
         """
         Append a single OccurrenceRef to ``self.occurrences``.
 
-        Parameters
-        ----------
-        role:         One of ``call|read|write|annotation|base``.
-        name_node:    The identifier CST node whose position is recorded.
-        enclosing_id: Node ID of the immediately enclosing function/class.
+        ``role`` is one of ``call|read|write|annotation|base``; ``name_node``
+        is the identifier CST node whose position is recorded; ``enclosing_id``
+        is the node ID of the immediately enclosing function/class.
         """
         sp = _make_span(name_node)
         if sp is None:
@@ -920,22 +1152,20 @@ class TypescriptASTVisitor:
             )
         )
 
-    def _scan_value(self, node: TSNode, enclosing_id: str) -> None:
+    def _scan_value(self, node: TSNode, enclosing_id: str) -> None:  # noqa: PLR0912
         """
-        Recursively scan an expression subtree collecting call/read
-        occurrences without emitting CALLS graph relations.
+        Scan a value expression, collecting ``call``/``read`` occurrences.
 
-        Rules
-        -----
-        - ``call_expression``          → record ``call`` on callee name node;
-          for ``member_expression`` callee use the trailing property node.
-          Then scan ``arguments`` children for further reads.
-        - ``identifier``               → record ``read``.
-        - ``pair``                     → scan value child only (object literal).
-        - ``shorthand_property_identifier`` → record ``read`` (acts as both
-          key and value in ``{ x }`` shorthand).
-        - Nested function/class defs  → do NOT recurse (scope boundary).
-        - Everything else             → recurse into children.
+        Rules:
+        - ``call_expression`` → record ``call`` on the callee name (the
+          trailing property for a ``member_expression`` callee), then scan
+          ``arguments`` children for further reads.
+        - ``identifier`` → record ``read``.
+        - ``pair`` → scan the value child only (object literal).
+        - ``shorthand_property_identifier`` → record ``read`` (it acts as
+          both key and value in ``{ x }`` shorthand).
+        - Nested function/class defs → do NOT recurse (scope boundary).
+        - Everything else → recurse into children.
         """
         if node.type in self._NESTED_DEF_TYPES:
             return
@@ -970,8 +1200,9 @@ class TypescriptASTVisitor:
         if node.type == "pair":
             # Object literal { key: value } — scan only the value
             children = [c for c in node.children if c.is_named]
-            if len(children) >= 2:
-                self._scan_value(children[1], enclosing_id)
+            _value_index = 1
+            if len(children) > _value_index:
+                self._scan_value(children[_value_index], enclosing_id)
             return
 
         if node.type == "shorthand_property_identifier":
@@ -984,17 +1215,16 @@ class TypescriptASTVisitor:
             self._scan_value(child, enclosing_id)
 
     def _walk_body(self, body: TSNode, enclosing_id: str) -> None:
-        """
-        Walk a ``statement_block`` (function body) dispatching each
-        top-level statement to ``_walk_statement``.
-        """
+        """Dispatch each statement of a ``statement_block`` body."""
         for child in body.children:
             self._walk_statement(child, enclosing_id)
 
     def _walk_statement(self, node: TSNode, enclosing_id: str) -> None:
         """
-        Dispatch a single statement node, scanning values and routing
-        nested definitions back through the main visitor.
+        Dispatch one statement node, scanning values for occurrences.
+
+        Nested definitions are routed back through the main visitor; value
+        expressions are scanned via ``_scan_value``.
         """
         t = node.type
 
@@ -1102,7 +1332,7 @@ class TypescriptASTVisitor:
         if node.id not in self._graph.nodes:
             self._graph.add_node(node)
 
-    def _make_node(
+    def _make_node(  # noqa: PLR0913
         self,
         kind: NodeKind,
         qualified_name: str,
@@ -1112,18 +1342,11 @@ class TypescriptASTVisitor:
         name_node: TSNode | None = None,
     ) -> Node:
         """
-        Build a graph Node from a tree-sitter CST node.
+        Build a graph Node, optionally recording a ``name_span``.
 
-        Parameters
-        ----------
-        kind:           NodeKind for the resulting node.
-        qualified_name: Fully-qualified dotted name.
-        name:           Short (leaf) name.
-        ts_node:        CST node whose span covers the full definition.
-        metadata:       Extra key/value pairs stored on the node.
-        name_node:      If provided, its span is stored as
-                        ``metadata["name_span"]`` so callers can locate
-                        just the name token without scanning the full span.
+        When ``name_node`` is provided, its span is stored in
+        ``metadata["name_span"]`` so a definition position can be mapped back
+        to this node without scanning the node's full ``span``.
         """
         meta = dict(metadata) if metadata else {}
         if name_node is not None:

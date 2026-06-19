@@ -311,6 +311,9 @@ class TestArrowFunction:
         graph, _ = parse_and_visit("const x = 42;")
         funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
         assert not any(f.name == "x" for f in funcs)
+        # x should now be a VARIABLE
+        variables = nodes_of_kind(graph, NodeKind.VARIABLE)
+        assert any(v.name == "x" for v in variables)
 
 
 class TestNestedDefinitions:
@@ -461,6 +464,53 @@ class TestParameters:
             if r.kind == RelationKind.DECLARES and r.source_id == func.id
         ]
         assert len(declares) == 2
+
+
+class TestStructuralNodes:
+    def test_type_alias(self):
+        from conftest import parse_and_visit_visitor
+        graph, _ = parse_and_visit_visitor("type V = string;")
+        type_aliases = [
+            n for n in graph.nodes.values()
+            if n.kind == NodeKind.TYPE_ALIAS
+        ]
+        assert any(n.name == "V" for n in type_aliases)
+
+    def test_enum_is_class_with_is_enum(self):
+        from conftest import parse_and_visit_visitor
+        graph, _ = parse_and_visit_visitor("enum E { A, B }")
+        classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
+        e = next((c for c in classes if c.name == "E"), None)
+        assert e is not None
+        assert e.metadata.get("is_enum") is True
+
+    def test_enum_members_are_attributes(self):
+        from conftest import parse_and_visit_visitor
+        graph, _ = parse_and_visit_visitor("enum E { A, B }")
+        attrs = [n for n in graph.nodes.values() if n.kind == NodeKind.ATTRIBUTE]
+        names = {a.name for a in attrs}
+        assert "A" in names
+        assert "B" in names
+
+    def test_const_variable(self):
+        from conftest import parse_and_visit_visitor
+        graph, _v = parse_and_visit_visitor("const C = 1;")
+        variables = [
+            n for n in graph.nodes.values() if n.kind == NodeKind.VARIABLE
+        ]
+        assert any(n.name == "C" for n in variables)
+
+    def test_const_variable_write_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("const C = 1;")
+        writes = [o for o in v.occurrences if o.role == "write"]
+        assert len(writes) >= 1
+
+    def test_const_read_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("function f() { const x = C; }")
+        reads = [o for o in v.occurrences if o.role == "read"]
+        assert len(reads) >= 1
 
 
 class TestBaseAndAnnotationOccurrences:
