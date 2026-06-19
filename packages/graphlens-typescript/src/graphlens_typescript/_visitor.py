@@ -267,6 +267,7 @@ class TypescriptASTVisitor:
                 "bases": bases,
                 "is_abstract": is_abstract,
             },
+            name_node=name_node,
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
 
@@ -318,6 +319,7 @@ class TypescriptASTVisitor:
                 "is_abstract": True,
                 "is_interface": True,
             },
+            name_node=name_node,
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
 
@@ -391,6 +393,7 @@ class TypescriptASTVisitor:
                 "is_async": is_async,
                 "return_annotation": return_annotation,
             },
+            name_node=name_node,
         )
         self._add_node_with_relation(func_node, RelationKind.DECLARES)
 
@@ -476,6 +479,7 @@ class TypescriptASTVisitor:
                     "is_async": is_async,
                     "return_annotation": return_annotation,
                 },
+                name_node=name_node,
             )
             self._add_node_with_relation(func_node, RelationKind.DECLARES)
 
@@ -904,7 +908,27 @@ class TypescriptASTVisitor:
         name: str,
         ts_node: TSNode | None = None,
         metadata: dict[str, object] | None = None,
+        name_node: TSNode | None = None,
     ) -> Node:
+        """
+        Build a graph Node from a tree-sitter CST node.
+
+        Parameters
+        ----------
+        kind:           NodeKind for the resulting node.
+        qualified_name: Fully-qualified dotted name.
+        name:           Short (leaf) name.
+        ts_node:        CST node whose span covers the full definition.
+        metadata:       Extra key/value pairs stored on the node.
+        name_node:      If provided, its span is stored as
+                        ``metadata["name_span"]`` so callers can locate
+                        just the name token without scanning the full span.
+        """
+        meta = dict(metadata) if metadata else {}
+        if name_node is not None:
+            ns = _make_span(name_node)
+            if ns is not None:
+                meta["name_span"] = ns
         return Node(
             id=make_node_id(
                 self._ctx.project_name, qualified_name, kind.value
@@ -914,7 +938,7 @@ class TypescriptASTVisitor:
             name=name,
             file_path=str(self._ctx.file_path),
             span=_make_span(ts_node) if ts_node else None,
-            metadata=metadata or {},
+            metadata=meta,
         )
 
     def _push(self, qname: str, node_id: str, kind: NodeKind) -> None:

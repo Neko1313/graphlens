@@ -436,6 +436,18 @@ class TestParameters:
         assert len(declares) == 2
 
 
+class TestNameSpan:
+    def test_class_name_span_recorded(self):
+        graph, _ = parse_and_visit("class MyClass {}")
+        classes = nodes_of_kind(graph, NodeKind.CLASS)
+        cls = next(c for c in classes if c.name == "MyClass")
+        ns = cls.metadata.get("name_span")
+        assert ns is not None
+        # "MyClass" starts at column 7 (1-based) on line 1
+        assert ns.start_line == 1
+        assert ns.start_col == 7
+
+
 class TestHelperFunctions:
     def test_strip_string_quotes_double(self):
         assert _strip_string_quotes('"hello"') == "hello"
