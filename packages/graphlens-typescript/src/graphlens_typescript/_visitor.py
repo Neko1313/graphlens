@@ -182,6 +182,36 @@ class TypescriptASTVisitor:
     def _visit_program(self, node: TSNode) -> None:
         self._visit_children(node)
 
+    def _visit_expression_statement(self, node: TSNode) -> None:
+        """
+        Handle a bare expression statement at program or class scope.
+
+        At program/class/file scope (i.e. ``_kind_stack[-1]`` is FILE, MODULE,
+        or CLASS) we scan the statement's child expression so that top-level
+        calls like ``foo();`` and class-body calls like ``init();`` produce
+        ``call`` / ``read`` occurrences.
+
+        Inside a function or method body the statement is already processed by
+        ``_walk_statement`` (called from ``_walk_body``), so we must NOT
+        re-record occurrences — guard on the innermost kind.
+        """
+        if self._kind_stack[-1] in (NodeKind.FUNCTION, NodeKind.METHOD):
+            # Already handled by _walk_body → _walk_statement; skip.
+            return
+        enclosing_id = self._container_stack[-1]
+        expr = next((c for c in node.children if c.is_named), None)
+        if expr is None:
+            return
+        if expr.type in (
+            "assignment_expression",
+            "augmented_assignment_expression",
+        ):
+            # Scan the right-hand side for reads/calls
+            rhs = expr.children[-1]
+            self._scan_value(rhs, enclosing_id)
+        else:
+            self._scan_value(expr, enclosing_id)
+
     def _visit_lexical_declaration(self, node: TSNode) -> None:
         """Handle top-level ``const/let foo = () => ...`` declarations."""
         self._handle_lexical_declaration(node)
@@ -403,7 +433,12 @@ class TypescriptASTVisitor:
             name_node=prop_node,
         )
         self._add_node_with_relation(attr_node, RelationKind.DECLARES)
-        self._record_occurrence("write", prop_node, attr_node.id)
+        # write/read occurrences for a class field are enclosed by the class
+        # (the current container), not by the attribute node itself —
+        # consistent with _handle_lexical_variable which uses
+        # self._container_stack[-1].
+        class_id = self._container_stack[-1]
+        self._record_occurrence("write", prop_node, class_id)
 
         # Scan the type annotation
         type_ann = next(
@@ -428,7 +463,7 @@ class TypescriptASTVisitor:
             None,
         )
         if init_value is not None:
-            self._scan_value(init_value, attr_node.id)
+            self._scan_value(init_value, class_id)
 
     def _handle_class(
         self,
@@ -951,6 +986,7 @@ class TypescriptASTVisitor:
     ) -> None:
         for child in params_node.children:
             param_name: str | None = None
+            param_name_node: TSNode | None = None
             annotation: str | None = None
             type_node: TSNode | None = None
             has_default = False
@@ -958,6 +994,7 @@ class TypescriptASTVisitor:
 
             if child.type == "identifier":
                 param_name = _node_text(child)
+                param_name_node = child
 
             elif child.type == "required_parameter":
                 # Check if this is actually a rest param (...args: T)
@@ -975,6 +1012,7 @@ class TypescriptASTVisitor:
                         None,
                     )
                     param_name = _node_text(id_node) if id_node else None
+                    param_name_node = id_node
                     is_variadic = True
                 else:
                     id_node = next(
@@ -986,6 +1024,7 @@ class TypescriptASTVisitor:
                         None,
                     )
                     param_name = _node_text(id_node) if id_node else None
+                    param_name_node = id_node
                 type_node = next(
                     (c for c in child.children if c.type == "type_annotation"),
                     None,
@@ -1005,6 +1044,7 @@ class TypescriptASTVisitor:
                     None,
                 )
                 param_name = _node_text(id_node) if id_node else None
+                param_name_node = id_node
                 type_node = next(
                     (c for c in child.children if c.type == "type_annotation"),
                     None,
@@ -1021,6 +1061,7 @@ class TypescriptASTVisitor:
                     (c for c in child.children if c.type == "identifier"), None
                 )
                 param_name = _node_text(id_node) if id_node else None
+                param_name_node = id_node
                 is_variadic = True
 
             elif child.type == "assignment_pattern":
@@ -1029,6 +1070,7 @@ class TypescriptASTVisitor:
                     (c for c in child.children if c.type == "identifier"), None
                 )
                 param_name = _node_text(id_node) if id_node else None
+                param_name_node = id_node
                 has_default = True
 
             if not param_name or param_name == "this":
@@ -1045,6 +1087,7 @@ class TypescriptASTVisitor:
                     "has_default": has_default,
                     "is_variadic": is_variadic,
                 },
+                name_node=param_name_node,
             )
             self._safe_add_node(param_node)
             self._graph.add_relation(

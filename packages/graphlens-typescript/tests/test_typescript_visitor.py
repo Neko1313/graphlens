@@ -619,3 +619,113 @@ class TestHelperFunctions:
         )
         number_node = binary.children[0]
         assert _name_from_node(number_node) == ""
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — module/class-scope expression_statement occurrences
+# ---------------------------------------------------------------------------
+
+
+class TestModuleScopeExpressionStatements:
+    def test_top_level_bare_call_records_one_call_occurrence(self):
+        """foo(); at top-level must produce exactly one call occurrence."""
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("foo();")
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert len(calls) == 1, f"Expected 1 call, got {len(calls)}: {calls}"
+
+    def test_top_level_call_enclosing_is_file_node(self):
+        """foo(); at top-level must be enclosed by the FILE node."""
+        from conftest import parse_and_visit_visitor
+        graph, v = parse_and_visit_visitor("foo();")
+        from graphlens import NodeKind
+        file_nodes = [n for n in graph.nodes.values() if n.kind == NodeKind.FILE]
+        assert file_nodes, "No FILE node found"
+        file_id = file_nodes[0].id
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert len(calls) == 1
+        assert calls[0].enclosing_id == file_id, (
+            f"call enclosed by {calls[0].enclosing_id!r}, expected FILE {file_id!r}"
+        )
+
+    def test_top_level_assignment_call_records_write_read_call(self):
+        """x = foo(a); at top-level must produce write(x), call(foo), read(a)."""
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("x = foo(a);")
+        calls = [o for o in v.occurrences if o.role == "call"]
+        reads = [o for o in v.occurrences if o.role == "read"]
+        # Note: writes come from assignment_expression LHS scan
+        assert len(calls) == 1, f"Expected 1 call(foo), got {calls}"
+        assert len(reads) >= 1, f"Expected read(a), got {reads}"
+
+    def test_top_level_no_double_count(self):
+        """x = foo(a); must not record any occurrence more than once."""
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("x = foo(a);")
+        positions = [(o.role, o.line, o.col) for o in v.occurrences]
+        assert len(positions) == len(set(positions)), (
+            f"Double-counted occurrences: {positions}"
+        )
+
+    def test_function_body_call_not_double_counted(self):
+        """g() inside a function must yield exactly ONE call — not doubled by
+        the new expression_statement handler."""
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("function f() { g(); }")
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert len(calls) == 1, (
+            f"Expected exactly 1 call(g), got {len(calls)}: {calls}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — PARAMETER nodes must carry name_span
+# ---------------------------------------------------------------------------
+
+
+class TestParameterNameSpan:
+    def test_required_parameter_has_name_span(self):
+        """PARAMETER node for a typed param must have name_span set."""
+        from conftest import parse_and_visit_visitor
+        graph, _ = parse_and_visit_visitor("function f(x: number) {}")
+        params = [n for n in graph.nodes.values() if n.kind == NodeKind.PARAMETER]
+        param = next(p for p in params if p.name == "x")
+        ns = param.metadata.get("name_span")
+        assert ns is not None, "PARAMETER node missing name_span"
+        # 'x' is the 12th character (1-based col 12) on line 1
+        assert ns.start_line == 1
+        assert ns.start_col == 12
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — class-field initializer read/write enclosed by class, not attribute
+# ---------------------------------------------------------------------------
+
+
+class TestClassFieldEnclosing:
+    def test_class_field_initializer_call_enclosed_by_class(self):
+        """class C { x = compute(y); } — compute call enclosed by class node,
+        not the attribute node."""
+        from conftest import parse_and_visit_visitor
+        graph, v = parse_and_visit_visitor("class C { x = compute(y); }")
+        cls = next(
+            n for n in graph.nodes.values() if n.kind == NodeKind.CLASS
+        )
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert len(calls) == 1, f"Expected 1 call(compute), got {calls}"
+        assert calls[0].enclosing_id == cls.id, (
+            f"call enclosed by {calls[0].enclosing_id!r}, expected class {cls.id!r}"
+        )
+
+    def test_class_field_write_enclosed_by_class(self):
+        """class C { x = 1; } — write(x) must be enclosed by the class node."""
+        from conftest import parse_and_visit_visitor
+        graph, v = parse_and_visit_visitor("class C { x = 1; }")
+        cls = next(
+            n for n in graph.nodes.values() if n.kind == NodeKind.CLASS
+        )
+        writes = [o for o in v.occurrences if o.role == "write"]
+        assert len(writes) == 1, f"Expected 1 write(x), got {writes}"
+        assert writes[0].enclosing_id == cls.id, (
+            f"write enclosed by {writes[0].enclosing_id!r}, expected class {cls.id!r}"
+        )
