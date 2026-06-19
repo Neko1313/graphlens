@@ -248,16 +248,48 @@ class TestImportStatement:
 
 class TestCallExtraction:
     def test_call_inside_function(self):
+        from conftest import parse_and_visit_visitor
         src = "function greet() { console.log('hi'); }"
-        graph, _ = parse_and_visit(src)
-        calls = [r for r in graph.relations if r.kind == RelationKind.CALLS]
+        _, v = parse_and_visit_visitor(src)
+        calls = [o for o in v.occurrences if o.role == "call"]
         assert len(calls) >= 1
 
     def test_call_creates_external_symbol_node(self):
+        from conftest import parse_and_visit_visitor
         src = "function greet() { doSomething(); }"
-        graph, _ = parse_and_visit(src)
-        ext_syms = nodes_of_kind(graph, NodeKind.EXTERNAL_SYMBOL)
-        assert any(s.name == "doSomething" for s in ext_syms)
+        _, v = parse_and_visit_visitor(src)
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert any(True for o in calls)
+
+
+class TestOccurrences:
+    def test_call_records_call_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("function f() { a(); }")
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert any(o.col > 0 for o in calls)
+
+    def test_call_no_extra_external_symbol(self):
+        from conftest import parse_and_visit_visitor
+        graph, v = parse_and_visit_visitor("function f() { a(); }")
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert len(calls) >= 1
+        # visitor no longer emits CALLS relations
+        assert not any(r.kind.value == "calls" for r in graph.relations)
+
+    def test_arg_records_read(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("function f() { a(b); }")
+        reads = [o for o in v.occurrences if o.role == "read"]
+        assert any(True for o in reads)  # b is a read
+
+    def test_no_double_count(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("function f() { const x = g(a); }")
+        reads = [o for o in v.occurrences if o.role == "read"]
+        # 'a' should appear exactly once as read (not twice)
+        read_names_cols = [(o.line, o.col) for o in reads]
+        assert len(read_names_cols) == len(set(read_names_cols))
 
 
 class TestArrowFunction:

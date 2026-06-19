@@ -127,3 +127,40 @@ def parse_and_visit(
 
 def nodes_of_kind(graph: GraphLens, kind: NodeKind) -> list[Node]:
     return [n for n in graph.nodes.values() if n.kind == kind]
+
+
+def parse_and_visit_visitor(
+    source: str,
+    module_qname: str = "myapp.mod",
+    project_name: str = "myapp",
+    classifier=None,
+    *,
+    tsx: bool = False,
+):
+    """Parse TypeScript source and run the visitor; returns (graph, visitor)."""
+    from graphlens_typescript._visitor import TypescriptASTVisitor
+
+    source_bytes = source.encode("utf-8")
+    tree = parse_typescript(source_bytes, tsx=tsx)
+    graph = GraphLens()
+    rel_path = "src/myapp/mod.tsx" if tsx else "src/myapp/mod.ts"
+    file_id = make_node_id(project_name, rel_path, NodeKind.FILE.value)
+    file_node = Node(
+        id=file_id,
+        kind=NodeKind.FILE,
+        qualified_name=rel_path,
+        name="mod.tsx" if tsx else "mod.ts",
+        file_path=rel_path,
+    )
+    graph.add_node(file_node)
+    abs_path = Path("/").resolve() / rel_path
+    ctx = VisitorContext(
+        project_name=project_name,
+        file_path=abs_path,
+        file_relative_path=rel_path,
+        source_root=Path("src"),
+        module_qualified_name=module_qname,
+    )
+    visitor = TypescriptASTVisitor(ctx, graph, file_id, source_bytes, classifier)
+    visitor.visit(tree.root_node)
+    return graph, visitor

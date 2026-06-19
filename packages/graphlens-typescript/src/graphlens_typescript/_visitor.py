@@ -26,6 +26,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("graphlens_typescript")
 
+
+# ---------------------------------------------------------------------------
+# Occurrence model
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OccurrenceRef:
+    """
+    A lightweight record of a single name reference at a point in source.
+
+    Roles:
+    - ``"call"``       — the name is the callee of a call expression
+    - ``"read"``       — the name is read (used as a value)
+    - ``"write"``      — the name is written (assigned / declared)
+    - ``"annotation"`` — the name appears as a type annotation
+    - ``"base"``       — the name appears as a base class/interface
+    """
+
+    role: str
+    line: int
+    col: int
+    enclosing_id: str
+    span: Span
+
 # ---------------------------------------------------------------------------
 # Module-level singletons — one parser per grammar (ts / tsx)
 # ---------------------------------------------------------------------------
@@ -131,6 +156,9 @@ class TypescriptASTVisitor:
         self._container_stack: list[str] = [file_node_id]
         # Stack of NodeKind to know if we're inside a class
         self._kind_stack: list[NodeKind] = [NodeKind.FILE]
+        # Occurrence model: collected name references
+        self.occurrences: list[OccurrenceRef] = []
+        self.abs_file_path: str = str(ctx.file_path)
 
     # -------------------------------------------------------------------------
     # Dispatch
@@ -406,23 +434,12 @@ class TypescriptASTVisitor:
         if params_node:
             self._extract_parameters(params_node, func_node.id, qname)
 
-        # Body: extract calls + visit nested definitions
+        # Body: walk statements (collects occurrences + visits nested defs)
         body = next(
             (c for c in node.children if c.type == "statement_block"), None
         )
         if body:
-            self._extract_calls(body, func_node.id)
-            for child in body.children:
-                if child.type in (
-                    "function_declaration",
-                    "generator_function_declaration",
-                    "class_declaration",
-                    "abstract_class_declaration",
-                    "interface_declaration",
-                    "export_statement",
-                    "lexical_declaration",
-                ):
-                    self.visit(child)
+            self._walk_body(body, func_node.id)
 
         self._pop()
 
@@ -505,7 +522,7 @@ class TypescriptASTVisitor:
                 None,
             )
             if body:
-                self._extract_calls(body, func_node.id)
+                self._walk_body(body, func_node.id)
 
             self._pop()
 
@@ -805,63 +822,191 @@ class TypescriptASTVisitor:
             )
 
     # -------------------------------------------------------------------------
-    # Call extraction
+    # Occurrence model helpers
     # -------------------------------------------------------------------------
 
-    def _extract_calls(self, body: TSNode, caller_id: str) -> None:
-        """Find all call expression nodes in body and emit CALLS relations."""
-        for child in body.children:
-            self._find_calls_in_node(child, caller_id)
+    # Node types that represent nested function/class definitions —
+    # _scan_value must NOT descend into these.
+    _NESTED_DEF_TYPES: frozenset[str] = frozenset({
+        "function_declaration",
+        "generator_function_declaration",
+        "class_declaration",
+        "abstract_class_declaration",
+        "interface_declaration",
+        "arrow_function",
+        "function",
+        "function_expression",
+        "method_definition",
+    })
 
-    def _find_calls_in_node(self, node: TSNode, caller_id: str) -> None:
+    def _record_occurrence(
+        self, role: str, name_node: TSNode, enclosing_id: str
+    ) -> None:
+        """
+        Append a single OccurrenceRef to ``self.occurrences``.
+
+        Parameters
+        ----------
+        role:         One of ``call|read|write|annotation|base``.
+        name_node:    The identifier CST node whose position is recorded.
+        enclosing_id: Node ID of the immediately enclosing function/class.
+        """
+        sp = _make_span(name_node)
+        if sp is None:
+            return
+        self.occurrences.append(
+            OccurrenceRef(
+                role=role,
+                line=sp.start_line,
+                col=sp.start_col,
+                enclosing_id=enclosing_id,
+                span=sp,
+            )
+        )
+
+    def _scan_value(self, node: TSNode, enclosing_id: str) -> None:
+        """
+        Recursively scan an expression subtree collecting call/read
+        occurrences without emitting CALLS graph relations.
+
+        Rules
+        -----
+        - ``call_expression``          → record ``call`` on callee name node;
+          for ``member_expression`` callee use the trailing property node.
+          Then scan ``arguments`` children for further reads.
+        - ``identifier``               → record ``read``.
+        - ``pair``                     → scan value child only (object literal).
+        - ``shorthand_property_identifier`` → record ``read`` (acts as both
+          key and value in ``{ x }`` shorthand).
+        - Nested function/class defs  → do NOT recurse (scope boundary).
+        - Everything else             → recurse into children.
+        """
+        if node.type in self._NESTED_DEF_TYPES:
+            return
+
         if node.type == "call_expression":
-            func_node = next(
-                (
-                    c
-                    for c in node.children
-                    if c.type in ("identifier", "member_expression")
-                ),
+            callee = next(
+                (c for c in node.children
+                 if c.type in ("identifier", "member_expression")),
                 None,
             )
-            if func_node:
-                callee_name = _name_from_node(func_node)
-                if callee_name:
-                    sym_id = make_node_id(
-                        self._ctx.project_name,
-                        callee_name,
-                        NodeKind.EXTERNAL_SYMBOL.value,
-                    )
-                    if sym_id not in self._graph.nodes:
-                        self._graph.add_node(
-                            Node(
-                                id=sym_id,
-                                kind=NodeKind.EXTERNAL_SYMBOL,
-                                qualified_name=callee_name,
-                                name=callee_name.split(".")[-1],
-                                span=_make_span(node),
-                                metadata={"origin": "unknown"},
-                            )
-                        )
-                    self._graph.add_relation(
-                        Relation(
-                            source_id=caller_id,
-                            target_id=sym_id,
-                            kind=RelationKind.CALLS,
-                        )
-                    )
-        # Don't recurse into nested definitions
-        if node.type not in (
+            if callee is not None:
+                if callee.type == "member_expression":
+                    name_node = callee.children[-1]
+                else:
+                    name_node = callee
+                self._record_occurrence("call", name_node, enclosing_id)
+            # Scan arguments (not the callee itself — already recorded above)
+            args = next(
+                (c for c in node.children if c.type == "arguments"), None
+            )
+            if args is not None:
+                for arg in args.children:
+                    if arg.type in (",", "(", ")"):
+                        continue
+                    self._scan_value(arg, enclosing_id)
+            return
+
+        if node.type == "identifier":
+            self._record_occurrence("read", node, enclosing_id)
+            return
+
+        if node.type == "pair":
+            # Object literal { key: value } — scan only the value
+            children = [c for c in node.children if c.is_named]
+            if len(children) >= 2:
+                self._scan_value(children[1], enclosing_id)
+            return
+
+        if node.type == "shorthand_property_identifier":
+            # { x } shorthand — identifier acts as both key and value
+            self._record_occurrence("read", node, enclosing_id)
+            return
+
+        # Recurse into all other node types
+        for child in node.children:
+            self._scan_value(child, enclosing_id)
+
+    def _walk_body(self, body: TSNode, enclosing_id: str) -> None:
+        """
+        Walk a ``statement_block`` (function body) dispatching each
+        top-level statement to ``_walk_statement``.
+        """
+        for child in body.children:
+            self._walk_statement(child, enclosing_id)
+
+    def _walk_statement(self, node: TSNode, enclosing_id: str) -> None:
+        """
+        Dispatch a single statement node, scanning values and routing
+        nested definitions back through the main visitor.
+        """
+        t = node.type
+
+        # Nested definitions — handled structurally by the main visitor
+        if t in (
             "function_declaration",
             "generator_function_declaration",
             "class_declaration",
             "abstract_class_declaration",
-            "method_definition",
-            "arrow_function",
-            "function",
-            "function_expression",
+            "interface_declaration",
+            "export_statement",
+        ):
+            self.visit(node)
+            return
+
+        if t == "lexical_declaration":
+            # Could be a const/let arrow function OR a plain variable
+            self._handle_lexical_declaration(node)
+            return
+
+        if t == "return_statement":
+            for child in node.children:
+                if child.is_named:
+                    self._scan_value(child, enclosing_id)
+            return
+
+        if t == "expression_statement":
+            expr = next((c for c in node.children if c.is_named), None)
+            if expr is not None:
+                if expr.type in (
+                    "assignment_expression",
+                    "augmented_assignment_expression",
+                ):
+                    # Scan the right-hand side
+                    rhs = expr.children[-1]
+                    self._scan_value(rhs, enclosing_id)
+                else:
+                    self._scan_value(expr, enclosing_id)
+            return
+
+        # Blocks that may contain further statements
+        if t in (
+            "statement_block",
+            "if_statement",
+            "else_clause",
+            "for_statement",
+            "for_in_statement",
+            "while_statement",
+            "do_statement",
+            "try_statement",
+            "catch_clause",
+            "finally_clause",
+            "switch_statement",
+            "switch_body",
+            "switch_case",
+            "switch_default",
+            "labeled_statement",
         ):
             for child in node.children:
-                self._find_calls_in_node(child, caller_id)
+                self._walk_statement(child, enclosing_id)
+            return
+
+        # Variable / expression sub-nodes — fall through to scan_value
+        if node.is_named and t not in (
+            "comment",
+            "formal_parameters",
+        ):
+            self._scan_value(node, enclosing_id)
 
     # -------------------------------------------------------------------------
     # Node helpers (language-agnostic)
