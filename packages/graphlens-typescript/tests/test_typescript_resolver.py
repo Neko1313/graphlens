@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from graphlens.contracts import ResolvedRef
-from graphlens_typescript._resolver import TsResolver, _TS_VERSION
+from graphlens_typescript._resolver import TsResolver
 
 
 def test_build_request_shape():

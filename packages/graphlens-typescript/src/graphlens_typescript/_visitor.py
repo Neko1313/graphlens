@@ -37,11 +37,13 @@ _ts_parser = Parser(_TS_LANGUAGE)
 _tsx_parser = Parser(_TSX_LANGUAGE)
 
 # Node types that can carry a method/property name in a class body
-_METHOD_NAME_TYPES: frozenset[str] = frozenset({
-    "identifier",
-    "property_identifier",
-    "private_property_identifier",
-})
+_METHOD_NAME_TYPES: frozenset[str] = frozenset(
+    {
+        "identifier",
+        "property_identifier",
+        "private_property_identifier",
+    }
+)
 
 
 def parse_typescript(source: bytes, *, tsx: bool = False) -> object:
@@ -178,9 +180,7 @@ class TypescriptASTVisitor:
         export_clause = next(
             (c for c in children if c.type == "export_clause"), None
         )
-        from_string = next(
-            (c for c in children if c.type == "string"), None
-        )
+        from_string = next((c for c in children if c.type == "string"), None)
         if export_clause is not None and from_string is not None:
             module_path = _strip_string_quotes(_node_text(from_string))
             if module_path:
@@ -238,9 +238,7 @@ class TypescriptASTVisitor:
     ) -> None:
         name_node = next(
             (c for c in node.children if c.type == "type_identifier"), None
-        ) or next(
-            (c for c in node.children if c.type == "identifier"), None
-        )
+        ) or next((c for c in node.children if c.type == "identifier"), None)
         if name_node is None:
             return
         name = _node_text(name_node)
@@ -253,10 +251,7 @@ class TypescriptASTVisitor:
         )
         if heritage is not None:
             extends = next(
-                (
-                    c for c in heritage.children
-                    if c.type == "extends_clause"
-                ),
+                (c for c in heritage.children if c.type == "extends_clause"),
                 None,
             )
             if extends is not None:
@@ -286,9 +281,7 @@ class TypescriptASTVisitor:
             )
 
         self._push(qname, class_node.id, NodeKind.CLASS)
-        body = next(
-            (c for c in node.children if c.type == "class_body"), None
-        )
+        body = next((c for c in node.children if c.type == "class_body"), None)
         if body:
             self._visit_children(body)
         self._pop()
@@ -300,9 +293,7 @@ class TypescriptASTVisitor:
     def _visit_interface_declaration(self, node: TSNode) -> None:
         name_node = next(
             (c for c in node.children if c.type == "type_identifier"), None
-        ) or next(
-            (c for c in node.children if c.type == "identifier"), None
-        )
+        ) or next((c for c in node.children if c.type == "identifier"), None)
         if name_node is None:
             return
         name = _node_text(name_node)
@@ -362,13 +353,12 @@ class TypescriptASTVisitor:
         """Handle method definitions inside class bodies."""
         self._handle_function(node, decorators=[])
 
-    def _handle_function(
-        self, node: TSNode, decorators: list[str]
-    ) -> None:
+    def _handle_function(self, node: TSNode, decorators: list[str]) -> None:
         is_async = any(c.type == "async" for c in node.children)
         parent_kind = self._kind_stack[-1]
         kind = (
-            NodeKind.METHOD if parent_kind == NodeKind.CLASS
+            NodeKind.METHOD
+            if parent_kind == NodeKind.CLASS
             else NodeKind.FUNCTION
         )
 
@@ -459,14 +449,16 @@ class TypescriptASTVisitor:
             is_async = any(c.type == "async" for c in value_node.children)
             parent_kind = self._kind_stack[-1]
             kind = (
-                NodeKind.METHOD if parent_kind == NodeKind.CLASS
+                NodeKind.METHOD
+                if parent_kind == NodeKind.CLASS
                 else NodeKind.FUNCTION
             )
 
             return_annotation: str | None = None
             type_ann = next(
                 (
-                    c for c in declarator.children
+                    c
+                    for c in declarator.children
                     if c.type == "type_annotation"
                 ),
                 None,
@@ -491,7 +483,8 @@ class TypescriptASTVisitor:
 
             params_node = next(
                 (
-                    c for c in value_node.children
+                    c
+                    for c in value_node.children
                     if c.type == "formal_parameters"
                 ),
                 None,
@@ -501,7 +494,8 @@ class TypescriptASTVisitor:
 
             body = next(
                 (
-                    c for c in value_node.children
+                    c
+                    for c in value_node.children
                     if c.type == "statement_block"
                 ),
                 None,
@@ -614,9 +608,7 @@ class TypescriptASTVisitor:
         for spec in named_imports_node.children:
             if spec.type != "import_specifier":
                 continue
-            identifiers = [
-                c for c in spec.children if c.type == "identifier"
-            ]
+            identifiers = [c for c in spec.children if c.type == "identifier"]
             if not identifiers:
                 continue
             if len(identifiers) == 1:
@@ -648,8 +640,7 @@ class TypescriptASTVisitor:
     ) -> None:
         top_level = ext_qname.split(".", maxsplit=1)[0]
         origin = (
-            "internal" if is_relative
-            else self._classifier.classify(top_level)
+            "internal" if is_relative else self._classifier.classify(top_level)
         )
 
         import_qname = f"{self._scope_stack[-1]}.{local_name}"
@@ -716,16 +707,14 @@ class TypescriptASTVisitor:
             elif child.type == "required_parameter":
                 # Check if this is actually a rest param (...args: T)
                 rest_pat = next(
-                    (
-                        c for c in child.children
-                        if c.type == "rest_pattern"
-                    ),
+                    (c for c in child.children if c.type == "rest_pattern"),
                     None,
                 )
                 if rest_pat is not None:
                     id_node = next(
                         (
-                            c for c in rest_pat.children
+                            c
+                            for c in rest_pat.children
                             if c.type == "identifier"
                         ),
                         None,
@@ -735,22 +724,21 @@ class TypescriptASTVisitor:
                 else:
                     id_node = next(
                         (
-                            c for c in child.children
+                            c
+                            for c in child.children
                             if c.type in ("identifier", "this")
                         ),
                         None,
                     )
                     param_name = _node_text(id_node) if id_node else None
                 type_node = next(
-                    (
-                        c for c in child.children
-                        if c.type == "type_annotation"
-                    ),
+                    (c for c in child.children if c.type == "type_annotation"),
                     None,
                 )
                 annotation = (
                     _node_text(type_node).lstrip(":").strip()
-                    if type_node else None
+                    if type_node
+                    else None
                 )
                 # required_parameter can have an = initializer (default value)
                 if any(c.type == "=" for c in child.children):
@@ -763,15 +751,13 @@ class TypescriptASTVisitor:
                 )
                 param_name = _node_text(id_node) if id_node else None
                 type_node = next(
-                    (
-                        c for c in child.children
-                        if c.type == "type_annotation"
-                    ),
+                    (c for c in child.children if c.type == "type_annotation"),
                     None,
                 )
                 annotation = (
                     _node_text(type_node).lstrip(":").strip()
-                    if type_node else None
+                    if type_node
+                    else None
                 )
                 has_default = True
 
@@ -827,7 +813,8 @@ class TypescriptASTVisitor:
         if node.type == "call_expression":
             func_node = next(
                 (
-                    c for c in node.children
+                    c
+                    for c in node.children
                     if c.type in ("identifier", "member_expression")
                 ),
                 None,
@@ -925,7 +912,7 @@ class TypescriptASTVisitor:
             kind=kind,
             qualified_name=qualified_name,
             name=name,
-            file_path=self._ctx.file_relative_path,
+            file_path=str(self._ctx.file_path),
             span=_make_span(ts_node) if ts_node else None,
             metadata=metadata or {},
         )
@@ -1014,7 +1001,8 @@ def _extract_heritage_bases(heritage_node: TSNode) -> list[str]:
             # e.g. Base<T> — extract just the base name
             name_node = next(
                 (
-                    c for c in child.children
+                    c
+                    for c in child.children
                     if c.type in ("type_identifier", "identifier")
                 ),
                 None,
@@ -1022,7 +1010,6 @@ def _extract_heritage_bases(heritage_node: TSNode) -> list[str]:
             if name_node:
                 bases.append(_node_text(name_node))
     return bases
-
 
 
 def _make_span(node: TSNode | None) -> Span | None:

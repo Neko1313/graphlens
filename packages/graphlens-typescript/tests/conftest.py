@@ -46,7 +46,7 @@ def sample_typescript_project(tmp_path: Path) -> Path:
         'import path from "path";\n'
         'import { join } from "path";\n\n'
         "export function greet(name: string): string {\n"
-        '    return `Hello, ${name}!`;\n'
+        "    return `Hello, ${name}!`;\n"
         "}\n\n"
         "export function resolvePath(p: string): string {\n"
         "    return join(path.resolve(p));\n"
@@ -70,7 +70,9 @@ def sample_typescript_project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def make_file_node(project_name: str, relative_path: str, file_path: Path) -> Node:
+def make_file_node(
+    project_name: str, relative_path: str, file_path: Path
+) -> Node:
     """Create a FILE node for use in visitor tests."""
     file_id = make_node_id(project_name, relative_path, NodeKind.FILE.value)
     return Node(
@@ -106,14 +108,18 @@ def parse_and_visit(
     )
     graph.add_node(file_node)
 
+    # Absolute path for the visitor context (as provided by real adapters)
+    abs_path = Path("/").resolve() / rel_path
     ctx = VisitorContext(
         project_name=project_name,
-        file_path=Path(rel_path),
+        file_path=abs_path,
         file_relative_path=rel_path,
         source_root=Path("src"),
         module_qualified_name=module_qname,
     )
-    visitor = TypescriptASTVisitor(ctx, graph, file_id, source_bytes, classifier)
+    visitor = TypescriptASTVisitor(
+        ctx, graph, file_id, source_bytes, classifier
+    )
     visitor.visit(tree.root_node)
 
     return graph, file_id

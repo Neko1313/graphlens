@@ -5,9 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 # Extensions to strip when converting file path to module name
-_TS_EXTENSIONS: frozenset[str] = frozenset({
-    ".ts", ".tsx", ".mts", ".cts",
-})
+_TS_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".ts",
+        ".tsx",
+        ".mts",
+        ".cts",
+    }
+)
 
 # Files that represent the package root (like __init__.py in Python)
 _INDEX_STEMS: frozenset[str] = frozenset({"index"})
@@ -17,16 +22,13 @@ def find_source_roots(project_root: Path, files: list[Path]) -> list[Path]:
     """
     Detect TypeScript source roots.
 
-    Prefers a ``src/`` sub-directory when source files live there.
-    Falls back to ``project_root``.
+    Prefers a ``src/`` sub-directory when source files live there,
+    but also includes ``project_root`` for files outside ``src/``.
+    Falls back to ``[project_root]`` for non-src-layout projects.
     """
     src = project_root / "src"
-    if (
-        src.is_dir()
-        and files
-        and any(f.is_relative_to(src) for f in files)
-    ):
-        return [src]
+    if src.is_dir() and files and any(f.is_relative_to(src) for f in files):
+        return [src, project_root]
     return [project_root]
 
 

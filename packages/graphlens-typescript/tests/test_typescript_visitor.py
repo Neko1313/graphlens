@@ -24,6 +24,15 @@ class TestVisitorDispatch:
         graph, _ = parse_and_visit("// just a comment\n")
         assert graph is not None
 
+    def test_structural_node_uses_absolute_file_path(self):
+        graph, _ = parse_and_visit("export function foo() {}\n")
+        fn = next(
+            n for n in graph.nodes.values() if n.kind.value == "function"
+        )
+        # absolute path from the visitor context, not the relative one
+        assert fn.file_path is not None
+        assert fn.file_path.startswith("/") or ":" in fn.file_path
+
 
 class TestClassDeclaration:
     def test_simple_class(self):
@@ -60,7 +69,8 @@ class TestClassDeclaration:
         classes = nodes_of_kind(graph, NodeKind.CLASS)
         child = next(c for c in classes if c.name == "Child")
         inherits = [
-            r for r in graph.relations
+            r
+            for r in graph.relations
             if r.kind == RelationKind.INHERITS_FROM and r.source_id == child.id
         ]
         assert len(inherits) == 1
@@ -88,7 +98,9 @@ class TestInterfaceDeclaration:
 
 class TestFunctionDeclaration:
     def test_simple_function(self):
-        graph, _ = parse_and_visit("function greet(name: string): string { return name; }")
+        graph, _ = parse_and_visit(
+            "function greet(name: string): string { return name; }"
+        )
         funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
         assert any(f.name == "greet" for f in funcs)
 
@@ -133,7 +145,9 @@ class TestMethodDefinition:
 class TestImportStatement:
     def test_default_import(self):
         classifier = ImportClassifier(stdlib=frozenset({"fs"}))
-        graph, _ = parse_and_visit("import fs from 'fs';", classifier=classifier)
+        graph, _ = parse_and_visit(
+            "import fs from 'fs';", classifier=classifier
+        )
         imports = nodes_of_kind(graph, NodeKind.IMPORT)
         assert any(i.name == "fs" for i in imports)
 
@@ -159,14 +173,18 @@ class TestImportStatement:
 
     def test_stdlib_origin(self):
         classifier = ImportClassifier(stdlib=frozenset({"fs"}))
-        graph, _ = parse_and_visit("import fs from 'fs';", classifier=classifier)
+        graph, _ = parse_and_visit(
+            "import fs from 'fs';", classifier=classifier
+        )
         imports = nodes_of_kind(graph, NodeKind.IMPORT)
         fs_import = next(i for i in imports if i.name == "fs")
         assert fs_import.metadata.get("origin") == "stdlib"
 
     def test_third_party_origin(self):
         classifier = ImportClassifier(third_party=frozenset({"lodash"}))
-        graph, _ = parse_and_visit("import _ from 'lodash';", classifier=classifier)
+        graph, _ = parse_and_visit(
+            "import _ from 'lodash';", classifier=classifier
+        )
         imports = nodes_of_kind(graph, NodeKind.IMPORT)
         imp = next(i for i in imports if i.name == "_")
         assert imp.metadata.get("origin") == "third_party"
@@ -187,7 +205,8 @@ class TestImportStatement:
             classifier=ImportClassifier(third_party=frozenset({"somemod"})),
         )
         imports_rels = [
-            r for r in graph.relations
+            r
+            for r in graph.relations
             if r.kind == RelationKind.IMPORTS and r.source_id == file_id
         ]
         assert len(imports_rels) >= 1
@@ -197,7 +216,9 @@ class TestImportStatement:
             "import { foo } from 'somemod';",
             classifier=ImportClassifier(third_party=frozenset({"somemod"})),
         )
-        resolves = [r for r in graph.relations if r.kind == RelationKind.RESOLVES_TO]
+        resolves = [
+            r for r in graph.relations if r.kind == RelationKind.RESOLVES_TO
+        ]
         assert len(resolves) >= 1
 
     def test_type_import(self):
@@ -241,7 +262,9 @@ class TestCallExtraction:
 
 class TestArrowFunction:
     def test_const_arrow_function(self):
-        graph, _ = parse_and_visit("export const greet = (name: string) => name;")
+        graph, _ = parse_and_visit(
+            "export const greet = (name: string) => name;"
+        )
         funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
         assert any(f.name == "greet" for f in funcs)
 
@@ -361,7 +384,9 @@ class TestImportClassifier:
         assert c.classify("somemod") == "unknown"
 
     def test_stdlib_takes_priority_over_internal(self):
-        c = ImportClassifier(stdlib=frozenset({"mod"}), internal=frozenset({"mod"}))
+        c = ImportClassifier(
+            stdlib=frozenset({"mod"}), internal=frozenset({"mod"})
+        )
         assert c.classify("mod") == "stdlib"
 
 
@@ -404,7 +429,8 @@ class TestParameters:
         funcs = nodes_of_kind(graph, NodeKind.FUNCTION)
         func = next(f for f in funcs if f.name == "f")
         declares = [
-            r for r in graph.relations
+            r
+            for r in graph.relations
             if r.kind == RelationKind.DECLARES and r.source_id == func.id
         ]
         assert len(declares) == 2
@@ -433,9 +459,15 @@ class TestHelperFunctions:
         src = b"class Foo extends NS.Base {}"
         tree = parse_typescript(src)
         program = tree.root_node
-        class_decl = next(c for c in program.children if c.type == "class_declaration")
-        heritage = next(c for c in class_decl.children if c.type == "class_heritage")
-        extends = next(c for c in heritage.children if c.type == "extends_clause")
+        class_decl = next(
+            c for c in program.children if c.type == "class_declaration"
+        )
+        heritage = next(
+            c for c in class_decl.children if c.type == "class_heritage"
+        )
+        extends = next(
+            c for c in heritage.children if c.type == "extends_clause"
+        )
         bases = _extract_heritage_bases(extends)
         assert "NS.Base" in bases
 
@@ -443,9 +475,15 @@ class TestHelperFunctions:
         src = b"class Foo extends Base<string> {}"
         tree = parse_typescript(src)
         program = tree.root_node
-        class_decl = next(c for c in program.children if c.type == "class_declaration")
-        heritage = next(c for c in class_decl.children if c.type == "class_heritage")
-        extends = next(c for c in heritage.children if c.type == "extends_clause")
+        class_decl = next(
+            c for c in program.children if c.type == "class_declaration"
+        )
+        heritage = next(
+            c for c in class_decl.children if c.type == "class_heritage"
+        )
+        extends = next(
+            c for c in heritage.children if c.type == "extends_clause"
+        )
         bases = _extract_heritage_bases(extends)
         assert "Base" in bases
 
@@ -453,10 +491,14 @@ class TestHelperFunctions:
         src = b"const x = 1 + 2;"
         tree = parse_typescript(src)
         program = tree.root_node
-        lexical = next(c for c in program.children if c.type == "lexical_declaration")
+        lexical = next(
+            c for c in program.children if c.type == "lexical_declaration"
+        )
         declarator = next(
             c for c in lexical.children if c.type == "variable_declarator"
         )
-        binary = next(c for c in declarator.children if c.type == "binary_expression")
+        binary = next(
+            c for c in declarator.children if c.type == "binary_expression"
+        )
         number_node = binary.children[0]
         assert _name_from_node(number_node) == ""

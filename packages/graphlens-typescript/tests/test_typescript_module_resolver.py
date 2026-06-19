@@ -20,7 +20,7 @@ class TestFindSourceRoots:
         src.mkdir()
         files = [src / "index.ts", src / "utils.ts"]
         roots = find_source_roots(tmp_path, files)
-        assert roots == [src]
+        assert roots == [src, tmp_path]
 
     def test_flat_layout(self, tmp_path: Path):
         files = [tmp_path / "index.ts", tmp_path / "utils.ts"]
@@ -107,3 +107,20 @@ class TestFileToQualifiedNameEdgeCases:
         # A file with a non-TS extension falls to the else branch
         f = tmp_path / "script.js"
         assert file_to_qualified_name(f, tmp_path) == "script"
+
+    def test_src_layout_includes_project_root_for_outside_files(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "src" / "pkg").mkdir(parents=True)
+        (tmp_path / "src" / "pkg" / "mod.ts").write_text("")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "mod.test.ts").write_text("")
+        files = [
+            tmp_path / "src" / "pkg" / "mod.ts",
+            tmp_path / "tests" / "mod.test.ts",
+        ]
+        roots = find_source_roots(tmp_path, files)
+        assert roots[0] == tmp_path / "src"
+        assert tmp_path in roots
+        assert file_to_qualified_name(files[0], roots[0]) == "pkg.mod"
+        assert file_to_qualified_name(files[1], tmp_path) == "tests.mod.test"
