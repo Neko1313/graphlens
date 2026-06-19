@@ -274,6 +274,7 @@ class TypescriptASTVisitor:
 
         # Extract base class from class_heritage → extends_clause
         bases: list[str] = []
+        base_name_nodes: list[TSNode] = []
         heritage = next(
             (c for c in node.children if c.type == "class_heritage"), None
         )
@@ -284,6 +285,7 @@ class TypescriptASTVisitor:
             )
             if extends is not None:
                 bases = _extract_heritage_bases(extends)
+                base_name_nodes = _extract_heritage_base_nodes(extends)
 
         class_node = self._make_node(
             NodeKind.CLASS,
@@ -299,15 +301,8 @@ class TypescriptASTVisitor:
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
 
-        for base_name in bases:
-            sym = self._get_or_create_external_symbol(base_name)
-            self._graph.add_relation(
-                Relation(
-                    source_id=class_node.id,
-                    target_id=sym.id,
-                    kind=RelationKind.INHERITS_FROM,
-                )
-            )
+        for base_name_node in base_name_nodes:
+            self._record_occurrence("base", base_name_node, class_node.id)
 
         self._push(qname, class_node.id, NodeKind.CLASS)
         body = next((c for c in node.children if c.type == "class_body"), None)
@@ -330,11 +325,13 @@ class TypescriptASTVisitor:
 
         # Interfaces may extend other interfaces
         bases: list[str] = []
+        base_name_nodes: list[TSNode] = []
         extends_clause = next(
             (c for c in node.children if c.type == "extends_type_clause"), None
         )
         if extends_clause is not None:
             bases = _extract_heritage_bases(extends_clause)
+            base_name_nodes = _extract_heritage_base_nodes(extends_clause)
 
         class_node = self._make_node(
             NodeKind.CLASS,
@@ -351,15 +348,8 @@ class TypescriptASTVisitor:
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
 
-        for base_name in bases:
-            sym = self._get_or_create_external_symbol(base_name)
-            self._graph.add_relation(
-                Relation(
-                    source_id=class_node.id,
-                    target_id=sym.id,
-                    kind=RelationKind.INHERITS_FROM,
-                )
-            )
+        for base_name_node in base_name_nodes:
+            self._record_occurrence("base", base_name_node, class_node.id)
 
         self._push(qname, class_node.id, NodeKind.CLASS)
         body = next(
@@ -424,6 +414,10 @@ class TypescriptASTVisitor:
             name_node=name_node,
         )
         self._add_node_with_relation(func_node, RelationKind.DECLARES)
+
+        # Record return type annotation occurrence
+        if type_ann is not None:
+            self._record_annotation(type_ann, func_node.id)
 
         self._push(qname, func_node.id, kind)
 
@@ -719,6 +713,7 @@ class TypescriptASTVisitor:
         for child in params_node.children:
             param_name: str | None = None
             annotation: str | None = None
+            type_node: TSNode | None = None
             has_default = False
             is_variadic = False
 
@@ -820,10 +815,71 @@ class TypescriptASTVisitor:
                     kind=RelationKind.DECLARES,
                 )
             )
+            # Record type annotation occurrence
+            if type_node is not None:
+                self._record_annotation(type_node, function_id)
 
     # -------------------------------------------------------------------------
     # Occurrence model helpers
     # -------------------------------------------------------------------------
+
+    def _first_identifier(self, node: TSNode) -> TSNode | None:
+        """
+        Return the leading type identifier from a type annotation node.
+
+        Handles: ``type_annotation``, ``predefined_type``,
+        ``type_identifier``, ``identifier``, ``generic_type``,
+        ``member_expression``.
+        """
+        if node.type == "type_annotation":
+            # Strip the leading ':' token and recurse into the type
+            for child in node.children:
+                if child.is_named:
+                    return self._first_identifier(child)
+            return None
+        if node.type in ("type_identifier", "identifier"):
+            return node
+        if node.type == "predefined_type":
+            # Built-in: string, number, boolean, … — use the child token
+            for child in node.children:
+                return child
+            return None
+        if node.type == "generic_type":
+            # Base<T> — extract just the base name
+            id_child = next(
+                (
+                    c for c in node.children
+                    if c.type in ("type_identifier", "identifier")
+                ),
+                None,
+            )
+            return id_child
+        if node.type == "member_expression":
+            # NS.Type — use the trailing property
+            return node.children[-1]
+        # Recurse into first named child
+        for child in node.children:
+            if child.is_named:
+                result = self._first_identifier(child)
+                if result is not None:
+                    return result
+        return None
+
+    def _record_annotation(
+        self, type_ann_node: TSNode, enclosing_id: str
+    ) -> None:
+        """
+        Record an ``annotation`` occurrence for the leading type name in a
+        ``type_annotation`` CST node.
+
+        Parameters
+        ----------
+        type_ann_node: The ``type_annotation`` (or bare type) CST node.
+        enclosing_id:  Node ID of the enclosing function or class.
+        """
+        id_node = self._first_identifier(type_ann_node)
+        if id_node is not None:
+            self._record_occurrence("annotation", id_node, enclosing_id)
 
     # Node types that represent nested function/class definitions —
     # _scan_value must NOT descend into these.
@@ -1179,6 +1235,33 @@ def _extract_heritage_bases(heritage_node: TSNode) -> list[str]:
             if name_node:
                 bases.append(_node_text(name_node))
     return bases
+
+
+def _extract_heritage_base_nodes(heritage_node: TSNode) -> list[TSNode]:
+    """
+    Return the name-bearing TSNode for each base in a heritage clause.
+
+    Used by the occurrence model to record ``base`` occurrences with
+    accurate source positions.
+    """
+    nodes: list[TSNode] = []
+    for child in heritage_node.children:
+        if child.type in ("identifier", "type_identifier"):
+            nodes.append(child)
+        elif child.type == "member_expression":
+            # NS.Base — the trailing property identifier is the name token
+            nodes.append(child.children[-1])
+        elif child.type == "generic_type":
+            name_node = next(
+                (
+                    c for c in child.children
+                    if c.type in ("type_identifier", "identifier")
+                ),
+                None,
+            )
+            if name_node:
+                nodes.append(name_node)
+    return nodes
 
 
 def _make_span(node: TSNode | None) -> Span | None:

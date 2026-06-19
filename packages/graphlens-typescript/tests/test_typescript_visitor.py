@@ -65,15 +65,10 @@ class TestClassDeclaration:
         assert "Parent" in child.metadata.get("bases", [])
 
     def test_inherits_from_relation(self):
-        graph, _ = parse_and_visit("class Child extends Parent {}")
-        classes = nodes_of_kind(graph, NodeKind.CLASS)
-        child = next(c for c in classes if c.name == "Child")
-        inherits = [
-            r
-            for r in graph.relations
-            if r.kind == RelationKind.INHERITS_FROM and r.source_id == child.id
-        ]
-        assert len(inherits) == 1
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("class Child extends Parent {}")
+        bases = [o for o in v.occurrences if o.role == "base"]
+        assert len(bases) == 1
 
 
 class TestInterfaceDeclaration:
@@ -466,6 +461,34 @@ class TestParameters:
             if r.kind == RelationKind.DECLARES and r.source_id == func.id
         ]
         assert len(declares) == 2
+
+
+class TestBaseAndAnnotationOccurrences:
+    def test_class_base_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("class Sub extends Base {}")
+        bases = [o for o in v.occurrences if o.role == "base"]
+        assert len(bases) == 1
+
+    def test_interface_base_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("interface IChild extends IParent {}")
+        bases = [o for o in v.occurrences if o.role == "base"]
+        assert len(bases) >= 1
+
+    def test_param_type_annotation_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("function f(x: MyType): void {}")
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
+
+    def test_no_inherits_from_relation(self):
+        graph, _ = parse_and_visit("class Sub extends Base {}")
+        inherits = [
+            r for r in graph.relations
+            if r.kind == RelationKind.INHERITS_FROM
+        ]
+        assert len(inherits) == 0
 
 
 class TestNameSpan:
