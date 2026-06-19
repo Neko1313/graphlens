@@ -587,7 +587,14 @@ class PythonASTVisitor:
             if arg_list is not None:
                 for c in arg_list.children:
                     if c.type not in ("(", ")", ","):
-                        self._scan_value(c, enclosing_id)
+                        if c.type == "keyword_argument":
+                            # Scan only the value (last child), not the name,
+                            # to avoid spurious REFERENCES on kwarg names.
+                            val = c.children[-1] if c.children else None
+                            if val is not None:
+                                self._scan_value(val, enclosing_id)
+                        else:
+                            self._scan_value(c, enclosing_id)
             return
         if node.type == "identifier":
             self._record_occurrence("read", node, enclosing_id)

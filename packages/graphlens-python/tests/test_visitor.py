@@ -1005,6 +1005,27 @@ def test_nested_def_inside_compound_block_is_visited(parse_and_visit_visitor):
     assert use_calls == []
 
 
+def test_keyword_argument_value_read_not_name(parse_and_visit_visitor):
+    """Only the VALUE of a keyword argument should be read, not the keyword name.
+
+    Source: ``f(key=val)`` on line 6 (1-based).
+    'key' is at col 7 (0-based col 6 + 1), 'val' is at col 11 (0-based col 10 + 1).
+    Expect: a read at (line=6, col=11) for 'val'; NO read at (line=6, col=7) for 'key'.
+    """
+    _graph, visitor = parse_and_visit_visitor(
+        "def f(**kw):\n    pass\n\ndef use():\n    val = 1\n    f(key=val)\n"
+    )
+    reads = [o for o in visitor.occurrences if o.role == "read"]
+    assert any(o.line == 6 and o.col == 11 for o in reads), (
+        f"value 'val' must be read at (line=6, col=11); "
+        f"got reads: {[(o.line, o.col) for o in reads]}"
+    )
+    assert not any(o.line == 6 and o.col == 7 for o in reads), (
+        f"keyword name 'key' must NOT be read; "
+        f"got reads: {[(o.line, o.col) for o in reads]}"
+    )
+
+
 def test_annotated_depends_records_call_and_read(parse_and_visit_visitor):
     """``x: Annotated[T, Depends(get_dep)]`` records a ``call`` on ``Depends``
     and a ``read`` on the ``get_dep`` argument."""
