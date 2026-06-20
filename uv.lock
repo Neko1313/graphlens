@@ -11,6 +11,7 @@ members = [
     "graphlens",
     "graphlens-cli",
     "graphlens-go",
+    "graphlens-link",
     "graphlens-python",
     "graphlens-rust",
     "graphlens-typescript",
@@ -548,12 +549,16 @@ source = { editable = "." }
 [package.optional-dependencies]
 all = [
     { name = "graphlens-go" },
+    { name = "graphlens-link" },
     { name = "graphlens-python" },
     { name = "graphlens-rust" },
     { name = "graphlens-typescript" },
 ]
 go = [
     { name = "graphlens-go" },
+]
+link = [
+    { name = "graphlens-link" },
 ]
 python = [
     { name = "graphlens-python" },
@@ -588,6 +593,8 @@ test = [
 requires-dist = [
     { name = "graphlens-go", marker = "extra == 'all'", editable = "packages/graphlens-go" },
     { name = "graphlens-go", marker = "extra == 'go'", editable = "packages/graphlens-go" },
+    { name = "graphlens-link", marker = "extra == 'all'", editable = "packages/graphlens-link" },
+    { name = "graphlens-link", marker = "extra == 'link'", editable = "packages/graphlens-link" },
     { name = "graphlens-python", marker = "extra == 'all'", editable = "packages/graphlens-python" },
     { name = "graphlens-python", marker = "extra == 'python'", editable = "packages/graphlens-python" },
     { name = "graphlens-rust", marker = "extra == 'all'", editable = "packages/graphlens-rust" },
@@ -595,7 +602,7 @@ requires-dist = [
     { name = "graphlens-typescript", marker = "extra == 'all'", editable = "packages/graphlens-typescript" },
     { name = "graphlens-typescript", marker = "extra == 'typescript'", editable = "packages/graphlens-typescript" },
 ]
-provides-extras = ["python", "typescript", "go", "rust", "all"]
+provides-extras = ["python", "typescript", "go", "rust", "link", "all"]
 
 [package.metadata.requires-dev]
 lint = [
@@ -670,6 +677,17 @@ requires-dist = [
     { name = "tree-sitter", specifier = ">=0.24" },
     { name = "tree-sitter-go", specifier = ">=0.23" },
 ]
+
+[[package]]
+name = "graphlens-link"
+version = "0.4.0"
+source = { editable = "packages/graphlens-link" }
+dependencies = [
+    { name = "graphlens" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "graphlens", editable = "." }]
 
 [[package]]
 name = "graphlens-python"

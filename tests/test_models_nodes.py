@@ -25,7 +25,7 @@ class TestNodeKind:
         expected = {
             "PROJECT", "MODULE", "FILE", "CLASS", "FUNCTION", "METHOD",
             "PARAMETER", "IMPORT", "DEPENDENCY", "EXTERNAL_SYMBOL",
-            "VARIABLE", "ATTRIBUTE", "TYPE_ALIAS",
+            "VARIABLE", "ATTRIBUTE", "TYPE_ALIAS", "BOUNDARY",
         }
         assert {m.name for m in NodeKind} == expected
 
@@ -46,7 +46,7 @@ class TestNodeKind:
         assert not hasattr(NodeKind, "SYMBOL")
 
     def test_count(self) -> None:
-        assert len(NodeKind) == 13
+        assert len(NodeKind) == 14
 
 
 class TestNode:
@@ -98,3 +98,4 @@ def test_new_node_kinds_exist() -> None:
     assert NodeKind.VARIABLE.value == "variable"
     assert NodeKind.ATTRIBUTE.value == "attribute"
     assert NodeKind.TYPE_ALIAS.value == "type_alias"
+    assert NodeKind.BOUNDARY.value == "boundary"

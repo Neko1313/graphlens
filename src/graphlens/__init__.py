@@ -1,6 +1,7 @@
 """Models, contracts, registry, and utilities for polyglot code analysis."""
 
 from graphlens.contracts import (
+    BoundaryRef,
     DependencyFileParser,
     DiscoveredProject,
     GraphBackend,
@@ -27,6 +28,7 @@ from graphlens.models import (
 )
 from graphlens.registry import AdapterRegistry, adapter_registry
 from graphlens.status import RESOLVER_STATUS_KEY, ResolverStatus
+from graphlens.utils import make_boundary_id, make_node_id
 
 __all__ = [
     "RESOLVER_STATUS_KEY",
@@ -36,6 +38,7 @@ __all__ = [
     "AdapterRegistry",
     "BackendError",
     # contracts
+    "BoundaryRef",
     "DependencyFileParser",
     "DiscoveredProject",
     "DiscoveryError",
@@ -57,5 +60,8 @@ __all__ = [
     "ResolverStatus",
     "SerializationError",
     "adapter_registry",
+    # utils
+    "make_boundary_id",
+    "make_node_id",
     "normalize_pkg_name",
 ]

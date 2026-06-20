@@ -9,6 +9,8 @@ includes:
     taskfile: packages/graphlens-go/Taskfile.yaml
   rust:
     taskfile: packages/graphlens-rust/Taskfile.yaml
+  link:
+    taskfile: packages/graphlens-link/Taskfile.yaml
   cli:
     taskfile: packages/graphlens-cli/Taskfile.yaml
 
@@ -69,6 +71,7 @@ tasks:
       - typescript:lint
       - go:lint
       - rust:lint
+      - link:lint
       - cli:lint
 
   tests:
@@ -79,6 +82,7 @@ tasks:
       - typescript:test
       - go:test
       - rust:test
+      - link:test
       - cli:test
 
   # ---------------------------------------------------------------------------
@@ -111,6 +115,7 @@ tasks:
       - uv version {{.VERSION}} --package graphlens-typescript --frozen
       - uv version {{.VERSION}} --package graphlens-go --frozen
       - uv version {{.VERSION}} --package graphlens-rust --frozen
+      - uv version {{.VERSION}} --package graphlens-link --frozen
       - uv version {{.VERSION}} --package graphlens-cli --frozen
       - uv lock
 
@@ -132,6 +137,7 @@ tasks:
                 packages/graphlens-typescript/pyproject.toml \
                 packages/graphlens-go/pyproject.toml \
                 packages/graphlens-rust/pyproject.toml \
+                packages/graphlens-link/pyproject.toml \
                 packages/graphlens-cli/pyproject.toml \
                 uv.lock \
                 CHANGELOG.md
@@ -155,6 +161,7 @@ tasks:
       - uv build --package graphlens-typescript
       - uv build --package graphlens-go
       - uv build --package graphlens-rust
+      - uv build --package graphlens-link
       - uv build --package graphlens-cli
       - uv publish
 
