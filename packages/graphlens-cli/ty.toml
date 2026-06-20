@@ -1,0 +1,11 @@
+[environment]
+root = ["."]
+
+[src]
+include = ["src", "tests"]
+
+[[overrides]]
+include = ["**/graphlens_cli/_neo4j.py"]
+
+[overrides.rules]
+unresolved-import = "ignore"
