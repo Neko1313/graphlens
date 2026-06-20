@@ -54,9 +54,13 @@ python = [
 typescript = [
     "graphlens-typescript"
 ]
+go = [
+    "graphlens-go"
+]
 all = [
     "graphlens-typescript",
-    "graphlens-python"
+    "graphlens-python",
+    "graphlens-go"
 ]
 
 [dependency-groups]
@@ -81,6 +85,7 @@ test = [
 [tool.uv.sources]
 graphlens-python = { workspace = true }
 graphlens-typescript = { workspace = true }
+graphlens-go = { workspace = true }
 graphlens-cli = { workspace = true }
 
 [tool.pytest.ini_options]

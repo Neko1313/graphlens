@@ -81,6 +81,10 @@ def load_adapter(lang: str) -> LanguageAdapter:
         from graphlens_typescript import TypescriptAdapter
 
         return TypescriptAdapter()
+    if lang == "go":
+        from graphlens_go import GoAdapter
+
+        return GoAdapter()
 
     msg = f"Unknown or unavailable adapter: {lang!r}"
     raise typer.BadParameter(msg)

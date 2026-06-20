@@ -5,6 +5,8 @@ includes:
     taskfile: packages/graphlens-python/Taskfile.yaml
   typescript:
     taskfile: packages/graphlens-typescript/Taskfile.yaml
+  go:
+    taskfile: packages/graphlens-go/Taskfile.yaml
   cli:
     taskfile: packages/graphlens-cli/Taskfile.yaml
 
@@ -63,6 +65,7 @@ tasks:
       - core:lint
       - python:lint
       - typescript:lint
+      - go:lint
       - cli:lint
 
   tests:
@@ -71,6 +74,7 @@ tasks:
       - core:test
       - python:test
       - typescript:test
+      - go:test
       - cli:test
 
   # ---------------------------------------------------------------------------
@@ -101,6 +105,7 @@ tasks:
       - uv version {{.VERSION}} --frozen
       - uv version {{.VERSION}} --package graphlens-python --frozen
       - uv version {{.VERSION}} --package graphlens-typescript --frozen
+      - uv version {{.VERSION}} --package graphlens-go --frozen
       - uv version {{.VERSION}} --package graphlens-cli --frozen
       - uv lock
 
@@ -120,6 +125,7 @@ tasks:
         git add pyproject.toml \
                 packages/graphlens-python/pyproject.toml \
                 packages/graphlens-typescript/pyproject.toml \
+                packages/graphlens-go/pyproject.toml \
                 packages/graphlens-cli/pyproject.toml \
                 uv.lock \
                 CHANGELOG.md
@@ -141,6 +147,7 @@ tasks:
       - uv build
       - uv build --package graphlens-python
       - uv build --package graphlens-typescript
+      - uv build --package graphlens-go
       - uv build --package graphlens-cli
       - uv publish
 
