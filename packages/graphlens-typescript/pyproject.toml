@@ -13,8 +13,7 @@ dependencies = [
 requires = ["uv_build>=0.9.18,<0.12.0"]
 build-backend = "uv_build"
 # uv_build ships all files under src/graphlens_typescript/ by default,
-# so ts_resolver.js and _ts_bridge_package.json are included in the wheel
-# without an explicit include rule.
+# so ts_resolver.js is included in the wheel without an explicit include rule.
 
 [tool.uv.sources]
 graphlens = { workspace = true }

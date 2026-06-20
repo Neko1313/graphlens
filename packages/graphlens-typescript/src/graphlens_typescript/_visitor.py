@@ -475,6 +475,7 @@ class TypescriptASTVisitor:
         name_node = next(
             (c for c in node.children if c.type == "type_identifier"), None
         ) or next((c for c in node.children if c.type == "identifier"), None)
+        # forward-compat: unreachable in tree-sitter-typescript 0.23.2
         if name_node is None:
             return
         name = _node_text(name_node)
@@ -526,6 +527,7 @@ class TypescriptASTVisitor:
         name_node = next(
             (c for c in node.children if c.type == "type_identifier"), None
         ) or next((c for c in node.children if c.type == "identifier"), None)
+        # forward-compat: unreachable in tree-sitter-typescript 0.23.2
         if name_node is None:
             return
         name = _node_text(name_node)
@@ -992,6 +994,7 @@ class TypescriptASTVisitor:
             has_default = False
             is_variadic = False
 
+            # forward-compat: unreachable in tree-sitter-typescript 0.23.2
             if child.type == "identifier":
                 param_name = _node_text(child)
                 param_name_node = child
@@ -1056,6 +1059,7 @@ class TypescriptASTVisitor:
                 )
                 has_default = True
 
+            # forward-compat: unreachable in tree-sitter-typescript 0.23.2
             elif child.type == "rest_parameter":
                 id_node = next(
                     (c for c in child.children if c.type == "identifier"), None
@@ -1064,6 +1068,7 @@ class TypescriptASTVisitor:
                 param_name_node = id_node
                 is_variadic = True
 
+            # forward-compat: unreachable in tree-sitter-typescript 0.23.2
             elif child.type == "assignment_pattern":
                 # Default value parameter: x = defaultVal
                 id_node = next(
@@ -1117,6 +1122,7 @@ class TypescriptASTVisitor:
             for child in node.children:
                 if child.is_named:
                     return self._first_identifier(child)
+            # forward-compat: unreachable in tree-sitter-typescript 0.23.2
             return None
         if node.type in ("type_identifier", "identifier"):
             return node
@@ -1124,6 +1130,7 @@ class TypescriptASTVisitor:
             # Built-in: string, number, boolean, … — use the child token
             for child in node.children:
                 return child
+            # forward-compat: unreachable in tree-sitter-typescript 0.23.2
             return None
         if node.type == "generic_type":
             # Base<T> — extract just the base name

@@ -87,7 +87,7 @@ async function main() {
   try { service = buildService(root); }
   catch (e) { process.stdout.write(JSON.stringify({ results: request.queries.map(() => null) })); return; }
   const results = request.queries.map((q) =>
-    answer(service, root, { ...q, file: path.resolve(root, q.file) }));
+    answer(service, root, { ...q, file: path.resolve(q.file) }));
   process.stdout.write(JSON.stringify({ results }));
 }
 main().catch(() => process.stdout.write(JSON.stringify({ results: [] })));

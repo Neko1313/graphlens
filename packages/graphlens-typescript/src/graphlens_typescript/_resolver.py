@@ -18,7 +18,6 @@ _TS_VERSION = "5.8.3"
 Query = tuple[Path, int, int]  # (absolute file, 1-based line, 1-based col)
 
 _BRIDGE_JS = "ts_resolver.js"
-_BRIDGE_PKG = "_ts_bridge_package.json"
 
 
 def _cache_root() -> Path:
