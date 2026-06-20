@@ -57,10 +57,14 @@ typescript = [
 go = [
     "graphlens-go"
 ]
+rust = [
+    "graphlens-rust"
+]
 all = [
     "graphlens-typescript",
     "graphlens-python",
-    "graphlens-go"
+    "graphlens-go",
+    "graphlens-rust"
 ]
 
 [dependency-groups]
@@ -86,6 +90,7 @@ test = [
 graphlens-python = { workspace = true }
 graphlens-typescript = { workspace = true }
 graphlens-go = { workspace = true }
+graphlens-rust = { workspace = true }
 graphlens-cli = { workspace = true }
 
 [tool.pytest.ini_options]

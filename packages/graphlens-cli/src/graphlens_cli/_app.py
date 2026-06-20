@@ -85,6 +85,10 @@ def load_adapter(lang: str) -> LanguageAdapter:
         from graphlens_go import GoAdapter
 
         return GoAdapter()
+    if lang == "rust":
+        from graphlens_rust import RustAdapter
+
+        return RustAdapter()
 
     msg = f"Unknown or unavailable adapter: {lang!r}"
     raise typer.BadParameter(msg)
