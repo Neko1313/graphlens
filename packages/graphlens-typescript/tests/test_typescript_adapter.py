@@ -426,15 +426,14 @@ class TestBatchResolutionPass:
         graph = TypescriptAdapter(resolver=FakeResolver(target)).analyze(
             tmp_path
         )
-        # Should not crash; any resolution edges target EXTERNAL_SYMBOL
+        # The helper call occurrence should have been resolved to an
+        # EXTERNAL_SYMBOL since span lookup fails at line=999, col=999
         ext_symbols = [
             n
             for n in graph.nodes.values()
             if n.kind.value == "external_symbol"
         ]
-        # The helper call occurrence should have been resolved to an
-        # EXTERNAL_SYMBOL since span lookup fails
-        assert ext_symbols or not _edges(graph, "calls")
+        assert ext_symbols
 
     def test_inherits_from_base_edge(self, tmp_path: Path):
         """

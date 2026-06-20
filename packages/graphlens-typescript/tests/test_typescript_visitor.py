@@ -260,7 +260,10 @@ class TestCallExtraction:
         src = "function greet() { doSomething(); }"
         _, v = parse_and_visit_visitor(src)
         calls = [o for o in v.occurrences if o.role == "call"]
-        assert any(True for o in calls)
+        # exactly one call: "doSomething" starts at 1-based col 20
+        assert len(calls) == 1
+        assert calls[0].role == "call"
+        assert calls[0].col == 20
 
 
 class TestOccurrences:
@@ -268,7 +271,9 @@ class TestOccurrences:
         from conftest import parse_and_visit_visitor
         _, v = parse_and_visit_visitor("function f() { a(); }")
         calls = [o for o in v.occurrences if o.role == "call"]
-        assert any(o.col > 0 for o in calls)
+        # exactly one call: "a" starts at 1-based col 16
+        assert len(calls) == 1
+        assert calls[0].col == 16
 
     def test_call_no_extra_external_symbol(self):
         from conftest import parse_and_visit_visitor
@@ -282,7 +287,9 @@ class TestOccurrences:
         from conftest import parse_and_visit_visitor
         _, v = parse_and_visit_visitor("function f() { a(b); }")
         reads = [o for o in v.occurrences if o.role == "read"]
-        assert any(True for o in reads)  # b is a read
+        # exactly one read: "b" starts at 1-based col 18
+        assert len(reads) == 1
+        assert reads[0].col == 18
 
     def test_no_double_count(self):
         from conftest import parse_and_visit_visitor
@@ -845,15 +852,19 @@ class TestTypeAliasAnnotation:
         """type A = typeof obj.prop; — _first_identifier handles member_expression."""
         from conftest import parse_and_visit_visitor
         _, v = parse_and_visit_visitor("type A = typeof obj.prop;")
-        # The member_expression branch is reached; no crash expected
-        assert v is not None
+        # member_expression branch returns the trailing property node ("prop")
+        # so an annotation occurrence is recorded for it
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
 
     def test_type_alias_object_type_hits_line_1146(self):
         """type A = { x: number }; — _first_identifier recurses through object_type."""
         from conftest import parse_and_visit_visitor
         _, v = parse_and_visit_visitor("type A = { x: number };")
-        # Exercises the recursive fallback in _first_identifier (line 1146)
-        assert v is not None
+        # Recursive fallback descends into the object_type and eventually
+        # finds the predefined_type child "number", recording an annotation
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -871,13 +882,16 @@ class TestAnonymousNamelessNodes:
         # The parser won't normally produce this but we test the guard exists
         # by using a class_body expression_statement path (safe graceful skip)
         graph, _ = parse_and_visit_visitor("interface {}")
-        # Should not crash; result may be empty or have partial nodes
-        assert graph is not None
+        # The nameless interface must produce no CLASS node
+        classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
+        assert len(classes) == 0
 
     def test_handle_class_no_name_skipped(self):
         """Anonymous class expression does not crash the visitor."""
         graph, _ = parse_and_visit("export default class {}")
-        assert graph is not None
+        # The nameless class must produce no CLASS node
+        classes = nodes_of_kind(graph, NodeKind.CLASS)
+        assert len(classes) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1122,7 +1136,7 @@ class TestScanValueNestedDefGuard:
         # 'outer' inside the arrow is in a new scope; scan_value should stop
         # The arrow_function is in NESTED_DEF_TYPES; no 'read' for outer
         reads = [o for o in v.occurrences if o.role == "read"]
-        assert not any(True for o in reads)
+        assert len(reads) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1150,15 +1164,17 @@ class TestFirstIdentifier:
         """type A = typeof obj.prop — member_expression branch in _first_identifier."""
         from conftest import parse_and_visit_visitor
         _, v = parse_and_visit_visitor("type A = typeof obj.prop;")
-        # Should not raise; annotations may or may not be recorded
-        assert v is not None
+        # member_expression returns its trailing child → annotation is recorded
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
 
     def test_object_type_recursive_fallback(self):
         """type A = { x: number } — recursive fallback in _first_identifier."""
         from conftest import parse_and_visit_visitor
         _, v = parse_and_visit_visitor("type A = { x: number };")
-        # The recursion exercises line 1146 (return None at dead end)
-        assert v is not None
+        # Recursive descent finds the predefined_type "number" and records it
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
 
 
 # ---------------------------------------------------------------------------
