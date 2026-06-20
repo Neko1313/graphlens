@@ -8,6 +8,7 @@ from graphlens.contracts import (
     ProjectReader,
     normalize_pkg_name,
 )
+from graphlens.diffing import GraphDiff
 from graphlens.exceptions import (
     AdapterError,
     AdapterNotFoundError,
@@ -15,6 +16,7 @@ from graphlens.exceptions import (
     DiscoveryError,
     DuplicateNodeError,
     GraphLensError,
+    SerializationError,
 )
 from graphlens.models import (
     GraphLens,
@@ -24,8 +26,10 @@ from graphlens.models import (
     RelationKind,
 )
 from graphlens.registry import AdapterRegistry, adapter_registry
+from graphlens.status import RESOLVER_STATUS_KEY, ResolverStatus
 
 __all__ = [
+    "RESOLVER_STATUS_KEY",
     "AdapterError",
     "AdapterNotFoundError",
     # registry
@@ -37,6 +41,8 @@ __all__ = [
     "DiscoveryError",
     "DuplicateNodeError",
     "GraphBackend",
+    # diff
+    "GraphDiff",
     # models
     "GraphLens",
     # exceptions
@@ -47,6 +53,9 @@ __all__ = [
     "ProjectReader",
     "Relation",
     "RelationKind",
+    # status
+    "ResolverStatus",
+    "SerializationError",
     "adapter_registry",
     "normalize_pkg_name",
 ]
