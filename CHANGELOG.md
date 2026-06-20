@@ -4,25 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`graphlens-cli`** — new package providing a `graphlens` CLI entry point
+  with three commands:
+  - `graphlens analyze <root>` — node/relation statistics, top callers,
+    external symbol origins.
+  - `graphlens visualize <root>` — self-contained HTML graph viewer (vis.js),
+    opens in browser.
+  - `graphlens neo4j <root>` — export graph to Neo4j via `UNWIND MERGE`
+    Cypher (no APOC required); optional `[neo4j]` extra.
+- `examples/neo4j_export.py` — standalone Neo4j export script (no CLI dep).
+- `graphlens-python`: `ty` declared as an explicit dependency (previously
+  silently missing).
+- Python adapter `TyResolver`: `open_file()` now drains `publishDiagnostics`
+  before returning, eliminating 30 s definition-query timeouts that occurred
+  when ty's background analysis hadn't finished yet.
+
 ### Changed (breaking)
 - Graph model: removed `NodeKind.SYMBOL`; added `VARIABLE`, `ATTRIBUTE`,
   `TYPE_ALIAS` node kinds and the `HAS_TYPE` relation kind.
-- Python adapter: `CALLS`/`INHERITS_FROM` now resolve to real declaration
-  nodes (via jedi); added resolved `REFERENCES` (read/write) and `HAS_TYPE`.
+- Python adapter: replaced `JediResolver` with `TyResolver` (ty LSP server).
+  `CALLS`/`INHERITS_FROM` now resolve to real declaration nodes; added
+  resolved `REFERENCES` (read/write) and `HAS_TYPE` edges.
 - TypeScript adapter now resolves CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM to
   real declaration nodes via the TypeScript Compiler API (Node subprocess,
   install-on-demand). Alias imports (tsconfig paths) resolve. src-layout files
   outside src/ are analyzed. Resolution requires Node; degrades to tree-sitter
   structure when unavailable.
 
-### Added
+### Added (earlier in this cycle)
 - Core `SpanIndex` (location→node bridge) and `SymbolResolver` contract
   with `ResolvedRef`/`Occurrence` DTOs.
-- `graphlens-python` now depends on `jedi>=0.19.2`.
 - Module-level and class-body calls now produce `CALLS` edges (previously
   only function-body calls were recorded).
 - `infer_type_at` is kept on `SymbolResolver` for future explicit type
-  queries; the resolution pass uses `definition_at` (type-aware via jedi).
+  queries; the resolution pass uses `definition_at`.
 
 ## [0.3.0] - 2026-05-10
 ### Features

@@ -8,11 +8,13 @@ graphlens/                      ← uv workspace root (also the core library)
   packages/
     graphlens-python/           ← Python language adapter
     graphlens-typescript/       ← TypeScript language adapter
+    graphlens-cli/              ← CLI package: graphlens analyze / visualize / neo4j
   tests/                         ← core library tests
-  examples/                      ← runnable usage examples
+  examples/                      ← standalone usage examples (no CLI dep)
     demo_resolved_graph.py      ← Python: print node/edge stats + find-usages
     demo_resolved_graph_ts.py   ← TypeScript: same, via TypeScript Compiler API
-    visualize_graph.py          ← Interactive HTML graph viewer (vis.js, opens in browser)
+    visualize_graph.py          ← standalone HTML graph viewer (vis.js)
+    neo4j_export.py             ← standalone Neo4j export script
 ```
 
 All packages use the `src/` layout and `uv_build` as build backend.

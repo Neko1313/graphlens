@@ -49,6 +49,10 @@ pip install "graphlens[python]"
 
 # Core + TypeScript adapter
 pip install "graphlens[typescript]"
+
+# CLI (graphlens analyze / visualize / neo4j)
+pip install "graphlens-cli[python]"          # with Python adapter
+pip install "graphlens-cli[all]"             # Python + TypeScript + Neo4j
 ```
 
 With uv:
@@ -57,6 +61,7 @@ With uv:
 uv add graphlens
 uv add "graphlens[python]"
 uv add "graphlens[typescript]"
+uv add "graphlens-cli[all]"
 ```
 
 ## Quick start
@@ -81,26 +86,28 @@ modules = [n for n in graph.nodes.values() if n.kind == NodeKind.MODULE]
 classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
 ```
 
-## Examples
+## CLI (`graphlens-cli`)
 
-### `visualize_graph.py` — interactive HTML graph viewer
-
-Analyses a project with all applicable language adapters and opens a
-self-contained HTML file in the browser.
+Install `graphlens-cli` to get the `graphlens` entry point with three commands:
 
 ```bash
-# Auto-detect language, open in browser
-uv run python examples/visualize_graph.py <project_root>
+# Print node/relation statistics
+graphlens analyze <project_root>
+graphlens analyze ~/myrepo --lang python,typescript
 
-# Mixed Python + TypeScript monorepo
-uv run python examples/visualize_graph.py ~/myrepo --lang python,typescript
+# Interactive HTML graph viewer (opens in browser)
+graphlens visualize <project_root>
+graphlens visualize ~/myrepo --lang python --show-external --max-nodes 500
+graphlens visualize . --output graph.html --no-open
 
-# Limit graph size, save to a specific file
-uv run python examples/visualize_graph.py ~/myproject --max-nodes 500 --output out.html
-
-# Include external stdlib/third-party symbol nodes
-uv run python examples/visualize_graph.py . --show-external --show-structure
+# Export to Neo4j
+graphlens neo4j <project_root> --uri bolt://localhost:7687 --user neo4j --password secret
+graphlens neo4j . --wipe --batch-size 200
 ```
+
+### `visualize` — interactive HTML graph viewer
+
+Produces a self-contained HTML file powered by vis.js and opens it in the browser.
 
 | Flag | Description |
 |---|---|
@@ -111,11 +118,21 @@ uv run python examples/visualize_graph.py . --show-external --show-structure
 | `--output PATH` | Write HTML to PATH instead of `graph-<name>.html` |
 | `--no-open` | Do not open the browser automatically |
 
-**Click behaviour** — click any node to see its info panel.  For `FUNCTION`
+**Click behaviour** — click any node to see its info panel. For `FUNCTION`
 and `METHOD` nodes the panel has a **"Show callers"** button that switches the
 graph into focus mode: only the selected node and every node that calls or
-references it are shown, with the caller list in the sidebar.  Click empty
+references it are shown, with the caller list in the sidebar. Click empty
 space or **← Back** to return to the full graph.
+
+### `neo4j` — export to Neo4j
+
+Uses `UNWIND … MERGE` Cypher (no APOC required). Every node gets a `:Code`
+label plus a kind-specific label (`:Function`, `:ExternalSymbol`, …).
+Relations are created grouped by type. Install the optional `neo4j` extra:
+
+```bash
+pip install "graphlens-cli[neo4j]"
+```
 
 ## Graph model
 
@@ -214,8 +231,9 @@ graphlens/                      ← uv workspace root (core library)
   packages/
     graphlens-python/           ← Python adapter (tree-sitter + ty)
     graphlens-typescript/       ← TypeScript adapter (tree-sitter + Compiler API)
+    graphlens-cli/              ← CLI package (typer): analyze, visualize, neo4j
   tests/                         ← core tests (100% coverage)
-  examples/                      ← runnable usage examples
+  examples/                      ← standalone usage examples
 ```
 
 ## Development
@@ -234,6 +252,7 @@ Individual package tasks:
 task core:lint           task core:test
 task python:lint         task python:test
 task typescript:lint     task typescript:test
+task cli:lint            task cli:test
 ```
 
 ## License
