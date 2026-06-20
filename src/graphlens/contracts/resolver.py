@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from graphlens.status import ResolverStatus
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -67,3 +69,15 @@ class SymbolResolver(ABC):
     ) -> list[Occurrence]:
         """Return all references to the symbol at a position."""
         ...
+
+    def status(self) -> ResolverStatus:
+        """
+        Report how completely the resolver ran after the last ``prepare``.
+
+        Adapters record this on ``graph.metadata`` so callers can tell a
+        structure-only (degraded) graph from a fully resolved one instead of
+        silently trusting an incomplete result. Defaults to ``OK``;
+        subprocess-backed resolvers override to return ``UNAVAILABLE`` when
+        their engine failed to start.
+        """
+        return ResolverStatus.OK

@@ -220,3 +220,12 @@ def test_ty_resolver_integration_resolves_internal_call(proj):
         assert ref.file_path is not None
         assert ref.line >= 1
         assert ref.col >= 1
+
+
+def test_status_reflects_client_presence():
+    from graphlens import ResolverStatus
+
+    r = TyResolver()
+    assert r.status() is ResolverStatus.UNAVAILABLE
+    r._client = MagicMock()
+    assert r.status() is ResolverStatus.OK

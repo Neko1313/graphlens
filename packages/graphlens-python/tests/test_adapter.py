@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from conftest import nodes_of_kind
-from graphlens import NodeKind, RelationKind
+from graphlens import (
+    RESOLVER_STATUS_KEY,
+    AdapterError,
+    NodeKind,
+    RelationKind,
+    ResolverStatus,
+)
+from graphlens.contracts import SymbolResolver
 
 from graphlens_python import PythonAdapter
 from graphlens_python._deps import DependencyFileParser
@@ -514,3 +522,62 @@ def test_decorator_argument_references_internal_function(tmp_path):
         f"expected a REFERENCES edge targeting real 'handler' FUNCTION; "
         f"refs={[(r.source_id, r.target_id) for r in refs]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# TCK-3: resolver status, strict mode, str-path coercion
+# ---------------------------------------------------------------------------
+
+
+class _FakeResolver(SymbolResolver):
+    """Resolver stub that reports a configurable status, resolves nothing."""
+
+    def __init__(self, report: ResolverStatus = ResolverStatus.OK) -> None:
+        self._report = report
+
+    def prepare(self, project_root, files):
+        pass
+
+    def definition_at(self, file, line, col):
+        return None
+
+    def infer_type_at(self, file, line, col):
+        return None
+
+    def references_to(self, file, line, col):
+        return []
+
+    def status(self):
+        return self._report
+
+
+def test_resolver_status_recorded(tmp_path):
+    (tmp_path / "m.py").write_text("x = 1\n")
+    graph = PythonAdapter(resolver=_FakeResolver()).analyze(tmp_path)
+    assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"
+
+
+def test_resolver_unavailable_recorded_and_strict_raises(tmp_path):
+    (tmp_path / "m.py").write_text("x = 1\n")
+    adapter = PythonAdapter(
+        resolver=_FakeResolver(ResolverStatus.UNAVAILABLE)
+    )
+    graph = adapter.analyze(tmp_path)
+    assert graph.metadata[RESOLVER_STATUS_KEY] == "unavailable"
+    with pytest.raises(AdapterError, match="strict"):
+        adapter.analyze(tmp_path, strict=True)
+
+
+def test_analyze_accepts_str_path(tmp_path):
+    (tmp_path / "m.py").write_text("x = 1\n")
+    graph = PythonAdapter(resolver=_FakeResolver()).analyze(str(tmp_path))
+    assert len(graph.nodes) > 0
+
+
+def test_analyze_with_explicit_files_records_status(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("x = 1\n")
+    graph = PythonAdapter(resolver=_FakeResolver()).analyze(
+        tmp_path, files=[f]
+    )
+    assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"

@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from graphlens import (
+    RESOLVER_STATUS_KEY,
+    AdapterError,
     GraphLens,
     LanguageAdapter,
     Node,
     NodeKind,
     Relation,
     RelationKind,
+    ResolverStatus,
 )
 from graphlens.utils import SpanIndex, make_node_id
 from graphlens.utils.roots import filter_nested_root_files
@@ -99,15 +102,19 @@ class PythonAdapter(LanguageAdapter):
     def file_extensions(self) -> set[str]:
         return {".py", ".pyi"}
 
-    def can_handle(self, project_root: Path) -> bool:
-        return is_python_project(project_root)
+    def can_handle(self, project_root: str | Path) -> bool:
+        return is_python_project(Path(project_root))
 
     def analyze(
         self,
-        project_root: Path,
+        project_root: str | Path,
         files: list[Path] | None = None,
+        *,
+        strict: bool = False,
     ) -> GraphLens:
+        project_root = Path(project_root).resolve()
         graph = GraphLens()
+        statuses: list[ResolverStatus] = []
 
         if files is not None:
             _analyze_root(
@@ -118,6 +125,7 @@ class PythonAdapter(LanguageAdapter):
                 self._dep_parsers,
                 self._resolver,
             )
+            statuses.append(self._resolver.status())
         else:
             py_roots = find_python_roots(project_root)
             for py_root in py_roots:
@@ -135,7 +143,16 @@ class PythonAdapter(LanguageAdapter):
                     self._dep_parsers,
                     self._resolver,
                 )
+                statuses.append(self._resolver.status())
 
+        status = ResolverStatus.combine(statuses)
+        graph.metadata[RESOLVER_STATUS_KEY] = status.value
+        if strict and status is not ResolverStatus.OK:
+            msg = (
+                f"Python resolver status is '{status.value}'; refusing to "
+                "return a degraded graph in strict mode"
+            )
+            raise AdapterError(msg)
         return graph
 
 
