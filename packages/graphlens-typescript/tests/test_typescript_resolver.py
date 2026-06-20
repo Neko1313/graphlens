@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from graphlens.contracts import ResolvedRef
+
 from graphlens_typescript._resolver import TsResolver
 
 
@@ -106,7 +107,8 @@ def test_ensure_typescript_raises_when_node_missing(tmp_path):
         except RuntimeError as exc:
             assert "node/npm" in str(exc)
         else:
-            raise AssertionError("expected RuntimeError")
+            msg = "expected RuntimeError"
+            raise AssertionError(msg)
 
 
 def test_ensure_typescript_runs_npm_install(tmp_path):
