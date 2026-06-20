@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+### Features
+
+- **core**: serialize a graph to/from JSON (`GraphLens.to_json` /
+  `from_json` / `to_dict` / `from_dict`), round-trippable including `Span`
+  metadata, with `SerializationError` on unsupported `schema_version` and
+  forward-compatible unknown-field handling (TCK-1).
+- **core**: indexed query API — `outgoing`/`incoming`, `callers`,
+  `callees`, `references_to`, `neighbors`, `nodes_by_kind`/`_in_file`/
+  `_by_name`, and `subgraph` — backed by lazily-built edge indices (TCK-2).
+- **core**: `ResolverStatus` (`ok`/`degraded`/`unavailable`) plus a
+  `graph.metadata["resolver_status"]` field so adapters report a truthful
+  resolution state instead of silently degrading; `SymbolResolver.status()`
+  contract method (TCK-3).
+- **core**: deterministic `GraphLens.diff` → `GraphDiff` (added/removed/
+  changed nodes and relations), order-independent (TCK-4).
+- **adapters**: `analyze()` accepts `str | Path` (resolved to absolute,
+  fixing the relative-path resolver-startup failure) and a `strict` flag
+  that raises `AdapterError` rather than returning a degraded graph (TCK-3).
+- **go**: new `graphlens-go` adapter — structural graph + go.mod
+  dependency/import-origin classification + monorepo discovery (TCK-9).
+- **rust**: new `graphlens-rust` adapter — structural graph + Cargo.toml
+  parsing + workspace-aware crate discovery (TCK-10).
+- **cli**: `analyze --format json` / `--output PATH` serialization,
+  `analyze --strict` exit code, and a `query` subcommand over a saved graph
+  (callers/callees/references/neighbors); `--lang go`/`rust` and
+  auto-detect (TCK-11).
+
+### Bug Fixes
+
+- **python**: `analyze(str)` no longer crashes; relative roots resolve so
+  the ty LSP starts instead of silently producing an import-only graph.
+
+### Dependencies
+
+- **python**: pin `ty==0.0.26` (pre-1.0; 0.0.x can change LSP behaviour)
+  for reproducible analysis (TCK-8).
+
 ## [0.4.0] - 2026-06-20
 ### Bug Fixes
 

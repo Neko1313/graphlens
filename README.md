@@ -50,9 +50,13 @@ pip install "graphlens[python]"
 # Core + TypeScript adapter
 pip install "graphlens[typescript]"
 
-# CLI (graphlens analyze / visualize / neo4j)
+# Core + Go / Rust adapters
+pip install "graphlens[go]"
+pip install "graphlens[rust]"
+
+# CLI (graphlens analyze / visualize / query / neo4j)
 pip install "graphlens-cli[python]"          # with Python adapter
-pip install "graphlens-cli[all]"             # Python + TypeScript + Neo4j
+pip install "graphlens-cli[all]"             # Python + TS + Go + Rust + Neo4j
 ```
 
 With uv:
@@ -84,16 +88,44 @@ from graphlens import NodeKind
 
 modules = [n for n in graph.nodes.values() if n.kind == NodeKind.MODULE]
 classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
+
+# Check the resolver actually ran (don't trust a silently degraded graph)
+from graphlens import RESOLVER_STATUS_KEY
+assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"
+
+# Query the graph (indexed lookups, no manual scanning)
+fn = next(n for n in graph.nodes.values() if n.name == "my_function")
+callers = graph.callers(fn.id)          # who calls it
+callees = graph.callees(fn.id)          # what it calls
+near = graph.neighbors(fn.id, depth=2)  # 2-hop neighbourhood
+
+# Serialize for pipelines / agents (round-trippable JSON), then reload
+text = graph.to_json(indent=2)
+graph2 = type(graph).from_json(text)
+
+# Diff two scans (e.g. before/after a change)
+diff = old_graph.diff(graph)
+print(diff.added_nodes, diff.removed_relations, diff.is_empty)
 ```
 
 ## CLI (`graphlens-cli`)
 
-Install `graphlens-cli` to get the `graphlens` entry point with three commands:
+Install `graphlens-cli` to get the `graphlens` entry point:
 
 ```bash
 # Print node/relation statistics
 graphlens analyze <project_root>
-graphlens analyze ~/myrepo --lang python,typescript
+graphlens analyze ~/myrepo --lang python,typescript,go,rust
+
+# Serialize the graph to JSON (CI indexing step); --strict fails on a
+# degraded resolver so a pipeline never feeds agents an incomplete graph
+graphlens analyze ~/myrepo --output graph.json
+graphlens analyze ~/myrepo --format json
+graphlens analyze ~/myrepo --strict
+
+# Query a saved graph (callers | callees | references | neighbors)
+graphlens query my_function --graph graph.json --op callers
+graphlens query MyClass.method --graph graph.json --op neighbors --depth 2
 
 # Interactive HTML graph viewer (opens in browser)
 graphlens visualize <project_root>
@@ -231,7 +263,9 @@ graphlens/                      ← uv workspace root (core library)
   packages/
     graphlens-python/           ← Python adapter (tree-sitter + ty)
     graphlens-typescript/       ← TypeScript adapter (tree-sitter + Compiler API)
-    graphlens-cli/              ← CLI package (typer): analyze, visualize, neo4j
+    graphlens-go/               ← Go adapter (tree-sitter + go.mod)
+    graphlens-rust/             ← Rust adapter (tree-sitter + Cargo.toml)
+    graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j
   tests/                         ← core tests (100% coverage)
   examples/                      ← standalone usage examples
 ```
