@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
+
+# Matches "prefix/*": ["./target/*"] — single target, glob on both sides
+_ALIAS_RE = re.compile(
+    r'"([^"]+)/\*"\s*:\s*\[\s*"\./([^"]*)/\*"\s*\]'
+)
 
 # Extensions to strip when converting file path to module name
 _TS_EXTENSIONS: frozenset[str] = frozenset(
@@ -30,6 +37,60 @@ def find_source_roots(project_root: Path, files: list[Path]) -> list[Path]:
     if src.is_dir() and files and any(f.is_relative_to(src) for f in files):
         return [src, project_root]
     return [project_root]
+
+
+def load_tsconfig_path_aliases(project_root: Path) -> dict[str, str]:
+    """
+    Read ``tsconfig.json`` and return a prefix-alias map.
+
+    Extracts ``compilerOptions.paths`` entries of the form
+    ``"<prefix>/*": ["<target>/*"]`` and converts them to
+    ``{"<prefix>/": "<target>/"}`` (stripping the ``/*`` glob and
+    leading ``./``).  Multi-target entries and non-glob patterns are
+    silently ignored.  Returns ``{}`` on any error — never raises.
+    """
+    tsconfig = project_root / "tsconfig.json"
+    try:
+        raw = tsconfig.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        # Strip // line comments and trailing commas before parsing
+        clean = re.sub(r"//[^\n]*", "", raw)
+        clean = re.sub(r",(\s*[}\]])", r"\1", clean)
+        data = json.loads(clean)
+        paths = data.get("compilerOptions", {}).get("paths", {})
+        if not isinstance(paths, dict):
+            return {}
+    except Exception:
+        return {}
+    aliases: dict[str, str] = {}
+    for alias_pattern, targets in paths.items():
+        if not alias_pattern.endswith("/*"):
+            continue
+        if not isinstance(targets, list) or len(targets) != 1:
+            continue
+        target = targets[0]
+        if not isinstance(target, str) or not target.endswith("/*"):
+            continue
+        alias_prefix = alias_pattern[:-1]  # strip trailing *
+        target_prefix = target.lstrip("./")[:-1]  # strip ./ and trailing *
+        aliases[alias_prefix] = target_prefix
+    return aliases
+
+
+def apply_path_alias(import_path: str, aliases: dict[str, str]) -> str:
+    """
+    Rewrite ``import_path`` if it matches a tsconfig path alias prefix.
+
+    For example, with ``aliases = {"@/": "src/"}``, rewrites
+    ``"@/client/v2"`` → ``"src/client/v2"``.
+    Returns ``import_path`` unchanged when no alias prefix matches.
+    """
+    for prefix, target in aliases.items():
+        if import_path.startswith(prefix):
+            return target + import_path[len(prefix):]
+    return import_path
 
 
 def file_to_qualified_name(file_path: Path, source_root: Path) -> str:

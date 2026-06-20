@@ -19,7 +19,10 @@ from graphlens.utils import Span, make_node_id
 from tree_sitter import Language, Parser
 from tree_sitter import Node as TSNode
 
-from graphlens_typescript._module_resolver import resolve_relative_import
+from graphlens_typescript._module_resolver import (
+    apply_path_alias,
+    resolve_relative_import,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -117,6 +120,7 @@ class VisitorContext:
     source_root: Path
     module_qualified_name: str
     modules: dict[str, str] = field(default_factory=dict)
+    path_aliases: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -268,10 +272,17 @@ class TypescriptASTVisitor:
         is_relative = module_path.startswith(("./", "../", "."))
         safe = module_path.replace("/", "_").replace(".", "_")
         local_name = f"__reexport_{safe}"
+        classify_path = module_path
+        if not is_relative and self._ctx.path_aliases:
+            rewritten = apply_path_alias(classify_path, self._ctx.path_aliases)
+            if rewritten != classify_path:
+                classify_path = _strip_source_root_prefix(
+                    rewritten, self._ctx.source_root
+                )
         self._emit_import(
             local_name=local_name,
             ext_qname=_module_path_to_qname(
-                module_path,
+                classify_path,
                 is_relative=is_relative,
                 current_qname=self._scope_stack[-1],
             ),
@@ -834,6 +845,14 @@ class TypescriptASTVisitor:
         classify_path = (
             module_path[5:] if module_path.startswith("node:") else module_path
         )
+        # Rewrite tsconfig path aliases before computing the qname, so
+        # @/client/v2 → src/client/v2 → client.v2 (matching internal_tops)
+        if not is_relative and self._ctx.path_aliases:
+            rewritten = apply_path_alias(classify_path, self._ctx.path_aliases)
+            if rewritten != classify_path:
+                classify_path = _strip_source_root_prefix(
+                    rewritten, self._ctx.source_root
+                )
         ext_qname = _module_path_to_qname(
             classify_path,
             is_relative=is_relative,
@@ -1450,6 +1469,21 @@ def _string_from_from_clause(from_clause: TSNode) -> str:
     if str_node is None:
         return ""
     return _strip_string_quotes(_node_text(str_node))
+
+
+def _strip_source_root_prefix(path: str, source_root: Path) -> str:
+    """
+    Strip a leading source-root directory segment from a rewritten alias path.
+
+    When a tsconfig alias rewrites ``@/client/v2`` → ``src/client/v2`` and
+    the source root is ``.../src``, the leading ``src/`` segment must be
+    dropped so the qname top-level becomes ``client`` — matching
+    ``internal_tops`` which is derived from files relative to ``src/``.
+    """
+    src_name = source_root.name + "/"
+    if path.startswith(src_name):
+        return path[len(src_name):]
+    return path
 
 
 def _module_path_to_qname(

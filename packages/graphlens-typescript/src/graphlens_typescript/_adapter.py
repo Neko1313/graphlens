@@ -24,6 +24,7 @@ from graphlens_typescript._deps import (
 from graphlens_typescript._module_resolver import (
     file_to_qualified_name,
     find_source_roots,
+    load_tsconfig_path_aliases,
 )
 from graphlens_typescript._project_detector import (
     detect_project_name,
@@ -301,6 +302,14 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
         if parser.can_parse(lang_root):
             third_party.update(parser.parse(lang_root))
 
+    # BUG 2 fix: root-level config files (e.g. next.config.ts) can contribute
+    # names like "next" or "sentry" to internal_tops.  When a name is also a
+    # declared third-party package, the package.json is authoritative.
+    internal_tops = {t for t in internal_tops if t not in third_party}
+
+    # Load tsconfig path aliases once per root (BUG 1 fix)
+    path_aliases = load_tsconfig_path_aliases(lang_root)
+
     classifier = ImportClassifier(
         stdlib=_STDLIB,
         third_party=frozenset(third_party),
@@ -386,6 +395,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
             source_root=source_root,
             module_qualified_name=module_qname,
             modules=modules,
+            path_aliases=path_aliases,
         )
         visitor = TypescriptASTVisitor(
             ctx, graph, file_id, source_bytes, classifier

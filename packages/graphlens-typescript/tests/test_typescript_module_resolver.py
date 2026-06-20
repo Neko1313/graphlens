@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from graphlens_typescript._module_resolver import (
+    apply_path_alias,
     file_to_qualified_name,
     find_source_roots,
+    load_tsconfig_path_aliases,
     resolve_relative_import,
 )
 
@@ -100,6 +103,146 @@ class TestResolveRelativeImport:
         # Going above the root should clamp to the top-level module name
         result = resolve_relative_import("a.b", "../../..")
         assert result == "a"
+
+
+class TestLoadTsconfigPathAliases:
+    def test_returns_alias_map_for_at_prefix(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({
+            "compilerOptions": {
+                "paths": {"@/*": ["./src/*"]}
+            }
+        }))
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {"@/": "src/"}
+
+    def test_returns_empty_when_no_tsconfig(self, tmp_path: Path):
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {}
+
+    def test_returns_empty_when_no_paths_key(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({
+            "compilerOptions": {"target": "ES2020"}
+        }))
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {}
+
+    def test_returns_empty_when_no_compiler_options(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({"extends": "./base"}))
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {}
+
+    def test_tolerates_line_comments(self, tmp_path: Path):
+        tsconfig = (
+            "{\n"
+            '  // This is a comment\n'
+            '  "compilerOptions": {\n'
+            '    "paths": {"@/*": ["./src/*"]}\n'
+            "  }\n"
+            "}\n"
+        )
+        (tmp_path / "tsconfig.json").write_text(tsconfig)
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {"@/": "src/"}
+
+    def test_tolerates_trailing_commas(self, tmp_path: Path):
+        tsconfig = (
+            "{\n"
+            '  "compilerOptions": {\n'
+            '    "paths": {"@/*": ["./src/*"],},\n'
+            "  },\n"
+            "}\n"
+        )
+        (tmp_path / "tsconfig.json").write_text(tsconfig)
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {"@/": "src/"}
+
+    def test_ignores_multi_target_patterns(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({
+            "compilerOptions": {
+                "paths": {
+                    "@/*": ["./src/*", "./fallback/*"],
+                    "@utils/*": ["./src/utils/*"],
+                }
+            }
+        }))
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        # Multi-target ignored, single-target kept
+        assert "@/" not in aliases
+        assert aliases == {"@utils/": "src/utils/"}
+
+    def test_ignores_patterns_without_glob(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({
+            "compilerOptions": {
+                "paths": {
+                    "@app": ["./src/app/index"],
+                    "@/": ["./src/"],
+                }
+            }
+        }))
+        # Neither has the expected /* pattern — both ignored
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {}
+
+    def test_returns_empty_on_invalid_json(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text("not valid json }{")
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {}
+
+    def test_returns_empty_when_paths_not_a_dict(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({
+            "compilerOptions": {"paths": ["@/*"]}
+        }))
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {}
+
+    def test_ignores_entry_with_non_string_target(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({
+            "compilerOptions": {
+                "paths": {"@/*": [123]},
+            }
+        }))
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {}
+
+    def test_multiple_valid_aliases(self, tmp_path: Path):
+        (tmp_path / "tsconfig.json").write_text(json.dumps({
+            "compilerOptions": {
+                "paths": {
+                    "@/*": ["./src/*"],
+                    "#utils/*": ["./lib/utils/*"],
+                }
+            }
+        }))
+        aliases = load_tsconfig_path_aliases(tmp_path)
+        assert aliases == {"@/": "src/", "#utils/": "lib/utils/"}
+
+
+class TestApplyPathAlias:
+    def test_rewrites_matching_prefix(self):
+        aliases = {"@/": "src/"}
+        result = apply_path_alias("@/client/v2", aliases)
+        assert result == "src/client/v2"
+
+    def test_returns_unchanged_when_no_match(self):
+        aliases = {"@/": "src/"}
+        result = apply_path_alias("lodash/merge", aliases)
+        assert result == "lodash/merge"
+
+    def test_returns_unchanged_when_aliases_empty(self):
+        result = apply_path_alias("@/client/v2", {})
+        assert result == "@/client/v2"
+
+    def test_rewrites_first_matching_alias(self):
+        aliases = {"@utils/": "src/utils/", "@/": "src/"}
+        result = apply_path_alias("@utils/format", aliases)
+        assert result == "src/utils/format"
+
+    def test_does_not_partially_match(self):
+        aliases = {"@/": "src/"}
+        result = apply_path_alias("@stuff/foo", aliases)
+        # '@stuff/' does not start with '@/', so '@stuff/' is a prefix of
+        # '@stuff/foo' — but '@/' prefix does NOT match '@stuff/foo'
+        assert result == "@stuff/foo"
 
 
 class TestFileToQualifiedNameEdgeCases:

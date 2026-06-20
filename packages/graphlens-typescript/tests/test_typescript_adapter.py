@@ -734,3 +734,231 @@ class TestBatchResolutionPass:
                 n for n in graph.nodes.values() if n.kind.value == "file"
             ]
             assert len(file_nodes) == 1
+
+
+# ---------------------------------------------------------------------------
+# BUG 1: tsconfig paths aliases — @/... should be classified as internal
+# ---------------------------------------------------------------------------
+
+
+class TestTsconfigPathAliasResolution:
+    def test_at_alias_import_classified_internal(self, tmp_path: Path):
+        """Import from '@/client/v2' with tsconfig paths alias resolves internal."""
+        (tmp_path / "package.json").write_text('{"name": "myapp"}')
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}'
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        client = src / "client"
+        client.mkdir()
+        (client / "v2.ts").write_text("export const clientV2 = true;\n")
+        (src / "main.ts").write_text(
+            "import { clientV2 } from '@/client/v2';\n"
+            "export function run() { return clientV2; }\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        alias_imports = [
+            i for i in imports
+            if "client" in i.qualified_name or "clientV2" in i.name
+        ]
+        assert alias_imports, "Expected at least one import for @/client/v2"
+        for imp in alias_imports:
+            assert imp.metadata.get("origin") == "internal", (
+                f"Expected internal but got {imp.metadata.get('origin')} "
+                f"for {imp.qualified_name}"
+            )
+
+    def test_at_alias_resolves_to_module_not_external_symbol(
+        self, tmp_path: Path
+    ):
+        """An '@/...' import should RESOLVES_TO the internal MODULE node."""
+        (tmp_path / "package.json").write_text('{"name": "myapp"}')
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}'
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "utils.ts").write_text("export function helper() {}\n")
+        (src / "main.ts").write_text(
+            "import { helper } from '@/utils';\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        helper_import = next(
+            (i for i in imports if i.name == "helper"), None
+        )
+        assert helper_import is not None, "No import node for 'helper'"
+        assert helper_import.metadata.get("origin") == "internal"
+        # Should not have an EXTERNAL_SYMBOL with '@.' prefix
+        ext_syms = [
+            n for n in graph.nodes.values()
+            if n.kind == NodeKind.EXTERNAL_SYMBOL
+            and n.qualified_name.startswith("@.")
+        ]
+        assert ext_syms == [], (
+            f"Found external symbols with '@.' prefix: "
+            f"{[s.qualified_name for s in ext_syms]}"
+        )
+
+    def test_no_alias_project_unchanged(self, tmp_path: Path):
+        """Projects without tsconfig paths aliases are unaffected."""
+        (tmp_path / "package.json").write_text('{"name": "myapp"}')
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"target": "ES2020"}}'
+        )
+        (tmp_path / "utils.ts").write_text(
+            "export function greet() { return 'hi'; }\n"
+        )
+        (tmp_path / "main.ts").write_text(
+            "import { greet } from './utils';\n"
+            "export function run() { return greet(); }\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        greet_imports = [i for i in imports if i.name == "greet"]
+        assert greet_imports
+        for imp in greet_imports:
+            assert imp.metadata.get("origin") == "internal"
+
+    def test_reexport_with_alias_classified_internal(self, tmp_path: Path):
+        """export { X } from '@/...' with tsconfig alias classifies as internal."""
+        (tmp_path / "package.json").write_text('{"name": "myapp"}')
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}'
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        helpers = src / "helpers"
+        helpers.mkdir()
+        (helpers / "fmt.ts").write_text("export const fmt = (x: string) => x;\n")
+        (src / "index.ts").write_text(
+            "export { fmt } from '@/helpers/fmt';\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        reexports = [i for i in imports if "__reexport" in i.name]
+        assert reexports, "Expected a re-export node"
+        for imp in reexports:
+            origin = imp.metadata.get("origin")
+            assert origin == "internal", (
+                f"Expected internal but got {origin} for {imp.qualified_name}"
+            )
+
+    def test_alias_path_not_starting_with_source_root_unchanged(
+        self, tmp_path: Path
+    ):
+        """Alias rewrite to a path without src/ prefix works correctly."""
+        (tmp_path / "package.json").write_text('{"name": "myapp"}')
+        # Alias that rewrites to lib/ rather than src/
+        (tmp_path / "tsconfig.json").write_text(
+            '{"compilerOptions": {"paths": {"@lib/*": ["./lib/*"]}}}'
+        )
+        lib = tmp_path / "lib"
+        lib.mkdir()
+        (lib / "core.ts").write_text("export const core = true;\n")
+        (tmp_path / "main.ts").write_text(
+            "import { core } from '@lib/core';\n"
+            "export function run() { return core; }\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        # Should not crash; the import from '@lib/core' gets rewritten to
+        # 'lib/core' → top 'lib' — which IS in internal_tops (lib/core.ts)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        assert imports  # At least the import was processed
+
+
+# ---------------------------------------------------------------------------
+# BUG 2: root config files pollute internal_tops
+# ---------------------------------------------------------------------------
+
+
+class TestRootConfigPollutionFix:
+    def test_next_config_ts_does_not_make_next_internal(self, tmp_path: Path):
+        """next.config.ts at root must not cause 'next' to be classified internal."""
+        (tmp_path / "package.json").write_text(
+            '{"name": "myapp", "dependencies": {"next": "^14.0.0"}}'
+        )
+        (tmp_path / "next.config.ts").write_text(
+            "import type { NextConfig } from 'next';\n"
+            "const config: NextConfig = {};\n"
+            "export default config;\n"
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "page.ts").write_text(
+            "import { useRouter } from 'next/navigation';\n"
+            "export function Page() { return useRouter(); }\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        next_imports = [
+            i for i in imports
+            if "next" in i.metadata.get("original_name", "")
+            and "navigation" in i.metadata.get("original_name", "")
+        ]
+        assert next_imports, "Expected at least one next/navigation import"
+        for imp in next_imports:
+            assert imp.metadata.get("origin") == "third_party", (
+                f"Expected third_party but got {imp.metadata.get('origin')} "
+                f"for {imp.qualified_name}"
+            )
+
+    def test_sentry_config_stem_does_not_shadow_sentry_pkg(
+        self, tmp_path: Path
+    ):
+        """
+        sentry.server.config.ts stem 'sentry' must not classify an unscoped
+        'sentry' import as internal when 'sentry' is in dependencies.
+        """
+        (tmp_path / "package.json").write_text(
+            '{"name": "myapp", "dependencies": {"sentry": "^7.0.0"}}'
+        )
+        (tmp_path / "sentry.server.config.ts").write_text(
+            "// sentry root config\nexport const dsn = 'x';\n"
+        )
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "app.ts").write_text(
+            "import sentry from 'sentry';\n"
+            "export function report() { return sentry; }\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        sentry_imports = [
+            i for i in imports
+            if i.metadata.get("original_name", "").startswith("sentry")
+            and i.name == "sentry"
+        ]
+        assert sentry_imports, "Expected at least one sentry default import"
+        for imp in sentry_imports:
+            assert imp.metadata.get("origin") == "third_party", (
+                f"Expected third_party but got {imp.metadata.get('origin')} "
+                f"for {imp.qualified_name}"
+            )
+
+    def test_internal_tops_minus_third_party(self, tmp_path: Path):
+        """A file named like a dep (e.g. express.ts) should not shadow express."""
+        (tmp_path / "package.json").write_text(
+            '{"name": "myapp", "dependencies": {"express": "^4.0.0"}}'
+        )
+        # A root file whose stem happens to equal a dep name
+        (tmp_path / "express.ts").write_text(
+            "// local config\nexport const port = 3000;\n"
+        )
+        (tmp_path / "app.ts").write_text(
+            "import express from 'express';\n"
+            "const app = express();\n"
+        )
+        graph = TypescriptAdapter().analyze(tmp_path)
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        express_default = next(
+            (i for i in imports if i.name == "express"
+             and not i.qualified_name.startswith("express.")), None
+        )
+        assert express_default is not None, "No default express import found"
+        assert express_default.metadata.get("origin") == "third_party", (
+            f"Expected third_party but got "
+            f"{express_default.metadata.get('origin')}"
+        )
