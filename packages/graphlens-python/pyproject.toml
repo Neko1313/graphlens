@@ -5,7 +5,6 @@ description = "Python language adapter for graphlens"
 requires-python = ">=3.13"
 dependencies = [
     "graphlens",
-    "jedi>=0.19.2",
     "tree-sitter>=0.24",
     "tree-sitter-python>=0.23",
 ]

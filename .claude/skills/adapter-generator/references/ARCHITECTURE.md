@@ -8,10 +8,11 @@ Every language adapter follows the `src/` layout and lives in the `packages/` di
 packages/graphlens-{lang}/
 ├── src/
 │   └── graphlens_{lang}/
-│       ├── __init__.py              ← exports only {Lang}Adapter
+│       ├── __init__.py              ← exports {Lang}Adapter + {Lang}Resolver
 │       ├── _adapter.py              ← LanguageAdapter subclass + _analyze_root()
 │       ├── _visitor.py              ← tree-sitter parser setup, ImportClassifier,
-│       │                               VisitorContext, {Lang}ASTVisitor
+│       │                               OccurrenceRef, VisitorContext, {Lang}ASTVisitor
+│       ├── _resolver.py             ← SymbolResolver subclass ({Lang}Resolver)
 │       ├── _deps.py                 ← DependencyFileParser implementations +
 │       │                               get_stdlib_names() + {LANG}_DEFAULT_DEP_PARSERS
 │       ├── _project_detector.py     ← is_{lang}_project(), find_{lang}_roots(),
@@ -22,6 +23,7 @@ packages/graphlens-{lang}/
 │   ├── conftest.py
 │   ├── test_{lang}_adapter.py
 │   ├── test_{lang}_visitor.py
+│   ├── test_{lang}_resolver.py
 │   ├── test_{lang}_deps.py
 │   ├── test_{lang}_module_resolver.py
 │   └── test_{lang}_project_detector.py
@@ -32,9 +34,10 @@ packages/graphlens-{lang}/
 
 | File | Responsibility |
 |---|---|
-| `__init__.py` | Single public export — `{Lang}Adapter` only |
-| `_adapter.py` | Orchestrates the full analysis pipeline; ties together all subsystems |
-| `_visitor.py` | Walks tree-sitter CST; emits Node and Relation objects into GraphLens |
+| `__init__.py` | Public exports — `{Lang}Adapter` and `{Lang}Resolver` |
+| `_adapter.py` | Orchestrates the full analysis pipeline; ties together all subsystems; runs the post-visit resolution pass |
+| `_visitor.py` | Walks tree-sitter CST; emits structural Node/Relation objects; collects `OccurrenceRef` use-sites; does **not** emit CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM |
+| `_resolver.py` | `SymbolResolver` subclass; wraps the type-aware engine; never raises |
 | `_deps.py` | Reads manifest files to build the third-party package name set |
 | `_project_detector.py` | Detects language roots and reads project name from manifests |
 | `_module_resolver.py` | Converts file paths to module qualified names; resolves relative imports |

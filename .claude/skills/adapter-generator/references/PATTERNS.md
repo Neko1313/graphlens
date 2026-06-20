@@ -281,6 +281,22 @@ def parse_{lang}(source: bytes) -> object:
     return _parser.parse(source)
 ```
 
+### OccurrenceRef
+
+```python
+from dataclasses import dataclass, field
+from pathlib import Path
+
+@dataclass
+class OccurrenceRef:
+    """A single use-site collected during AST traversal."""
+    role: str          # "call" | "read" | "write" | "annotation" | "base"
+    file_path: Path
+    line: int          # 1-based
+    col: int           # 1-based
+    enclosing_id: str  # node ID of the containing FUNCTION/METHOD/CLASS/FILE
+```
+
 ### Visitor skeleton
 
 ```python
@@ -288,7 +304,11 @@ class {Lang}ASTVisitor:
     """
     Walks a tree-sitter {language} CST and populates a GraphLens.
 
-    Node types handled: (list them after inspecting the grammar)
+    Emits structural nodes (CLASS, FUNCTION, METHOD, PARAMETER, IMPORT,
+    VARIABLE, ATTRIBUTE, TYPE_ALIAS) and their containment/declaration edges.
+    Records metadata["name_span"] on every structural node.
+    Collects OccurrenceRef use-sites but does NOT emit CALLS, REFERENCES,
+    HAS_TYPE, or INHERITS_FROM — those come from the post-visit resolution pass.
     """
 
     def __init__(
@@ -304,10 +324,10 @@ class {Lang}ASTVisitor:
         self._file_node_id = file_node_id
         self._source = source
         self._classifier = classifier or ImportClassifier()
-        # Scope tracking — initialized with the file's context
         self._scope_stack: list[str] = [ctx.module_qualified_name]
         self._container_stack: list[str] = [file_node_id]
         self._kind_stack: list[NodeKind] = [NodeKind.FILE]
+        self.occurrences: list[OccurrenceRef] = []  # filled during traversal
 
     # -------------------------------------------------------------------------
     # Dispatch
@@ -344,26 +364,28 @@ class {Lang}ASTVisitor:
         )
         if name_node is None:
             return
-        name = _node_text(name_node)
+        name = _node_text(name_node, self._source)
         qname = f"{self._scope_stack[-1]}.{name}"
 
-        # Extract bases/superclasses if applicable
-        bases: list[str] = []
-        # ... language-specific base extraction ...
+        # Collect base class name tokens as "base" occurrences
+        # (actual INHERITS_FROM edges are emitted by the resolution pass)
+        for base_name_node in _iter_base_nodes(node):  # adapt to language
+            self.occurrences.append(OccurrenceRef(
+                role="base",
+                file_path=self._ctx.file_path,
+                line=base_name_node.start_point[0] + 1,
+                col=base_name_node.start_point[1] + 1,
+                enclosing_id=make_node_id(
+                    self._ctx.project_name, qname, NodeKind.CLASS.value
+                ),
+            ))
 
         class_node = self._make_node(
             NodeKind.CLASS, qname, name, node,
-            metadata={"decorators": decorators, "bases": bases},
+            name_node=name_node,
+            metadata={"decorators": decorators},
         )
         self._add_node_with_relation(class_node, RelationKind.DECLARES)
-
-        for base_name in bases:
-            sym = self._get_or_create_external_symbol(base_name)
-            self._graph.add_relation(Relation(
-                source_id=class_node.id,
-                target_id=sym.id,
-                kind=RelationKind.INHERITS_FROM,
-            ))
 
         self._push(qname, class_node.id, NodeKind.CLASS)
         body = next((c for c in node.children if c.type == "class_body"), None)  # adapt
@@ -387,28 +409,27 @@ class {Lang}ASTVisitor:
         )
         if name_node is None:
             return
-        name = _node_text(name_node)
+        name = _node_text(name_node, self._source)
         qname = f"{self._scope_stack[-1]}.{name}"
 
         func_node = self._make_node(
             kind, qname, name, node,
+            name_node=name_node,
             metadata={"decorators": decorators},
         )
         self._add_node_with_relation(func_node, RelationKind.DECLARES)
 
         self._push(qname, func_node.id, kind)
 
-        # Parameters
         params_node = next(
             (c for c in node.children if c.type == "formal_parameters"), None  # adapt
         )
         if params_node:
             self._extract_parameters(params_node, func_node.id, qname)
 
-        # Body: calls + nested defs
         body = next((c for c in node.children if c.type == "statement_block"), None)  # adapt
         if body:
-            self._extract_calls(body, func_node.id)
+            self._collect_occurrences(body, func_node.id)
             for child in body.children:
                 if child.type in ("function_declaration", "class_declaration"):  # adapt
                     self.visit(child)
@@ -479,11 +500,11 @@ class {Lang}ASTVisitor:
     ) -> None:
         for child in params_node.children:
             param_name: str | None = None
-            annotation: str | None = None
+            annotation_node: TSNode | None = None
             has_default = False
 
             if child.type == "identifier":
-                param_name = _node_text(child)
+                param_name = _node_text(child, self._source)
             # elif child.type == "required_parameter":  # TypeScript pattern
             #     ...
             # adapt to the language's parameter node types
@@ -494,7 +515,8 @@ class {Lang}ASTVisitor:
             param_qname = f"{function_qname}.{param_name}"
             param_node = self._make_node(
                 NodeKind.PARAMETER, param_qname, param_name, child,
-                metadata={"annotation": annotation, "has_default": has_default},
+                name_node=child,
+                metadata={"has_default": has_default},
             )
             self._safe_add_node(param_node)
             self._graph.add_relation(Relation(
@@ -503,46 +525,44 @@ class {Lang}ASTVisitor:
                 kind=RelationKind.DECLARES,
             ))
 
+            # Collect annotation occurrence if present
+            if annotation_node is not None:
+                self.occurrences.append(OccurrenceRef(
+                    role="annotation",
+                    file_path=self._ctx.file_path,
+                    line=annotation_node.start_point[0] + 1,
+                    col=annotation_node.start_point[1] + 1,
+                    enclosing_id=param_node.id,
+                ))
+
     # -------------------------------------------------------------------------
-    # Call extraction
+    # Occurrence collection (call/read/write/annotation use-sites)
     # -------------------------------------------------------------------------
 
-    def _extract_calls(self, body: TSNode, caller_id: str) -> None:
-        for child in body.children:
-            self._find_calls_in_node(child, caller_id)
-
-    def _find_calls_in_node(self, node: TSNode, caller_id: str) -> None:
-        if node.type == "call_expression":  # adapt node type name
-            func_node = next(
-                (c for c in node.children if c.type in ("identifier", "member_expression")),  # adapt
-                None,
-            )
-            if func_node:
-                callee_name = _name_from_node(func_node)
-                if callee_name:
-                    sym_id = make_node_id(
-                        self._ctx.project_name, callee_name, NodeKind.SYMBOL.value
-                    )
-                    if sym_id not in self._graph.nodes:
-                        self._graph.add_node(Node(
-                            id=sym_id,
-                            kind=NodeKind.SYMBOL,
-                            qualified_name=callee_name,
-                            name=callee_name.split(".")[-1],
-                            span=_make_span(node),
-                        ))
-                    self._graph.add_relation(Relation(
-                        source_id=caller_id,
-                        target_id=sym_id,
-                        kind=RelationKind.CALLS,
+    def _collect_occurrences(self, body: TSNode, enclosing_id: str) -> None:
+        """Recursively scan body for use-site tokens and record OccurrenceRefs."""
+        for node in _iter_nodes(body):  # depth-first helper
+            if node.type == "call_expression":  # adapt
+                callee = _callee_node(node)  # language-specific helper
+                if callee is not None:
+                    self.occurrences.append(OccurrenceRef(
+                        role="call",
+                        file_path=self._ctx.file_path,
+                        line=callee.start_point[0] + 1,
+                        col=callee.start_point[1] + 1,
+                        enclosing_id=enclosing_id,
                     ))
-        # Don't recurse into nested function/class definitions
-        if node.type not in ("function_declaration", "class_declaration"):  # adapt
-            for child in node.children:
-                self._find_calls_in_node(child, caller_id)
+            elif node.type == "identifier":  # adapt — read of a name
+                self.occurrences.append(OccurrenceRef(
+                    role="read",
+                    file_path=self._ctx.file_path,
+                    line=node.start_point[0] + 1,
+                    col=node.start_point[1] + 1,
+                    enclosing_id=enclosing_id,
+                ))
 
     # -------------------------------------------------------------------------
-    # Helpers (copy these verbatim — they are language-agnostic)
+    # Helpers (language-agnostic — copy verbatim)
     # -------------------------------------------------------------------------
 
     def _get_or_create_external_symbol(self, qname: str, origin: str = "unknown") -> Node:
@@ -575,8 +595,13 @@ class {Lang}ASTVisitor:
         qualified_name: str,
         name: str,
         ts_node: TSNode | None = None,
+        name_node: TSNode | None = None,
         metadata: dict[str, object] | None = None,
     ) -> Node:
+        meta = dict(metadata or {})
+        if name_node is not None:
+            # name_span is the Span of the *name token*, used by SpanIndex
+            meta["name_span"] = _make_span(name_node)
         return Node(
             id=make_node_id(self._ctx.project_name, qualified_name, kind.value),
             kind=kind,
@@ -584,7 +609,7 @@ class {Lang}ASTVisitor:
             name=name,
             file_path=str(self._ctx.file_path),
             span=_make_span(ts_node) if ts_node else None,
-            metadata=metadata or {},
+            metadata=meta,
         )
 
     def _push(self, qname: str, node_id: str, kind: NodeKind) -> None:
@@ -596,6 +621,75 @@ class {Lang}ASTVisitor:
         self._scope_stack.pop()
         self._container_stack.pop()
         self._kind_stack.pop()
+```
+
+---
+
+## `_resolver.py`
+
+```python
+"""{Language} SymbolResolver — wraps the type-aware engine."""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from graphlens.contracts import ResolvedRef, SymbolResolver
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+logger = logging.getLogger("graphlens_{lang}")
+
+
+class {Lang}Resolver(SymbolResolver):
+    """
+    Type-aware resolver for {language}.
+
+    Wraps <engine> and maps use-site positions to declaration locations.
+    Never raises — all errors are caught and return None/[].
+    """
+
+    def prepare(self, project_root: Path, files: list[Path]) -> None:
+        """Initialise the resolver engine for the given project."""
+        try:
+            # e.g. start LSP server subprocess, pre-open files, etc.
+            pass
+        except Exception:
+            logger.debug("Resolver prepare failed", exc_info=True)
+
+    def definition_at(
+        self, file: Path, line: int, col: int
+    ) -> ResolvedRef | None:
+        """
+        Return the definition of the symbol at (line, col) in file.
+        line and col are 1-based.
+        """
+        try:
+            # Call the engine's go-to-definition API
+            # Return ResolvedRef(module_path=..., line=..., col=..., origin=...)
+            pass
+        except Exception:
+            return None
+
+    def infer_type_at(
+        self, file: Path, line: int, col: int
+    ) -> ResolvedRef | None:
+        """Return the inferred type of the expression at (line, col)."""
+        try:
+            pass
+        except Exception:
+            return None
+
+    def references_to(
+        self, file: Path, line: int, col: int
+    ) -> list[ResolvedRef]:
+        """Return all references to the declaration at (line, col)."""
+        try:
+            return []
+        except Exception:
+            return []
 ```
 
 ---
@@ -618,8 +712,10 @@ from graphlens_{lang}._module_resolver import file_to_qualified_name, find_sourc
 from graphlens_{lang}._project_detector import (
     detect_project_name, find_{lang}_roots, is_{lang}_project,
 )
+from graphlens.utils import SpanIndex
+from graphlens_{lang}._resolver import {Lang}Resolver
 from graphlens_{lang}._visitor import (
-    ImportClassifier, {Lang}ASTVisitor, VisitorContext, parse_{lang},
+    ImportClassifier, OccurrenceRef, {Lang}ASTVisitor, VisitorContext, parse_{lang},
 )
 
 if TYPE_CHECKING:
@@ -702,6 +798,7 @@ def _analyze_root(
         ))
 
     modules: dict[str, str] = {}
+    all_occurrences: list[OccurrenceRef] = []
 
     for file in files:
         source_root = _find_source_root_for(file, source_roots) or source_roots[0]
@@ -752,6 +849,7 @@ def _analyze_root(
         )
         visitor = {Lang}ASTVisitor(ctx, graph, file_id, source_bytes, classifier)
         visitor.visit(tree.root_node)
+        all_occurrences.extend(visitor.occurrences)
 
     # PROJECT --CONTAINS--> top-level modules
     top_level = {qn: mid for qn, mid in modules.items() if "." not in qn}
@@ -761,6 +859,47 @@ def _analyze_root(
             target_id=module_id,
             kind=RelationKind.CONTAINS,
         ))
+
+    # ── Resolution pass ───────────────────────────────────────────────────────
+    # After all files are visited: use SpanIndex + SymbolResolver to emit
+    # CALLS / REFERENCES / HAS_TYPE / INHERITS_FROM edges that point to
+    # real declaration nodes rather than EXTERNAL_SYMBOL placeholders.
+    span_index = SpanIndex(graph)
+    resolver = {Lang}Resolver()
+    resolver.prepare(lang_root, files)
+
+    _ROLE_TO_EDGE = {
+        "call":       RelationKind.CALLS,
+        "read":       RelationKind.REFERENCES,
+        "write":      RelationKind.REFERENCES,
+        "annotation": RelationKind.HAS_TYPE,
+        "base":       RelationKind.INHERITS_FROM,
+    }
+
+    for occ in all_occurrences:
+        edge_kind = _ROLE_TO_EDGE.get(occ.role)
+        if edge_kind is None:
+            continue
+        ref = resolver.definition_at(occ.file_path, occ.line, occ.col)
+        if ref is None:
+            continue
+
+        target_id: str | None = None
+        if ref.module_path is not None:
+            target_id = span_index.at(ref.module_path, ref.line, ref.col)
+
+        if target_id is None:
+            # Fallback: emit / reuse EXTERNAL_SYMBOL
+            qname = ref.qualified_name or f"<unknown>:{occ.line}:{occ.col}"
+            ext = _get_or_create_external_symbol(graph, project_name, qname, ref.origin or "unknown")
+            target_id = ext.id
+
+        if target_id != occ.enclosing_id:
+            graph.add_relation(Relation(
+                source_id=occ.enclosing_id,
+                target_id=target_id,
+                kind=edge_kind,
+            ))
 
 
 def _find_source_root_for(file: Path, source_roots: list[Path]) -> Path | None:

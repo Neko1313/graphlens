@@ -172,9 +172,8 @@ class TestInternalHelpers:
         from graphlens_python._adapter import _analyze_root
         from graphlens_python._deps import (
             PYTHON_DEFAULT_DEP_PARSERS,
-            get_stdlib_names,
         )
-        from graphlens_python._resolver import JediResolver
+        from graphlens_python._resolver import TyResolver
 
         # py_root is a sibling of project_root (not a subdirectory)
         project_root = tmp_path / "project"
@@ -193,7 +192,7 @@ class TestInternalHelpers:
             py_root,
             [f],
             PYTHON_DEFAULT_DEP_PARSERS,
-            JediResolver(stdlib_names=get_stdlib_names()),
+            TyResolver(),
         )
         # The file path falls back to py_root-relative
         assert graph is not None
@@ -328,7 +327,7 @@ def test_inherits_from_stdlib_creates_external_symbol(tmp_path):
     ext = [n for n in graph.nodes.values() if n.kind.value == "external_symbol"]
     assert ext, "expected at least one EXTERNAL_SYMBOL for the stdlib base"
 
-    # Jedi resolves enum.Enum as stdlib — assert the real origin, not a loose set
+    # ty resolves enum.Enum to the stdlib path — check origin is correct
     assert all(e.metadata.get("origin") == "stdlib" for e in ext), (
         f"expected all external symbols to have origin='stdlib', got: "
         f"{[e.metadata.get('origin') for e in ext]}"

@@ -34,7 +34,7 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 
 - **Language-agnostic** — one shared model for Python, TypeScript, Rust, …
 - **Plugin-based adapters** — each language is a separate package, registered via Python entry points
-- **Tree-sitter powered** — all adapters use tree-sitter for error-tolerant CST parsing and exact span positions
+- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript)
 - **Monorepo aware** — `can_handle()` and `find_*_roots()` handle multi-language repos correctly
 - **Deterministic node IDs** — SHA-256 hash of `project::kind::qualified_name` → stable across re-scans
 
@@ -46,6 +46,9 @@ pip install graphlens
 
 # Core + Python adapter
 pip install "graphlens[python]"
+
+# Core + TypeScript adapter
+pip install "graphlens[typescript]"
 ```
 
 With uv:
@@ -53,6 +56,7 @@ With uv:
 ```bash
 uv add graphlens
 uv add "graphlens[python]"
+uv add "graphlens[typescript]"
 ```
 
 ## Quick start
@@ -77,6 +81,42 @@ modules = [n for n in graph.nodes.values() if n.kind == NodeKind.MODULE]
 classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
 ```
 
+## Examples
+
+### `visualize_graph.py` — interactive HTML graph viewer
+
+Analyses a project with all applicable language adapters and opens a
+self-contained HTML file in the browser.
+
+```bash
+# Auto-detect language, open in browser
+uv run python examples/visualize_graph.py <project_root>
+
+# Mixed Python + TypeScript monorepo
+uv run python examples/visualize_graph.py ~/myrepo --lang python,typescript
+
+# Limit graph size, save to a specific file
+uv run python examples/visualize_graph.py ~/myproject --max-nodes 500 --output out.html
+
+# Include external stdlib/third-party symbol nodes
+uv run python examples/visualize_graph.py . --show-external --show-structure
+```
+
+| Flag | Description |
+|---|---|
+| `--lang auto\|python\|typescript\|python,typescript` | Adapters to use (default: auto-detect all) |
+| `--show-external` | Include stdlib / third-party external symbol nodes |
+| `--show-structure` | Add `CONTAINS` / `DECLARES` structural edges |
+| `--max-nodes N` | Prune low-degree nodes above N (default: 1500) |
+| `--output PATH` | Write HTML to PATH instead of `graph-<name>.html` |
+| `--no-open` | Do not open the browser automatically |
+
+**Click behaviour** — click any node to see its info panel.  For `FUNCTION`
+and `METHOD` nodes the panel has a **"Show callers"** button that switches the
+graph into focus mode: only the selected node and every node that calls or
+references it are shown, with the caller list in the sidebar.  Click empty
+space or **← Back** to return to the full graph.
+
 ## Graph model
 
 ### Node kinds
@@ -90,10 +130,12 @@ classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
 | `FUNCTION` | Top-level function |
 | `METHOD` | Method inside a class |
 | `PARAMETER` | Function/method parameter |
+| `VARIABLE` | Module-level or local variable |
+| `ATTRIBUTE` | Class attribute |
+| `TYPE_ALIAS` | Type alias declaration |
 | `IMPORT` | Import statement |
 | `DEPENDENCY` | Declared package dependency |
-| `SYMBOL` | Internal symbol reference |
-| `EXTERNAL_SYMBOL` | External symbol (stdlib, third-party, unknown) |
+| `EXTERNAL_SYMBOL` | External symbol (stdlib, third-party, or unknown); carries `metadata["origin"]` |
 
 ### Relation kinds
 
@@ -103,9 +145,10 @@ classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
 | `DECLARES` | Declaration (file declares function, class declares method) |
 | `IMPORTS` | Import edge (file → import node) |
 | `RESOLVES_TO` | Import resolved to a module or external symbol |
-| `CALLS` | Function/method call |
-| `REFERENCES` | Symbol reference |
-| `INHERITS_FROM` | Class inheritance |
+| `CALLS` | Function/method call (resolved to declaration node) |
+| `REFERENCES` | Value reference (variable/attribute used as a value) |
+| `INHERITS_FROM` | Class inheritance (resolved to declaration node) |
+| `HAS_TYPE` | Type annotation/inference edge (function/param/variable → class or external) |
 | `DEPENDS_ON` | Package dependency |
 
 ## Adapter plugin system
@@ -169,7 +212,8 @@ Register in `pyproject.toml` and the core registry finds it automatically.
 graphlens/                      ← uv workspace root (core library)
   src/graphlens/                ← models, contracts, registry, exceptions, utils
   packages/
-    graphlens-python/           ← Python adapter (tree-sitter)
+    graphlens-python/           ← Python adapter (tree-sitter + ty)
+    graphlens-typescript/       ← TypeScript adapter (tree-sitter + Compiler API)
   tests/                         ← core tests (100% coverage)
   examples/                      ← runnable usage examples
 ```
@@ -187,8 +231,9 @@ task tests          # all tests with coverage
 Individual package tasks:
 
 ```bash
-task core:lint      task core:test
-task python:lint    task python:test
+task core:lint           task core:test
+task python:lint         task python:test
+task typescript:lint     task typescript:test
 ```
 
 ## License

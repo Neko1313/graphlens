@@ -30,7 +30,7 @@ from graphlens_python._project_detector import (
     find_python_roots,
     is_python_project,
 )
-from graphlens_python._resolver import JediResolver
+from graphlens_python._resolver import TyResolver
 from graphlens_python._visitor import (
     ImportClassifier,
     OccurrenceRef,
@@ -79,8 +79,9 @@ class PythonAdapter(LanguageAdapter):
                 Defaults to ``PYTHON_DEFAULT_DEP_PARSERS``.
             resolver: symbol resolver used for cross-file resolution of
                 calls, references, annotations, and base classes.
-                Defaults to ``JediResolver``. Inject a custom or null
-                resolver to override resolution behaviour.
+                Defaults to ``TyResolver`` (requires ``ty`` in PATH).
+                Pass ``None`` to disable resolution, or inject a custom
+                ``SymbolResolver`` subclass.
 
         """
         self._dep_parsers = (
@@ -89,9 +90,7 @@ class PythonAdapter(LanguageAdapter):
             else PYTHON_DEFAULT_DEP_PARSERS
         )
         self._resolver = (
-            resolver
-            if resolver is not None
-            else JediResolver(stdlib_names=_STDLIB)
+            resolver if resolver is not None else TyResolver()
         )
 
     def language(self) -> str:

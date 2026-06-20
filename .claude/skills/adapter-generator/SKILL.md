@@ -17,7 +17,7 @@ Generates a production-ready `graphlens-<lang>` adapter package following the ex
 4. Read [Patterns Reference](references/PATTERNS.md) — code templates for every module
 5. Read [Infrastructure Reference](references/INFRASTRUCTURE.md) — ruff, Taskfile, CI, codecov
 6. Use [assets/adapter_template.md](assets/adapter_template.md) and [assets/visitor_template.md](assets/visitor_template.md) as starting skeletons
-7. Generate files **bottom-up**: `_project_detector` → `_module_resolver` → `_deps` → `_visitor` → `_adapter` → `__init__` → `pyproject.toml` → linting → Taskfile → CI → codecov → tests
+7. Generate files **bottom-up**: `_project_detector` → `_module_resolver` → `_deps` → `_visitor` → `_resolver` → `_adapter` → `__init__` → `pyproject.toml` → linting → Taskfile → CI → codecov → tests
 
 ## Core Principles
 
@@ -29,6 +29,10 @@ Generates a production-ready `graphlens-<lang>` adapter package following the ex
 - **ImportClassifier pre-pass** — build `ImportClassifier(stdlib, third_party, internal)` before visiting any file; every IMPORT node must have `metadata["origin"]` set
 - **Three stacks** — visitor maintains `_scope_stack`, `_container_stack`, `_kind_stack` for scope tracking
 - **`dep_parsers` constructor param** — adapters accept a custom parser list so callers can inject non-standard package managers
+- **`name_span` on structural nodes** — visitor records `metadata["name_span"]` (Span of the name token) on every CLASS, FUNCTION, METHOD, VARIABLE, ATTRIBUTE, TYPE_ALIAS, PARAMETER node so the `SpanIndex` can map definition positions back to node IDs
+- **OccurrenceRef collection** — visitor collects `OccurrenceRef` objects (role, 1-based position of the name token, enclosing node ID) for every use-site but does **not** emit CALLS, REFERENCES, HAS_TYPE, or INHERITS_FROM edges directly — those are produced by the post-visit resolution pass
+- **SymbolResolver** — each adapter ships a `SymbolResolver` subclass (`_resolver.py`) that wraps a type-aware engine; it must never raise — all errors return `None`/`[]`
+- **Post-visit resolution pass** — after visiting all files: build `SpanIndex`, call `resolver.prepare()`, then for each `OccurrenceRef` call `resolver.definition_at()` and emit the correct edge or fall back to `EXTERNAL_SYMBOL`
 
 ---
 
@@ -157,17 +161,32 @@ See [assets/visitor_template.md](assets/visitor_template.md) and [Patterns → _
 Critical checklist:
 - [ ] Module-level parser singleton (`_LANGUAGE`, `_parser`, `parse_{lang}()`)
 - [ ] `ImportClassifier` dataclass with `classify(top_level)` method
+- [ ] `OccurrenceRef` dataclass: `role` (call/read/write/annotation/base), `file_path`, `line`, `col` (1-based), `enclosing_id`
 - [ ] `VisitorContext` dataclass (project_name, file_path, source_root, module_qualified_name)
 - [ ] `{Lang}ASTVisitor` with `visit()` dispatch via `getattr(self, f"_visit_{node.type}", None)`
 - [ ] `_visit_children()` for default traversal
 - [ ] Three stacks initialized in `__init__`: `_scope_stack`, `_container_stack`, `_kind_stack`
-- [ ] Handlers for class/struct, function/method, import nodes
+- [ ] `occurrences: list[OccurrenceRef]` field on the visitor — filled during traversal
+- [ ] Handlers for class/struct, function/method, import, variable, attribute nodes
+- [ ] Every structural node (CLASS, FUNCTION, METHOD, VARIABLE, ATTRIBUTE, TYPE_ALIAS, PARAMETER) records `metadata["name_span"]` = Span of the **name token**
+- [ ] Call sites, read/write uses, type annotations, base classes → append `OccurrenceRef` to `self.occurrences`; do **not** emit CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM edges
 - [ ] `_emit_import()` — classifies origin, creates IMPORT node, emits IMPORTS + RESOLVES_TO relations
 - [ ] `_get_or_create_external_symbol()` — idempotent EXTERNAL_SYMBOL creation
 - [ ] `_make_span(ts_node)` — 0-based tree-sitter → 1-based Span
 - [ ] Every IMPORT node has `metadata["origin"]` set
 
-### Step 8 — Generate `_adapter.py`
+### Step 8 — Generate `_resolver.py`
+
+See [Patterns → _resolver.py](references/PATTERNS.md#_resolverpy).
+
+`{Lang}Resolver` subclasses `SymbolResolver` from `graphlens.contracts`:
+- `prepare(project_root, files)` — initialise the type-aware engine (e.g. ty/LSP, tsc)
+- `definition_at(file, line, col)` → `ResolvedRef | None` — resolve a use-site to its declaration
+- `infer_type_at(file, line, col)` → `ResolvedRef | None` — optional type inference
+- `references_to(file, line, col)` → `list[ResolvedRef]` — find all references
+- All methods must never raise — catch all exceptions and return `None`/`[]`
+
+### Step 9 — Generate `_adapter.py`
 
 See [assets/adapter_template.md](assets/adapter_template.md) and [Patterns → _adapter.py](references/PATTERNS.md#_adapterpy).
 
@@ -179,31 +198,34 @@ See [assets/adapter_template.md](assets/adapter_template.md) and [Patterns → _
 5. Build `ImportClassifier`
 6. Create PROJECT node (guard duplicate with `if project_id not in graph.nodes`)
 7. Per-file loop: `_ensure_module_chain()` → FILE node → parse → `{Lang}ASTVisitor`
-8. Link PROJECT → top-level modules via CONTAINS
+8. Collect all `OccurrenceRef` objects from each visitor into a flat list
+9. Link PROJECT → top-level modules via CONTAINS
+10. **Resolution pass**: build `SpanIndex(graph)`, call `resolver.prepare(lang_root, files)`, then for each `OccurrenceRef` call `resolver.definition_at(file, line, col)` → use `SpanIndex.at()` to find the target node → emit the correct edge (CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM) or fall back to `_get_or_create_external_symbol()`
 
-### Step 9 — Generate `__init__.py`
+### Step 10 — Generate `__init__.py`
 
 ```python
 """graphlens_{lang} — {Language} language adapter for graphlens."""
 
 from graphlens_{lang}._adapter import {Lang}Adapter
+from graphlens_{lang}._resolver import {Lang}Resolver
 
-__all__ = ["{Lang}Adapter"]
+__all__ = ["{Lang}Adapter", "{Lang}Resolver"]
 ```
 
-### Step 10 — Generate `pyproject.toml`
+### Step 11 — Generate `pyproject.toml`
 
 See [Patterns → pyproject.toml](references/PATTERNS.md#pyprojecttoml).
 
 Required: entry point `[project.entry-points."graphlens.adapters"]` → `{lang} = "graphlens_{lang}:{Lang}Adapter"`.
 
-### Step 11 — Generate `ruff.toml`
+### Step 12 — Generate `ruff.toml`
 
 See [Infrastructure → ruff.toml](references/INFRASTRUCTURE.md#rufftom).
 
 Create `packages/graphlens-{lang}/ruff.toml`. The key rule: `[lint.per-file-ignores]` must relax annotation, docstring, and security rules for `tests/**` so pytest code doesn't require full production-grade typing.
 
-### Step 12 — Generate `Taskfile.yaml`
+### Step 13 — Generate `Taskfile.yaml`
 
 See [Infrastructure → Taskfile.yaml](references/INFRASTRUCTURE.md#taskfileyaml).
 
@@ -221,7 +243,7 @@ And add `{lang}:lint` / `{lang}:test` to the top-level `lint:` and `tests:` depe
 
 Also add `release:bump` and `release:commit` steps to include the new `pyproject.toml`.
 
-### Step 13 — Generate GitHub CI workflow
+### Step 14 — Generate GitHub CI workflow
 
 See [Infrastructure → GitHub CI](references/INFRASTRUCTURE.md#github-ci-workflow).
 
@@ -233,7 +255,7 @@ Create `.github/workflows/ci-{lang}.yml`. Follow the exact structure of `ci-pyth
 - Codecov test analytics upload for `junit.xml` with `flags: {lang}`
 - Artifact upload for `packages/graphlens-{lang}/reports/`
 
-### Step 14 — Update `codecov.yml`
+### Step 15 — Update `codecov.yml`
 
 See [Infrastructure → codecov.yml](references/INFRASTRUCTURE.md#codecovyml).
 
@@ -244,7 +266,7 @@ Add a new entry under `flag_management.individual_flags`:
     - packages/graphlens-{lang}/src/
 ```
 
-### Step 15 — Scaffold tests
+### Step 16 — Scaffold tests
 
 Mirror `packages/graphlens-python/tests/` structure. See [Patterns → Tests](references/PATTERNS.md#tests).
 
@@ -252,8 +274,9 @@ Mirror `packages/graphlens-python/tests/` structure. See [Patterns → Tests](re
 - `test_{lang}_project_detector.py` — `is_{lang}_project`, `find_{lang}_roots`, `detect_project_name`
 - `test_{lang}_module_resolver.py` — `file_to_qualified_name`, `find_source_roots`
 - `test_{lang}_deps.py` — each parser's `can_parse` and `parse`, `get_stdlib_names`
-- `test_{lang}_visitor.py` — visitor unit tests per node type
-- `test_{lang}_adapter.py` — end-to-end: real source snippets → correct graph structure
+- `test_{lang}_visitor.py` — visitor unit tests per node type; assert `occurrences` collected, `name_span` recorded; assert no CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM edges emitted by visitor
+- `test_{lang}_resolver.py` — `{Lang}Resolver.definition_at()` and `infer_type_at()`; assert never raises
+- `test_{lang}_adapter.py` — end-to-end: real source snippets → correct graph structure; assert resolved CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM edges point to real declaration nodes
 
 ---
 

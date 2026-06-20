@@ -7,8 +7,12 @@ graphlens/                      ← uv workspace root (also the core library)
   src/graphlens/                ← core: models, contracts, registry, exceptions, utils
   packages/
     graphlens-python/           ← Python language adapter
+    graphlens-typescript/       ← TypeScript language adapter
   tests/                         ← core library tests
   examples/                      ← runnable usage examples
+    demo_resolved_graph.py      ← Python: print node/edge stats + find-usages
+    demo_resolved_graph_ts.py   ← TypeScript: same, via TypeScript Compiler API
+    visualize_graph.py          ← Interactive HTML graph viewer (vis.js, opens in browser)
 ```
 
 All packages use the `src/` layout and `uv_build` as build backend.
@@ -20,7 +24,7 @@ packages/graphlens-<lang>/
     __init__.py              ← exports <Lang>Adapter (+ <Lang>Resolver if public)
     _adapter.py              ← LanguageAdapter subclass + _analyze_root()
     _visitor.py              ← ASTVisitor + ImportClassifier + OccurrenceRef
-    _resolver.py             ← SymbolResolver subclass (e.g. JediResolver)
+    _resolver.py             ← SymbolResolver subclass (e.g. TyResolver)
     _deps.py                 ← DependencyFileParser implementations + default list
     _project_detector.py     ← is_<lang>_project(), find_<lang>_roots(), detect_project_name()
     _module_resolver.py      ← file→qualified_name, source root detection
@@ -60,12 +64,15 @@ graph = adapter.analyze(project_root)
 ### 4. Tree-sitter + type-aware resolver
 Every adapter uses Tree-sitter for structure extraction, occurrence roles
 (call/read/write/annotation/base), and spans. A language-specific
-`SymbolResolver` (jedi for Python) handles type-aware resolution — mapping
-occurrence positions to definition nodes and emitting CALLS/REFERENCES/
-HAS_TYPE/INHERITS_FROM edges. Tree-sitter is no longer the sole engine;
-it hands off precise position data that the resolver consumes.
+`SymbolResolver` handles type-aware resolution — mapping occurrence positions
+to definition nodes and emitting CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM
+edges. Tree-sitter is no longer the sole engine; it hands off precise position
+data that the resolver consumes.
 
-The Python adapter's `JediResolver` runs in-process via jedi. The TypeScript
+The Python adapter's `TyResolver` spawns a `ty server` LSP subprocess (Astral
+ty, Rust-based); files are opened lazily on the first query per file, and
+`open_file()` drains `publishDiagnostics` before returning so definition
+queries never block on background analysis. The TypeScript
 adapter's `TsResolver` is a Node-subprocess Compiler-API resolver that batches
 all occurrence queries into a single `resolve_all` call to a bundled
 `ts_resolver.js` script, installing typescript on-demand into a cache dir.
@@ -189,7 +196,7 @@ is never missing when the target file hasn't been processed yet.
    location→node bridge that maps any `(file_path, line, col)` to the node
    whose `name_span` contains that position.
 5. Call `SymbolResolver.prepare(project_root, files)` to initialise the
-   type-aware engine (e.g. jedi).
+   type-aware engine (e.g. ty for Python, tsc for TypeScript).
 6. For each `OccurrenceRef` collected by the visitor, call
    `SymbolResolver.definition_at(file, line, col)` to resolve the use-site to
    its definition. The current resolution pass uses `definition_at` for every
