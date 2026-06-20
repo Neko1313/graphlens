@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
   `TYPE_ALIAS` node kinds and the `HAS_TYPE` relation kind.
 - Python adapter: `CALLS`/`INHERITS_FROM` now resolve to real declaration
   nodes (via jedi); added resolved `REFERENCES` (read/write) and `HAS_TYPE`.
+- TypeScript adapter now resolves CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM to
+  real declaration nodes via the TypeScript Compiler API (Node subprocess,
+  install-on-demand). Alias imports (tsconfig paths) resolve. src-layout files
+  outside src/ are analyzed. Resolution requires Node; degrades to tree-sitter
+  structure when unavailable.
 
 ### Added
 - Core `SpanIndex` (location→node bridge) and `SymbolResolver` contract

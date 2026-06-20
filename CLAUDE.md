@@ -65,6 +65,11 @@ occurrence positions to definition nodes and emitting CALLS/REFERENCES/
 HAS_TYPE/INHERITS_FROM edges. Tree-sitter is no longer the sole engine;
 it hands off precise position data that the resolver consumes.
 
+The Python adapter's `JediResolver` runs in-process via jedi. The TypeScript
+adapter's `TsResolver` is a Node-subprocess Compiler-API resolver that batches
+all occurrence queries into a single `resolve_all` call to a bundled
+`ts_resolver.js` script, installing typescript on-demand into a cache dir.
+
 Parser setup (one module-level singleton per adapter):
 ```python
 import tree_sitter_<lang> as ts_lang

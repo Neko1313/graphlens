@@ -1,6 +1,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from graphlens.contracts import ResolvedRef
 
 from graphlens_typescript._resolver import TsResolver
@@ -101,14 +102,9 @@ def test_ensure_typescript_skips_when_sentinel_present(tmp_path):
 def test_ensure_typescript_raises_when_node_missing(tmp_path):
     r = TsResolver()
     r._cache_dir = tmp_path  # sentinel absent
-    with patch("graphlens_typescript._resolver.shutil.which", return_value=None):
-        try:
-            r.ensure_typescript()
-        except RuntimeError as exc:
-            assert "node/npm" in str(exc)
-        else:
-            msg = "expected RuntimeError"
-            raise AssertionError(msg)
+    with patch("graphlens_typescript._resolver.shutil.which", return_value=None), \
+         pytest.raises(RuntimeError, match="node/npm"):
+        r.ensure_typescript()
 
 
 def test_ensure_typescript_runs_npm_install(tmp_path):

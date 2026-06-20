@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from importlib.resources import files as _pkg_files
 from pathlib import Path
 
@@ -59,7 +59,7 @@ class TsResolver(SymbolResolver):
             raise RuntimeError(msg)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         (self._cache_dir / "package.json").write_text('{"private":true}')
-        subprocess.run(
+        subprocess.run(  # nosec B603 B607
             ["npm", "install",  # noqa: S607
              f"typescript@{self._ts_version}",
              "--no-save", "--no-audit", "--prefer-offline"],
@@ -129,7 +129,7 @@ class TsResolver(SymbolResolver):
         """Invoke the Node bridge as a subprocess, return parsed JSON."""
         bridge = _pkg_files("graphlens_typescript") / _BRIDGE_JS
         env = dict(os.environ, TS_CACHE_DIR=str(self._cache_dir))
-        completed = subprocess.run(
+        completed = subprocess.run(  # nosec B603 B607
             ["node", str(bridge)],  # noqa: S607
             input=json.dumps(request),
             capture_output=True, text=True, env=env,
