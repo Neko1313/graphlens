@@ -179,3 +179,33 @@ def test_run_analysis_merges_multiple_adapters(tmp_path):
         graph, _ = run_analysis(tmp_path, ["python", "typescript"], verbose=False)
 
     assert len(graph.nodes) == 2
+
+
+def test_run_analysis_combines_resolver_status(tmp_path):
+    from unittest.mock import patch
+
+    from graphlens import RESOLVER_STATUS_KEY, GraphLens
+
+    from graphlens_cli._app import run_analysis
+
+    g1 = GraphLens()
+    g1.metadata[RESOLVER_STATUS_KEY] = "ok"
+    g2 = GraphLens()
+    g2.metadata[RESOLVER_STATUS_KEY] = "unavailable"
+
+    class _FakeAdapter:
+        def __init__(self, g):
+            self._g = g
+
+        def analyze(self, root):
+            return self._g
+
+    adapters = iter([_FakeAdapter(g1), _FakeAdapter(g2)])
+    with patch(
+        "graphlens_cli._app.load_adapter",
+        side_effect=lambda lang: next(adapters),
+    ):
+        combined, _ = run_analysis(
+            tmp_path, ["python", "typescript"], verbose=False
+        )
+    assert combined.metadata[RESOLVER_STATUS_KEY] == "unavailable"
