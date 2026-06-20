@@ -15,6 +15,7 @@ from graphlens import (
     Relation,
     RelationKind,
 )
+from graphlens.contracts import normalize_pkg_name
 from graphlens.utils import Span, make_node_id
 from tree_sitter import Language, Parser
 from tree_sitter import Node as TSNode
@@ -100,12 +101,29 @@ class ImportClassifier:
     third_party: frozenset[str] = field(default_factory=frozenset)
     internal: frozenset[str] = field(default_factory=frozenset)
 
-    def classify(self, top_level: str) -> str:
-        if top_level in self.stdlib:
+    def classify(self, import_path: str) -> str:
+        """
+        Classify the origin of ``import_path``.
+
+        ``import_path`` is the raw module specifier as written in source
+        (e.g. ``'@ant-design/icons'``, ``'@ant-design/icons/lib/foo'``,
+        ``'lodash/fp'``, ``'fs'``).  The method derives the package key
+        used for lookup:
+
+        - Scoped packages (``@scope/pkg[/sub/path]``) → key is
+          ``@scope/pkg`` (first two slash-segments).
+        - Non-scoped packages (``pkg[/sub/path]``) → key is ``pkg``
+          (first slash-segment).
+
+        The key is normalized with ``normalize_pkg_name`` before lookup
+        so it matches the stored form produced by ``PackageJsonParser``.
+        """
+        pkg_key = _pkg_key_from_import_path(import_path)
+        if pkg_key in self.stdlib:
             return "stdlib"
-        if top_level in self.internal:
+        if pkg_key in self.internal:
             return "internal"
-        if top_level in self.third_party:
+        if pkg_key in self.third_party:
             return "third_party"
         return "unknown"
 
@@ -287,6 +305,7 @@ class TypescriptASTVisitor:
                 current_qname=self._scope_stack[-1],
             ),
             is_relative=is_relative,
+            raw_path=classify_path,
             is_star=True,
         )
 
@@ -870,6 +889,7 @@ class TypescriptASTVisitor:
                 local_name=f"__sideeffect_{_path_to_safe_name(module_path)}",
                 ext_qname=ext_qname,
                 is_relative=is_relative,
+                raw_path=classify_path,
                 is_star=True,
             )
             return
@@ -883,12 +903,16 @@ class TypescriptASTVisitor:
                     local_name=local_name,
                     ext_qname=f"{ext_qname}.default",
                     is_relative=is_relative,
+                    raw_path=classify_path,
                     alias=local_name,
                 )
 
             elif child.type == "named_imports":
                 self._process_named_imports(
-                    child, ext_qname=ext_qname, is_relative=is_relative
+                    child,
+                    ext_qname=ext_qname,
+                    is_relative=is_relative,
+                    raw_path=classify_path,
                 )
 
             elif child.type == "namespace_import":
@@ -903,6 +927,7 @@ class TypescriptASTVisitor:
                         local_name=local_name,
                         ext_qname=ext_qname,
                         is_relative=is_relative,
+                        raw_path=classify_path,
                         alias=local_name,
                         is_star=True,
                     )
@@ -913,6 +938,7 @@ class TypescriptASTVisitor:
         *,
         ext_qname: str,
         is_relative: bool,
+        raw_path: str = "",
     ) -> None:
         """Emit IMPORT nodes for ``{ A, B as C }`` named-import clauses."""
         for spec in named_imports_node.children:
@@ -927,6 +953,7 @@ class TypescriptASTVisitor:
                     local_name=iname,
                     ext_qname=f"{ext_qname}.{iname}",
                     is_relative=is_relative,
+                    raw_path=raw_path,
                 )
             else:
                 # "original as alias"
@@ -936,21 +963,23 @@ class TypescriptASTVisitor:
                     local_name=alias,
                     ext_qname=f"{ext_qname}.{orig}",
                     is_relative=is_relative,
+                    raw_path=raw_path,
                     alias=alias,
                 )
 
-    def _emit_import(
+    def _emit_import(  # noqa: PLR0913
         self,
         *,
         local_name: str,
         ext_qname: str,
         is_relative: bool,
+        raw_path: str = "",
         alias: str | None = None,
         is_star: bool = False,
     ) -> None:
-        top_level = ext_qname.split(".", maxsplit=1)[0]
         origin = (
-            "internal" if is_relative else self._classifier.classify(top_level)
+            "internal" if is_relative
+            else self._classifier.classify(raw_path or ext_qname)
         )
 
         import_qname = f"{self._scope_stack[-1]}.{local_name}"
@@ -1569,6 +1598,29 @@ def _extract_heritage_base_nodes(heritage_node: TSNode) -> list[TSNode]:
             if name_node:
                 nodes.append(name_node)
     return nodes
+
+
+def _pkg_key_from_import_path(import_path: str) -> str:
+    """
+    Derive the normalized package key from a raw module specifier.
+
+    Rules:
+
+    - Scoped packages (``@scope/pkg[/sub/path]``) → ``@scope/pkg``
+      (first two slash-segments, lowercased).
+    - Non-scoped packages (``pkg[/sub/path]``) → ``pkg``
+      (first slash-segment).
+
+    The result is passed through ``normalize_pkg_name`` so it matches the
+    form stored by ``PackageJsonParser``.
+    """
+    if import_path.startswith("@"):
+        # @scope/pkg or @scope/pkg/sub/path
+        parts = import_path.split("/", maxsplit=2)
+        pkg = "/".join(parts[:2]) if len(parts) > 1 else import_path
+    else:
+        pkg = import_path.split("/", maxsplit=1)[0]
+    return normalize_pkg_name(pkg)
 
 
 def _make_span(node: TSNode | None) -> Span | None:

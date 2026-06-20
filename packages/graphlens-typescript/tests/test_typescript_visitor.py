@@ -16,6 +16,7 @@ from graphlens_typescript._visitor import (
     _extract_heritage_bases,
     _make_span,
     _name_from_node,
+    _pkg_key_from_import_path,
     _strip_string_quotes,
     parse_typescript,
 )
@@ -245,6 +246,96 @@ class TestImportStatement:
         imports = nodes_of_kind(graph, NodeKind.IMPORT)
         imp = next(i for i in imports if i.name == "readFile")
         assert imp.metadata.get("origin") == "stdlib"
+
+    def test_scoped_package_default_import_third_party(self):
+        # @scope/pkg listed as-is in third_party (normalized)
+        classifier = ImportClassifier(
+            third_party=frozenset({"@ant-design/icons"})
+        )
+        graph, _ = parse_and_visit(
+            "import Icon from '@ant-design/icons';", classifier=classifier
+        )
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        imp = next(i for i in imports if i.name == "Icon")
+        assert imp.metadata.get("origin") == "third_party"
+
+    def test_scoped_package_sub_path_third_party(self):
+        # @scope/pkg/sub/path should resolve to @scope/pkg for lookup
+        classifier = ImportClassifier(
+            third_party=frozenset({"@ant-design/icons"})
+        )
+        graph, _ = parse_and_visit(
+            "import { EyeOutlined } from '@ant-design/icons/lib/icons';",
+            classifier=classifier,
+        )
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        imp = next(i for i in imports if i.name == "EyeOutlined")
+        assert imp.metadata.get("origin") == "third_party"
+
+    def test_non_scoped_sub_path_third_party(self):
+        # lodash/fp → key is "lodash"
+        classifier = ImportClassifier(third_party=frozenset({"lodash"}))
+        graph, _ = parse_and_visit(
+            "import fp from 'lodash/fp';", classifier=classifier
+        )
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        imp = next(i for i in imports if i.name == "fp")
+        assert imp.metadata.get("origin") == "third_party"
+
+    def test_at_alias_import_still_internal(self):
+        # @/-style path-alias rewrites to a relative module — must stay internal
+        # Simulate: @/utils/helpers is rewritten by path_aliases to src/utils/helpers
+        # and classify_path ends up as utils/helpers (no @ prefix remains)
+        graph, _ = parse_and_visit(
+            "import { helper } from './utils/helpers';",
+        )
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        imp = next(i for i in imports if i.name == "helper")
+        assert imp.metadata.get("origin") == "internal"
+
+    def test_relative_import_regression(self):
+        # Regression: relative imports must always be internal regardless of classifier
+        classifier = ImportClassifier(
+            third_party=frozenset({"@scope/pkg"}),
+            internal=frozenset({"local"}),
+        )
+        graph, _ = parse_and_visit(
+            "import { x } from '../sibling';", classifier=classifier
+        )
+        imports = nodes_of_kind(graph, NodeKind.IMPORT)
+        imp = next(i for i in imports if i.name == "x")
+        assert imp.metadata.get("origin") == "internal"
+        assert imp.metadata.get("is_relative") is True
+
+
+class TestPkgKeyFromImportPath:
+    """Unit tests for the _pkg_key_from_import_path helper."""
+
+    def test_scoped_package_bare(self):
+        assert _pkg_key_from_import_path("@ant-design/icons") == "@ant-design/icons"
+
+    def test_scoped_package_with_sub_path(self):
+        assert _pkg_key_from_import_path("@ant-design/icons/lib/foo") == "@ant-design/icons"
+
+    def test_scoped_package_no_slash_after_at(self):
+        # Malformed scoped import — treated as a single segment
+        assert _pkg_key_from_import_path("@scope") == "@scope"
+
+    def test_non_scoped_bare(self):
+        assert _pkg_key_from_import_path("lodash") == "lodash"
+
+    def test_non_scoped_with_sub_path(self):
+        assert _pkg_key_from_import_path("lodash/fp") == "lodash"
+
+    def test_stdlib_name(self):
+        assert _pkg_key_from_import_path("fs") == "fs"
+
+    def test_normalizes_hyphens_to_underscores(self):
+        # normalize_pkg_name converts hyphens to underscores for non-scoped
+        assert _pkg_key_from_import_path("some-pkg") == "some_pkg"
+
+    def test_normalizes_scoped_to_lowercase(self):
+        assert _pkg_key_from_import_path("@Scope/PKG") == "@scope/pkg"
 
 
 class TestCallExtraction:
