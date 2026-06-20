@@ -81,6 +81,7 @@ test = [
 [tool.uv.sources]
 graphlens-python = { workspace = true }
 graphlens-typescript = { workspace = true }
+graphlens-cli = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages/graphlens-python/tests"]

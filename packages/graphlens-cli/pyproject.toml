@@ -1,0 +1,45 @@
+[project]
+name = "graphlens-cli"
+version = "0.3.0"
+description = "Command-line interface for graphlens code analysis"
+requires-python = ">=3.13"
+dependencies = [
+    "graphlens",
+    "typer[all]>=0.15",
+]
+
+[project.optional-dependencies]
+python = ["graphlens-python"]
+typescript = ["graphlens-typescript"]
+neo4j = ["neo4j"]
+all = ["graphlens-python", "graphlens-typescript", "neo4j"]
+
+[project.scripts]
+graphlens = "graphlens_cli:app"
+
+[build-system]
+requires = ["uv_build>=0.9.18,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+graphlens = { workspace = true }
+graphlens-python = { workspace = true }
+graphlens-typescript = { workspace = true }
+
+[tool.bandit]
+skips = ["B101", "B110", "B107"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["graphlens_cli"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]

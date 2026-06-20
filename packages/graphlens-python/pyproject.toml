@@ -20,6 +20,9 @@ graphlens = { workspace = true }
 [project.entry-points."graphlens.adapters"]
 python = "graphlens_python:PythonAdapter"
 
+[tool.bandit]
+skips = ["B101", "B404", "B603"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
