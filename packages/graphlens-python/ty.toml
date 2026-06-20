@@ -2,4 +2,4 @@
 root = ["."]
 
 [src]
-include = ["src", "tests"]
+include = ["src"]

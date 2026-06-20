@@ -2,7 +2,7 @@
 root = ["."]
 
 [src]
-include = ["src", "tests"]
+include = ["src"]
 
 [[overrides]]
 include = ["**/graphlens_cli/_neo4j.py"]

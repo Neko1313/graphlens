@@ -17,7 +17,7 @@ from graphlens import (
 )
 from graphlens.contracts import normalize_pkg_name
 from graphlens.utils import Span, make_node_id
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Parser, Tree
 from tree_sitter import Node as TSNode
 
 from graphlens_typescript._module_resolver import (
@@ -75,7 +75,7 @@ _METHOD_NAME_TYPES: frozenset[str] = frozenset(
 )
 
 
-def parse_typescript(source: bytes, *, tsx: bool = False) -> object:
+def parse_typescript(source: bytes, *, tsx: bool = False) -> Tree:
     """Parse TypeScript source bytes and return a tree-sitter Tree."""
     return _tsx_parser.parse(source) if tsx else _ts_parser.parse(source)
 
@@ -1480,7 +1480,7 @@ class TypescriptASTVisitor:
 
 
 def _node_text(node: TSNode) -> str:
-    return node.text.decode("utf-8")
+    return node.text.decode("utf-8") if node.text is not None else ""
 
 
 def _strip_string_quotes(s: str) -> str:

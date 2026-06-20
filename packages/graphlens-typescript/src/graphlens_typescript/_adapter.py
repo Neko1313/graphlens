@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from graphlens import (
+    RESOLVER_STATUS_KEY,
+    AdapterError,
     GraphLens,
     LanguageAdapter,
     Node,
     NodeKind,
     Relation,
     RelationKind,
+    ResolverStatus,
 )
 from graphlens.utils import SpanIndex, make_node_id
 from graphlens.utils.roots import filter_nested_root_files
@@ -102,11 +105,11 @@ class TypescriptAdapter(LanguageAdapter):
         """Return the set of file extensions handled by this adapter."""
         return {".ts", ".tsx", ".mts", ".cts"}
 
-    def can_handle(self, project_root: Path) -> bool:
+    def can_handle(self, project_root: str | Path) -> bool:
         """Return True if the project root is a TypeScript project."""
-        return is_typescript_project(project_root)
+        return is_typescript_project(Path(project_root))
 
-    def collect_files(self, project_root: Path) -> list[Path]:
+    def collect_files(self, project_root: str | Path) -> list[Path]:
         """
         Collect TypeScript source files, excluding declaration files.
 
@@ -121,22 +124,29 @@ class TypescriptAdapter(LanguageAdapter):
 
     def analyze(
         self,
-        project_root: Path,
+        project_root: str | Path,
         files: list[Path] | None = None,
+        *,
+        strict: bool = False,
     ) -> GraphLens:
         """
         Analyze a TypeScript project and return a populated GraphLens.
 
         Args:
-            project_root: the root directory of the project (or monorepo).
+            project_root: the root directory of the project (or monorepo);
+                accepts a ``str`` or ``Path``.
             files: optional explicit list of files to analyze; when omitted
                 all TypeScript source files are collected automatically.
+            strict: when True, raise ``AdapterError`` instead of returning a
+                graph whose resolver status is not ``ok``.
 
         Returns:
             A ``GraphLens`` containing the structural and relational nodes.
 
         """
+        project_root = Path(project_root).resolve()
         graph = GraphLens()
+        statuses: list[ResolverStatus] = []
 
         if files is not None:
             _analyze_root(
@@ -147,6 +157,7 @@ class TypescriptAdapter(LanguageAdapter):
                 self._dep_parsers,
                 self._resolver,
             )
+            statuses.append(self._resolver.status())
         else:
             lang_roots = find_typescript_roots(project_root)
             for lang_root in lang_roots:
@@ -164,7 +175,16 @@ class TypescriptAdapter(LanguageAdapter):
                     self._dep_parsers,
                     self._resolver,
                 )
+                statuses.append(self._resolver.status())
 
+        status = ResolverStatus.combine(statuses)
+        graph.metadata[RESOLVER_STATUS_KEY] = status.value
+        if strict and status is not ResolverStatus.OK:
+            msg = (
+                f"TypeScript resolver status is '{status.value}'; refusing "
+                "to return a degraded graph in strict mode"
+            )
+            raise AdapterError(msg)
         return graph
 
 
@@ -240,7 +260,7 @@ def _resolve_occurrences(
     queries: list[tuple[Path, int, int]] = [
         (Path(p), o.line, o.col) for (p, o) in occurrences
     ]
-    refs = resolver.resolve_all(queries)
+    refs = cast("TsResolver", resolver).resolve_all(queries)
     for (_p, occ), ref in zip(occurrences, refs, strict=True):
         if ref is None:
             continue
