@@ -31,7 +31,7 @@ tasks:
           mkdir -p reports
           uv run ruff check --output-format json --output-file reports/ruff.json src tests
           uv run bandit -c pyproject.toml -r src -o reports/bandit.json --format json
-          uv run ty check --output-format github > reports/gl-code-quality-report.json
+          uv run ty check --output-format github > reports/gl-code-quality-report.json || { rc=$?; uv run ty check; exit $rc; }
         else
           echo "Running core linters for development..."
           uv run ruff check --fix src tests
