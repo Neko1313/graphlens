@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-06-21
+### Bug Fixes
+
+- **rust**: fix(rust): single workspace-rooted rust-analyzer + wait for workspace load by @Neko1313 in [#20](https://github.com/Neko1313/graphlens/pull/20)
+- **rust**: fix(rust): lighten rust-analyzer workspace load + surface load failures (ruff 0%) by @Neko1313 in [#21](https://github.com/Neko1313/graphlens/pull/21)
+- **rust**: fix(rust): spawn the real rust-analyzer binary, bypassing the rustup proxy (ruff 0%) by @Neko1313 in [#22](https://github.com/Neko1313/graphlens/pull/22)
+- **rust**: fix(rust): analyse with the project-pinned rust-analyzer + ship it in the image (ruff 0%) by @Neko1313 in [#23](https://github.com/Neko1313/graphlens/pull/23)
+
+### Documentation
+
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.6.0...v0.6.1
 ## [0.6.0] - 2026-06-21
 ### Bug Fixes
 
