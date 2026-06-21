@@ -33,7 +33,7 @@ from graphlens_go._deps import (
     read_module_path,
 )
 from graphlens_go._project_detector import find_go_roots, is_go_project
-from graphlens_go._resolver import GoResolver
+from graphlens_go._resolver import GoplsResolver
 from graphlens_go._visitor import (
     GoFileContext,
     GoStructureExtractor,
@@ -70,7 +70,9 @@ class GoAdapter(LanguageAdapter):
             if dep_parsers is not None
             else GO_DEFAULT_DEP_PARSERS
         )
-        self._resolver = resolver if resolver is not None else GoResolver()
+        self._resolver = (
+            resolver if resolver is not None else GoplsResolver()
+        )
         self._boundary_extractors = (
             boundary_extractors
             if boundary_extractors is not None

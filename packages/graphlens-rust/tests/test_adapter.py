@@ -12,7 +12,7 @@ from graphlens import (
     RelationKind,
 )
 
-from graphlens_rust import RustAdapter
+from graphlens_rust import RustAdapter, RustResolver
 from graphlens_rust._adapter import (
     _module_candidates,
     _resolve_internal_imports,
@@ -49,7 +49,9 @@ def test_analyze_structural(sample_rust_project: Path):
 
 
 def test_status_unavailable(sample_rust_project: Path):
-    graph = RustAdapter().analyze(sample_rust_project)
+    # Pin the structure-only fallback so the test asserts the degraded path
+    # regardless of whether rust-analyzer (the default) is installed here.
+    graph = RustAdapter(resolver=RustResolver()).analyze(sample_rust_project)
     assert graph.metadata[RESOLVER_STATUS_KEY] == "unavailable"
 
 
@@ -60,7 +62,9 @@ def test_accepts_str_path(sample_rust_project: Path):
 
 def test_strict_raises(sample_rust_project: Path):
     with pytest.raises(AdapterError, match="strict"):
-        RustAdapter().analyze(sample_rust_project, strict=True)
+        RustAdapter(resolver=RustResolver()).analyze(
+            sample_rust_project, strict=True
+        )
 
 
 def test_import_origins(sample_rust_project: Path):
