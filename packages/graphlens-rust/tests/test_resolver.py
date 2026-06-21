@@ -13,6 +13,7 @@ from graphlens_rust import RustAnalyzerResolver, RustResolver
 from graphlens_rust._resolver import (
     _in_cargo_registry,
     _in_rust_stdlib,
+    _loc_uri_and_start,
     _RustAnalyzerClient,
     _uri_to_path,
 )
@@ -96,9 +97,56 @@ def test_definition_at_hit(resolver, tmp_path):
     assert ref.origin == "internal"
 
 
+def test_definition_at_locationlink(resolver, tmp_path):
+    """rust-analyzer may return a LocationLink (targetUri/targetSel...)."""
+    target = tmp_path / "lib.rs"
+    resolver._client.definition.return_value = {
+        "targetUri": target.as_uri(),
+        "targetSelectionRange": {"start": {"line": 2, "character": 3}},
+    }
+    ref = resolver.definition_at(tmp_path / "main.rs", 4, 1)
+    assert ref is not None
+    assert ref.file_path == target
+    assert ref.line == 3
+    assert ref.col == 4
+    assert ref.origin == "internal"
+
+
 def test_definition_at_miss(resolver, tmp_path):
     resolver._client.definition.return_value = None
     assert resolver.definition_at(tmp_path / "main.rs", 1, 1) is None
+
+
+def test_loc_uri_and_start_location():
+    uri, start = _loc_uri_and_start(
+        {"uri": "file:///a.rs", "range": {"start": {"line": 1}}}
+    )
+    assert uri == "file:///a.rs"
+    assert start == {"line": 1}
+
+
+def test_loc_uri_and_start_locationlink():
+    uri, start = _loc_uri_and_start(
+        {
+            "targetUri": "file:///b.rs",
+            "targetSelectionRange": {"start": {"line": 3}},
+        }
+    )
+    assert uri == "file:///b.rs"
+    assert start == {"line": 3}
+
+
+def test_loc_uri_and_start_targetrange_fallback():
+    _uri, start = _loc_uri_and_start(
+        {"targetUri": "file:///c.rs", "targetRange": {"start": {"line": 4}}}
+    )
+    assert start == {"line": 4}
+
+
+def test_loc_uri_and_start_empty():
+    uri, start = _loc_uri_and_start({})
+    assert uri == ""
+    assert start == {}
 
 
 def test_definition_at_swallows_exception(resolver, tmp_path):

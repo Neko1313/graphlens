@@ -40,6 +40,24 @@ def _in_rust_stdlib(parts: tuple[str, ...]) -> bool:
     return "rustlib" in parts
 
 
+def _loc_uri_and_start(loc: dict) -> tuple[str, dict]:  # type: ignore[type-arg]
+    """
+    Extract (uri, start) from an LSP Location or LocationLink.
+
+    rust-analyzer may return a ``LocationLink`` (``targetUri`` /
+    ``targetSelectionRange``) rather than a plain ``Location`` (``uri`` /
+    ``range``); normalize both so resolution binds to the real definition.
+    """
+    uri = loc.get("uri") or loc.get("targetUri") or ""
+    rng = (
+        loc.get("range")
+        or loc.get("targetSelectionRange")
+        or loc.get("targetRange")
+        or {}
+    )
+    return uri, rng.get("start", {})
+
+
 class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
     """Minimal synchronous LSP JSON-RPC client for ``rust-analyzer``."""
 
@@ -290,10 +308,10 @@ class RustAnalyzerResolver(SymbolResolver):
             return []
         out: list[Occurrence] = []
         for loc in locs:
-            fp = _uri_to_path(loc.get("uri", ""))
+            uri, start = _loc_uri_and_start(loc)
+            fp = _uri_to_path(uri)
             if fp is None:
                 continue
-            start = loc.get("range", {}).get("start", {})
             out.append(
                 Occurrence(
                     file_path=fp,
@@ -313,8 +331,8 @@ class RustAnalyzerResolver(SymbolResolver):
         )
 
     def _loc_to_ref(self, loc: dict) -> ResolvedRef:  # type: ignore[type-arg]
-        fp = _uri_to_path(loc.get("uri", ""))
-        start = loc.get("range", {}).get("start", {})
+        uri, start = _loc_uri_and_start(loc)
+        fp = _uri_to_path(uri)
         return ResolvedRef(
             full_name="",
             file_path=fp,
