@@ -10,7 +10,7 @@
   [![CI](https://img.shields.io/github/actions/workflow/status/Neko1313/graphlens/ci.yml?label=CI)](https://github.com/Neko1313/graphlens/actions)
   [![codecov](https://codecov.io/gh/Neko1313/graphlens/graph/badge.svg?token=n3oRe180jg)](https://codecov.io/gh/Neko1313/graphlens)
 
-  [Repository](https://github.com/Neko1313/graphlens) · [Issues](https://github.com/Neko1313/graphlens/issues)
+  [Documentation](https://Neko1313.github.io/graphlens/) · [Repository](https://github.com/Neko1313/graphlens) · [Issues](https://github.com/Neko1313/graphlens/issues)
 
 </div>
 
@@ -38,6 +38,20 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 - **Cross-language aware** — adapters emit language-agnostic `BOUNDARY` ports (HTTP, queues, gRPC, Temporal); `graphlens-link` connects a consumer in one language to a provider in another
 - **Monorepo aware** — `can_handle()` and `find_*_roots()` handle multi-language repos correctly
 - **Deterministic node IDs** — SHA-256 hash of `project::kind::qualified_name` → stable across re-scans
+
+## Documentation
+
+Full product documentation lives at **<https://Neko1313.github.io/graphlens/>**
+(built with Docusaurus from [`website/`](website/)):
+
+- [Getting Started](https://Neko1313.github.io/graphlens/docs/getting-started/installation) — install, quick start, core concepts
+- [Guides](https://Neko1313.github.io/graphlens/docs/guides/library-api) — library API, CLI, querying, visualization, Neo4j, cross-language, MCP
+- [CI Integration](https://Neko1313.github.io/graphlens/docs/ci-integration/overview) — strict mode, GitHub Actions, Docker, local hooks
+- [Adapters](https://Neko1313.github.io/graphlens/docs/adapters/overview) — Python, TypeScript, Go, Rust, and writing your own
+- [Graph Model](https://Neko1313.github.io/graphlens/docs/graph-model/nodes) — nodes, relations, boundaries, serialization
+- [API Reference](https://Neko1313.github.io/graphlens/docs/api-reference/graphlens) — exact signatures
+
+To run the docs locally: `cd website && pnpm install && pnpm start`.
 
 ## Installation
 

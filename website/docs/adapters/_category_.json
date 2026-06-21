@@ -1,0 +1,8 @@
+{
+  "label": "Adapters",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "How each language is supported, and how to write an adapter of your own."
+  }
+}

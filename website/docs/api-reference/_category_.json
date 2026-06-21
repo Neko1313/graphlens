@@ -1,0 +1,8 @@
+{
+  "label": "API Reference",
+  "position": 7,
+  "link": {
+    "type": "generated-index",
+    "description": "Exact signatures for the public API: GraphLens, the models, the registry, the contracts, the CLI, and the exceptions."
+  }
+}
