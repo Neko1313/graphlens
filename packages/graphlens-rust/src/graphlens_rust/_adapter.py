@@ -97,42 +97,55 @@ class RustAdapter(LanguageAdapter):
     ) -> GraphLens:
         project_root = Path(project_root).resolve()
         graph = GraphLens()
-        statuses: list[ResolverStatus] = []
         metrics = ResolverMetrics()
 
         if files is not None:
-            metrics.merge(
-                _analyze_root(
-                    graph,
-                    project_root,
-                    project_root,
-                    files,
-                    self._dep_parsers,
-                    self._resolver,
-                    self._boundary_extractors,
-                )
-            )
-            statuses.append(self._resolver.status())
+            crate_files = [(project_root, files)]
         else:
             roots = find_rust_roots(project_root)
-            for crate_root in roots:
-                root_files = filter_nested_root_files(
-                    self.collect_files(crate_root), crate_root, roots
+            crate_files = [
+                (
+                    crate_root,
+                    filter_nested_root_files(
+                        self.collect_files(crate_root), crate_root, roots
+                    ),
                 )
-                metrics.merge(
-                    _analyze_root(
-                        graph,
-                        project_root,
-                        crate_root,
-                        root_files,
-                        self._dep_parsers,
-                        self._resolver,
-                        self._boundary_extractors,
-                    )
-                )
-                statuses.append(self._resolver.status())
+                for crate_root in roots
+            ]
 
-        status = ResolverStatus.combine(statuses)
+        # Phase 1 — structure for every crate root, no resolution yet, so the
+        # SpanIndex below spans the whole workspace and cross-crate definition
+        # targets already exist before any occurrence is resolved.
+        crates = [
+            _build_crate_structure(
+                graph, project_root, crate_root, crate_file_list,
+                self._dep_parsers,
+            )
+            for crate_root, crate_file_list in crate_files
+        ]
+
+        # Phase 2 — a SINGLE rust-analyzer rooted at the workspace root
+        # resolves every crate. Rooting one server at the workspace root
+        # (instead of one per member crate) is what lets cross-crate calls
+        # resolve and avoids reloading the whole workspace once per member.
+        all_files = [f for _cr, fs in crate_files for f in fs]
+        self._resolver.prepare(project_root, all_files)
+        span_index = SpanIndex.from_graph(graph)
+        for crate_name, occurrences, _parsed in crates:
+            metrics.merge(
+                _resolve_occurrences(
+                    graph, crate_name, project_root, self._resolver,
+                    span_index, occurrences,
+                )
+            )
+
+        # Phase 3 — boundary extraction per crate (independent of resolution).
+        for _crate_name, _occurrences, parsed_files in crates:
+            _extract_boundaries(
+                graph, parsed_files, self._boundary_extractors
+            )
+
+        status = self._resolver.status()
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
         graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
@@ -158,16 +171,25 @@ def _module_qname(file: Path, crate_root: Path, crate_name: str) -> str:
     return "::".join([crate_name, *parts]) if parts else crate_name
 
 
-def _analyze_root(  # noqa: PLR0913
+def _build_crate_structure(
     graph: GraphLens,
     project_root: Path,
     crate_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-    resolver: SymbolResolver,
-    boundary_extractors: list[RustBoundaryExtractor],
-) -> ResolverMetrics:
-    """Analyse one Rust crate root and populate ``graph`` in place."""
+) -> tuple[
+    str,
+    list[tuple[str, OccurrenceRef]],
+    list[tuple[str, str, TSNode]],
+]:
+    """
+    Build structural nodes and internal imports for one crate root.
+
+    Returns ``(crate_name, occurrences, parsed_files)``. Type-aware resolution
+    and boundary extraction run later at the project level so a single
+    workspace-rooted resolver and a full-graph ``SpanIndex`` serve every crate
+    (cross-crate definitions only exist once every crate's structure is built).
+    """
     crate_name = read_crate_name(crate_root) or crate_root.name
 
     required: set[str] = set()
@@ -228,15 +250,7 @@ def _analyze_root(  # noqa: PLR0913
     # module exists), falling back to an EXTERNAL_SYMBOL when none matches.
     _resolve_internal_imports(graph, crate_name, internal_imports, modules)
 
-    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
-    span_index = SpanIndex.from_graph(graph)
-    resolver.prepare(crate_root, files)
-    metrics = _resolve_occurrences(
-        graph, crate_name, project_root, resolver, span_index, occurrences
-    )
-
-    _extract_boundaries(graph, parsed_files, boundary_extractors)
-    return metrics
+    return crate_name, occurrences, parsed_files
 
 
 def _module_candidates(
