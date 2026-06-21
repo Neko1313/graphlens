@@ -1,7 +1,7 @@
 [project]
 name = "graphlens"
 version = "0.5.0"
-description = "Extensible polyglot code analysis framework with a graph IR"
+description = "Polyglot code-analysis framework — parse Python, TypeScript, Go and Rust into a shared graph IR with type-aware resolution"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
 authors = [
@@ -9,15 +9,25 @@ authors = [
 ]
 keywords = [
     "code-analysis",
-    "graphlens",
-    "ast",
-    "tree-sitter",
     "static-analysis",
-    "graph",
-    "polyglot",
-    "dependency-analysis",
-    "python",
     "code-intelligence",
+    "graph",
+    "graph-ir",
+    "tree-sitter",
+    "ast",
+    "call-graph",
+    "dependency-graph",
+    "code-navigation",
+    "polyglot",
+    "knowledge-graph",
+    "lsp",
+    "neo4j",
+    "mcp",
+    "monorepo",
+    "python",
+    "typescript",
+    "go",
+    "rust",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -26,6 +36,10 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Go",
+    "Programming Language :: JavaScript",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Scientific/Engineering :: Information Analysis",
