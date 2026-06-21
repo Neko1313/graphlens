@@ -21,6 +21,7 @@ from graphlens_go._boundary import (
     HttpClientExtractor,
     HttpServerExtractor,
     QueueExtractor,
+    TemporalExtractor,
     _string_content,
     _text,
 )
@@ -114,6 +115,54 @@ class TestClient:
 
     def test_empty_args_ignored(self):
         assert self.ex.extract(_root(_fn("http.Get()"))) == []
+
+
+class TestTemporal:
+    ex = TemporalExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "temporal"
+
+    def test_execute_activity_func_ref(self):
+        code = _fn("workflow.ExecuteActivity(ctx, Charge, in)")
+        assert _keys(self.ex.extract(_root(code)), "client") == {"Charge"}
+
+    def test_execute_activity_string(self):
+        code = _fn('workflow.ExecuteActivity(ctx, "Charge", in)')
+        assert _keys(self.ex.extract(_root(code)), "client") == {"Charge"}
+
+    def test_execute_activity_selector(self):
+        code = _fn("workflow.ExecuteActivity(ctx, acts.Charge, in)")
+        assert _keys(self.ex.extract(_root(code)), "client") == {"Charge"}
+
+    def test_execute_local_activity(self):
+        code = _fn("workflow.ExecuteLocalActivity(ctx, Charge)")
+        assert _keys(self.ex.extract(_root(code)), "client") == {"Charge"}
+
+    def test_register_activity_is_server(self):
+        code = _fn("w.RegisterActivity(Charge)\n    w.RegisterActivity(Refund)")
+        assert _keys(self.ex.extract(_root(code)), "server") == {
+            "Charge",
+            "Refund",
+        }
+
+    def test_missing_activity_arg_skipped(self):
+        code = _fn("workflow.ExecuteActivity(ctx)")
+        assert self.ex.extract(_root(code)) == []
+
+    def test_register_non_name_arg_skipped(self):
+        code = _fn(
+            "w.RegisterActivity(makeThing())\n    w.RegisterActivity(Charge)"
+        )
+        assert _keys(self.ex.extract(_root(code)), "server") == {"Charge"}
+
+    def test_non_name_activity_skipped(self):
+        code = _fn("workflow.ExecuteActivity(ctx, makeName())")
+        assert self.ex.extract(_root(code)) == []
+
+    def test_non_temporal_method_skipped(self):
+        code = _fn('http.Get("/x")')
+        assert self.ex.extract(_root(code)) == []
 
 
 class TestQueue:

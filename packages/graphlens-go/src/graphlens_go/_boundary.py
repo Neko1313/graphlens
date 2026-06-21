@@ -140,6 +140,62 @@ class HttpClientExtractor(GoBoundaryExtractor):
         return refs
 
 
+_TEMPORAL_EXEC = frozenset(
+    {"executeactivity", "executelocalactivity"}
+)
+
+
+def _activity_name(args: TSNode, index: int) -> str | None:
+    """Return the activity name from the index-th positional argument."""
+    kids = args.named_children
+    if index >= len(kids):
+        return None
+    node = kids[index]
+    if node.type in ("interpreted_string_literal", "raw_string_literal"):
+        return _string_content(node)
+    if node.type == "identifier":
+        return _text(node)
+    if node.type == "selector_expression":
+        return _text(node).rsplit(".", 1)[-1]
+    return None
+
+
+def _temporal_ref(role: str, name: str, node: TSNode) -> BoundaryRef:
+    line, col = _pos(node)
+    return BoundaryRef(
+        mechanism="temporal",
+        role=role,
+        key=name,
+        line=line,
+        col=col,
+        confidence=0.9,
+        detail={"activity": name},
+    )
+
+
+class TemporalExtractor(GoBoundaryExtractor):
+    """Temporal: ExecuteActivity (client) and RegisterActivity (server)."""
+
+    def mechanism(self) -> str:
+        return "temporal"
+
+    def extract(self, root: TSNode) -> list[BoundaryRef]:
+        refs: list[BoundaryRef] = []
+        for caps in run_query(_Q_SELECTOR_CALL, root):
+            method = _text(caps["method"][0]).lower()
+            args = caps["args"][0]
+            node = caps["method"][0]
+            if method in _TEMPORAL_EXEC:
+                name = _activity_name(args, 1)  # after ctx
+                if name is not None:
+                    refs.append(_temporal_ref("client", name, node))
+            elif method == "registeractivity":
+                name = _activity_name(args, 0)
+                if name is not None:
+                    refs.append(_temporal_ref("server", name, node))
+        return refs
+
+
 def _queue_role(method: str) -> str | None:
     """Map a queue method name to a boundary role, else None."""
     if method in ("publish", "produce"):
@@ -183,4 +239,5 @@ GO_DEFAULT_BOUNDARY_EXTRACTORS: list[GoBoundaryExtractor] = [
     HttpServerExtractor(),
     HttpClientExtractor(),
     QueueExtractor(),
+    TemporalExtractor(),
 ]
