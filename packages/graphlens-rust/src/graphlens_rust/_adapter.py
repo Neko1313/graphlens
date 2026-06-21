@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from graphlens import (
     RESOLVER_STATUS_KEY,
     AdapterError,
+    BoundaryRef,
     GraphLens,
     LanguageAdapter,
     Node,
@@ -17,10 +18,15 @@ from graphlens import (
     Relation,
     RelationKind,
     ResolverStatus,
+    make_boundary_id,
 )
 from graphlens.utils import make_node_id
 from graphlens.utils.roots import filter_nested_root_files
 
+from graphlens_rust._boundary import (
+    RUST_DEFAULT_BOUNDARY_EXTRACTORS,
+    RustBoundaryExtractor,
+)
 from graphlens_rust._deps import (
     RUST_DEFAULT_DEP_PARSERS,
     classify_rust_import,
@@ -36,6 +42,7 @@ from graphlens_rust._visitor import (
 
 if TYPE_CHECKING:
     from graphlens.contracts import DependencyFileParser, SymbolResolver
+    from tree_sitter import Node as TSNode
 
 logger = logging.getLogger("graphlens_rust")
 
@@ -47,6 +54,7 @@ class RustAdapter(LanguageAdapter):
         self,
         dep_parsers: list[DependencyFileParser] | None = None,
         resolver: SymbolResolver | None = None,
+        boundary_extractors: list[RustBoundaryExtractor] | None = None,
     ) -> None:
         """Initialise with optional custom dep parsers and resolver."""
         self._dep_parsers = (
@@ -56,6 +64,11 @@ class RustAdapter(LanguageAdapter):
         )
         self._resolver = (
             resolver if resolver is not None else RustResolver()
+        )
+        self._boundary_extractors = (
+            boundary_extractors
+            if boundary_extractors is not None
+            else RUST_DEFAULT_BOUNDARY_EXTRACTORS
         )
 
     def language(self) -> str:
@@ -80,7 +93,12 @@ class RustAdapter(LanguageAdapter):
 
         if files is not None:
             _analyze_root(
-                graph, project_root, project_root, files, self._dep_parsers
+                graph,
+                project_root,
+                project_root,
+                files,
+                self._dep_parsers,
+                self._boundary_extractors,
             )
             self._resolver.prepare(project_root, files)
             statuses.append(self._resolver.status())
@@ -96,6 +114,7 @@ class RustAdapter(LanguageAdapter):
                     crate_root,
                     root_files,
                     self._dep_parsers,
+                    self._boundary_extractors,
                 )
                 self._resolver.prepare(crate_root, root_files)
                 statuses.append(self._resolver.status())
@@ -125,12 +144,13 @@ def _module_qname(file: Path, crate_root: Path, crate_name: str) -> str:
     return "::".join([crate_name, *parts]) if parts else crate_name
 
 
-def _analyze_root(
+def _analyze_root(  # noqa: PLR0913
     graph: GraphLens,
     project_root: Path,
     crate_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
+    boundary_extractors: list[RustBoundaryExtractor],
 ) -> None:
     """Analyse one Rust crate root and populate ``graph`` in place."""
     crate_name = read_crate_name(crate_root) or crate_root.name
@@ -157,6 +177,7 @@ def _analyze_root(
         )
 
     modules: dict[str, str] = {}
+    parsed_files: list[tuple[str, str, TSNode]] = []
     for file in files:
         module_qname = _module_qname(file, crate_root, crate_name)
         module_id = _ensure_module(
@@ -170,15 +191,104 @@ def _analyze_root(
         except OSError as exc:
             logger.warning("Cannot read %s: %s — skipping", file, exc)
             continue
+        file_rel = graph.nodes[file_id].qualified_name
         ctx = RustFileContext(
             project_name=crate_name,
             module_qname=module_qname,
             file_id=file_id,
-            file_rel=graph.nodes[file_id].qualified_name,
+            file_rel=file_rel,
         )
-        RustStructureExtractor(graph, ctx, classify).extract(
-            parse_rust(source).root_node
+        root = parse_rust(source).root_node
+        RustStructureExtractor(graph, ctx, classify).extract(root)
+        parsed_files.append((file_rel, file_id, root))
+
+    _extract_boundaries(graph, parsed_files, boundary_extractors)
+
+
+def _extract_boundaries(
+    graph: GraphLens,
+    parsed_files: list[tuple[str, str, TSNode]],
+    extractors: list[RustBoundaryExtractor],
+) -> None:
+    """Run boundary extractors and emit BOUNDARY nodes + EXPOSES/CONSUMES."""
+    if not extractors:
+        return
+    enclosers: dict[str, list[Node]] = {}
+    for node in graph.nodes.values():
+        if (
+            node.kind in (NodeKind.FUNCTION, NodeKind.METHOD)
+            and node.span is not None
+            and node.file_path is not None
+        ):
+            enclosers.setdefault(node.file_path, []).append(node)
+
+    for file_rel, file_id, root in parsed_files:
+        candidates = enclosers.get(file_rel, [])
+        for extractor in extractors:
+            for ref in extractor.extract(root):
+                enclosing_id = (
+                    _innermost_enclosing(candidates, ref.line, ref.col)
+                    or file_id
+                )
+                _add_boundary(graph, enclosing_id, ref)
+
+
+def _innermost_enclosing(
+    candidates: list[Node], line: int, col: int
+) -> str | None:
+    """Return the id of the deepest function/method containing (line, col)."""
+    best_id: str | None = None
+    best_start: tuple[int, int] | None = None
+    for node in candidates:
+        span = node.span
+        if span is None:
+            continue  # pragma: no cover - filtered before insertion
+        start = (span.start_line, span.start_col)
+        end = (span.end_line, span.end_col)
+        if start <= (line, col) <= end and (
+            best_start is None or start >= best_start
+        ):
+            best_id = node.id
+            best_start = start
+    return best_id
+
+
+def _add_boundary(
+    graph: GraphLens, enclosing_id: str, ref: BoundaryRef
+) -> None:
+    boundary_id = make_boundary_id(ref.mechanism, ref.key)
+    if boundary_id not in graph.nodes:
+        graph.add_node(
+            Node(
+                id=boundary_id,
+                kind=NodeKind.BOUNDARY,
+                qualified_name=f"{ref.mechanism}:{ref.key}",
+                name=ref.key,
+                metadata={"mechanism": ref.mechanism, "key": ref.key},
+            )
         )
+    kind = (
+        RelationKind.EXPOSES
+        if ref.role == "server"
+        else RelationKind.CONSUMES
+    )
+    metadata: dict[str, object] = {
+        "mechanism": ref.mechanism,
+        "key": ref.key,
+        "confidence": ref.confidence,
+        "role": ref.role,
+        "line": ref.line,
+        "col": ref.col,
+    }
+    metadata.update(ref.detail)
+    graph.add_relation(
+        Relation(
+            source_id=enclosing_id,
+            target_id=boundary_id,
+            kind=kind,
+            metadata=metadata,
+        )
+    )
 
 
 def _ensure_module(
