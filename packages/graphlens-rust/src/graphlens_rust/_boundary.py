@@ -171,6 +171,76 @@ class HttpClientExtractor(RustBoundaryExtractor):
         return refs
 
 
+# gRPC (tonic): a client is built from a generated ``<Service>Client`` type
+# via ``UserServiceClient::new(channel)`` or ``::connect(addr).await``; its
+# methods are snake_case (``get_user``) and map to the PascalCase proto RPC.
+_Q_LET_IDENT = """
+(let_declaration
+  pattern: (identifier) @var
+  value: (_) @value)
+"""
+_GRPC_CTORS = frozenset({"new", "connect"})
+_GRPC_CLIENT = "Client"
+
+
+def _snake_to_pascal(name: str) -> str:
+    """``get_user`` -> ``GetUser`` so Rust keys line up with Go/Python."""
+    return "".join(part[:1].upper() + part[1:] for part in name.split("_"))
+
+
+def _grpc_service_from_value(value: TSNode) -> str | None:
+    """Return the service from a ``<Service>Client::new`` ctor under value."""
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        if node.type == "scoped_identifier" and (
+            _text(node.child_by_field_name("name")) in _GRPC_CTORS
+        ):
+            last = _text(
+                node.child_by_field_name("path")
+            ).rsplit("::", 1)[-1]
+            if last.endswith(_GRPC_CLIENT) and len(last) > len(_GRPC_CLIENT):
+                return last[: -len(_GRPC_CLIENT)]
+        stack.extend(node.children)
+    return None
+
+
+def _grpc_ref(service: str, method: str, node: TSNode) -> BoundaryRef:
+    line, col = _pos(node)
+    return BoundaryRef(
+        mechanism="grpc",
+        role="client",
+        key=f"{service}/{method}",
+        line=line,
+        col=col,
+        confidence=0.85,
+        detail={"service": service, "method": method},
+    )
+
+
+class GrpcExtractor(RustBoundaryExtractor):
+    """tonic gRPC client calls on a generated ``<Service>Client`` stub."""
+
+    def mechanism(self) -> str:
+        return "grpc"
+
+    def extract(self, root: TSNode) -> list[BoundaryRef]:
+        clients: dict[str, str] = {}
+        for caps in run_query(_Q_LET_IDENT, root):
+            service = _grpc_service_from_value(caps["value"][0])
+            if service is not None:
+                clients[_text(caps["var"][0])] = service
+        return [
+            _grpc_ref(
+                service,
+                _snake_to_pascal(_text(caps["method"][0])),
+                caps["method"][0],
+            )
+            for caps in run_query(_Q_METHOD_CALL, root)
+            if (service := clients.get(_text(caps["recv"][0]))) is not None
+        ]
+
+
 def _queue_role(method: str) -> str | None:
     """Map a queue method name to a boundary role, else None."""
     if method in ("publish", "produce"):
@@ -214,4 +284,5 @@ RUST_DEFAULT_BOUNDARY_EXTRACTORS: list[RustBoundaryExtractor] = [
     HttpServerExtractor(),
     HttpClientExtractor(),
     QueueExtractor(),
+    GrpcExtractor(),
 ]

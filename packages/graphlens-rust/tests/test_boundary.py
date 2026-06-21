@@ -18,9 +18,11 @@ from graphlens_rust._adapter import (
 )
 from graphlens_rust._boundary import (
     RUST_DEFAULT_BOUNDARY_EXTRACTORS,
+    GrpcExtractor,
     HttpClientExtractor,
     HttpServerExtractor,
     QueueExtractor,
+    _snake_to_pascal,
     _string_content,
     _text,
 )
@@ -141,6 +143,53 @@ class TestClient:
         assert self.ex.extract(_root(code)) == []
 
 
+class TestGrpc:
+    ex = GrpcExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "grpc"
+
+    def test_new_client_calls_are_clients(self):
+        code = (
+            "fn run() {\n"
+            "  let mut client = pb::UserServiceClient::new(conn);\n"
+            "  let other = Other::new(z);\n"
+            "  let a = client.get_user(req).await;\n"
+            "  let b = other.foo(req).await;\n"
+            "  let c = client.list_orders(req).await;\n"
+            "  let d = client.ping(req).await;\n"
+            "}\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "client") == {
+            "UserService/GetUser",
+            "UserService/ListOrders",
+            "UserService/Ping",
+        }
+
+    def test_connect_constructor(self):
+        code = (
+            "fn run() {\n"
+            "  let client = OrderServiceClient::connect(addr).await?;\n"
+            "  let r = client.place_order(req).await?;\n"
+            "}\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "client") == {
+            "OrderService/PlaceOrder"
+        }
+
+    def test_bare_client_suffix_ignored(self):
+        code = _fn("let c = Client::new(conn); let r = c.get_user(req);")
+        assert self.ex.extract(_root(code)) == []
+
+    def test_non_ctor_scoped_call_ignored(self):
+        code = _fn("let x = foo::Bar::baz(y); let r = x.get_user(req);")
+        assert self.ex.extract(_root(code)) == []
+
+    def test_no_grpc_client(self):
+        code = _fn('let r = client.get("/x");')
+        assert self.ex.extract(_root(code)) == []
+
+
 class TestQueue:
     ex = QueueExtractor()
 
@@ -184,6 +233,12 @@ class TestHelpers:
     def test_string_content_non_string(self):
         node = _find(_root("fn f() { let x = 1; }\n"), "integer_literal")
         assert _string_content(node) is None
+
+    def test_snake_to_pascal_multi(self):
+        assert _snake_to_pascal("get_user") == "GetUser"
+
+    def test_snake_to_pascal_single(self):
+        assert _snake_to_pascal("ping") == "Ping"
 
 
 # --------------------------------------------------------------------------
