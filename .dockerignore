@@ -17,3 +17,4 @@ build
 !packages/**/*.json
 docs
 examples/*.html
+benchmarks

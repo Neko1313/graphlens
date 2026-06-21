@@ -1,0 +1,33 @@
+{
+  "_comment": "Load-benchmark targets. One representative real-world project per adapter, pinned to a tag for reproducibility. Edit freely — the workflow loops over every entry. 'ref' may be a tag or branch; if it has gone missing the run falls back to the default branch and reports the actual commit SHA.",
+  "projects": [
+    {
+      "name": "apache/superset",
+      "repo": "https://github.com/apache/superset",
+      "ref": "4.1.1",
+      "langs": ["python"],
+      "description": "Data exploration & visualization platform (Flask)"
+    },
+    {
+      "name": "casdoor/casdoor",
+      "repo": "https://github.com/casdoor/casdoor",
+      "ref": "v1.811.0",
+      "langs": ["go"],
+      "description": "Identity & access management / SSO (Go)"
+    },
+    {
+      "name": "BurntSushi/ripgrep",
+      "repo": "https://github.com/BurntSushi/ripgrep",
+      "ref": "14.1.1",
+      "langs": ["rust"],
+      "description": "Recursive line-oriented search tool (Rust)"
+    },
+    {
+      "name": "colinhacks/zod",
+      "repo": "https://github.com/colinhacks/zod",
+      "ref": "v3.23.8",
+      "langs": ["typescript"],
+      "description": "TypeScript-first schema validation library"
+    }
+  ]
+}

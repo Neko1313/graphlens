@@ -1,0 +1,139 @@
+name: Benchmark
+
+# Load benchmark: analyse large real-world projects inside the published
+# image and refresh the `## Benchmarks` block in README.md. Report-only —
+# it never gates a release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to benchmark (e.g. latest or 0.5.0)"
+        default: "latest"
+
+permissions:
+  contents: write
+  packages: read
+
+# Never run two benchmark commits against main at once, and never cancel a
+# release benchmark midway.
+concurrency:
+  group: benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image tag
+        id: img
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
+            tag="${tag#v}"
+          else
+            tag="${{ github.event.inputs.image_tag }}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/neko1313/graphlens:${tag}" >> "$GITHUB_OUTPUT"
+          echo "Benchmarking image ghcr.io/neko1313/graphlens:${tag}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image (waits for the release build to finish)
+        run: |
+          image="${{ steps.img.outputs.image }}"
+          for attempt in $(seq 1 30); do
+            if docker pull "$image"; then
+              echo "Pulled $image"
+              exit 0
+            fi
+            echo "Attempt ${attempt}/30: $image not ready yet, waiting 60s…"
+            sleep 60
+          done
+          echo "::error::image $image never became available"
+          exit 1
+
+      - name: Run benchmarks
+        run: |
+          image="${{ steps.img.outputs.image }}"
+          rm -rf benchmarks/results
+          mkdir -p benchmarks/results
+          mapfile -t projects < <(python3 benchmarks/run_benchmarks.py list)
+          echo "Projects: ${projects[*]}"
+          for name in "${projects[@]}"; do
+            safe="${name//\//__}"
+            echo "::group::benchmark ${name}"
+            docker run --rm \
+              -v "$PWD:/repo" -w /repo \
+              --entrypoint python \
+              "$image" \
+              benchmarks/run_benchmarks.py analyze \
+                --project "$name" \
+                --manifest /repo/benchmarks/projects.json \
+                --workdir /tmp/bench \
+                --out "/repo/benchmarks/results/${safe}.json" \
+              || echo "::warning::benchmark for ${name} exited non-zero"
+            echo "::endgroup::"
+          done
+
+      - name: Render results
+        run: |
+          python3 benchmarks/run_benchmarks.py render \
+            --results benchmarks/results \
+            --readme README.md \
+            --image-tag "${{ steps.img.outputs.tag }}"
+          {
+            echo "## graphlens benchmark — ${{ steps.img.outputs.tag }}"
+            echo
+            python3 benchmarks/run_benchmarks.py render \
+              --results benchmarks/results \
+              --image-tag "${{ steps.img.outputs.tag }}" \
+              --print
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results
+          path: benchmarks/results/
+
+      - name: Commit refreshed README to main
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "README unchanged — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs(bench): refresh benchmark metrics for ${{ steps.img.outputs.tag }} [skip ci]"
+          for i in 1 2 3 4; do
+            if git push origin HEAD:main; then
+              echo "Pushed README update"
+              exit 0
+            fi
+            echo "Push failed, rebasing and retrying…"
+            git pull --rebase origin main || true
+            sleep "$((2 ** i))"
+          done
+          echo "::error::could not push README update to main"
+          exit 1

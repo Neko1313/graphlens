@@ -39,6 +39,19 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 - **Monorepo aware** — `can_handle()` and `find_*_roots()` handle multi-language repos correctly
 - **Deterministic node IDs** — SHA-256 hash of `project::kind::qualified_name` → stable across re-scans
 
+## Benchmarks
+
+Analysis throughput on large real-world projects, refreshed automatically on
+every release — one cold run per project inside the published Docker image
+(so the numbers reflect exactly the toolchain users get). See
+[`benchmarks/`](benchmarks/) to reproduce locally or add a project.
+
+<!-- BENCH:START -->
+
+_No benchmark run has been published yet — metrics appear here after the next release._
+
+<!-- BENCH:END -->
+
 ## Documentation
 
 Full product documentation lives at **<https://Neko1313.github.io/graphlens/>**
