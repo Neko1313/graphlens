@@ -52,6 +52,11 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install rust-analyzer (semantic resolver for TCK-12)
+        run: |
+          rustup component add rust-analyzer
+          echo "$(dirname "$(rustup which rust-analyzer)")" >> "$GITHUB_PATH"
+
       - name: Install dependencies
         run: task install
 
