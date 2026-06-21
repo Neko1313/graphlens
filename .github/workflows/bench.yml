@@ -25,7 +25,7 @@ concurrency:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
@@ -81,7 +81,9 @@ jobs:
           for name in "${projects[@]}"; do
             safe="${name//\//__}"
             echo "::group::benchmark ${name}"
-            docker run --rm \
+            # Bound each project so one hung resolver can't burn the whole job
+            # or lose the other results (report-only: a miss just omits a row).
+            timeout --signal=TERM 1500 docker run --rm \
               -v "$PWD:/repo" -w /repo \
               --entrypoint python \
               "$image" \
@@ -90,7 +92,7 @@ jobs:
                 --manifest /repo/benchmarks/projects.json \
                 --workdir /tmp/bench \
                 --out "/repo/benchmarks/results/${safe}.json" \
-              || echo "::warning::benchmark for ${name} exited non-zero"
+              || echo "::warning::benchmark for ${name} failed or timed out"
             echo "::endgroup::"
           done
 
