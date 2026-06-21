@@ -42,6 +42,41 @@ _RA_INIT_OPTIONS: dict = {  # type: ignore[type-arg]
 }
 
 
+def _resolve_ra_binary() -> str:
+    """
+    Resolve the real rust-analyzer binary, bypassing the rustup proxy.
+
+    ``rust-analyzer`` on PATH is usually a rustup *proxy* that honours a
+    project's ``rust-toolchain.toml``. When the pinned toolchain lacks the
+    rust-analyzer component (e.g. ruff pins ``1.96`` without it), the proxy
+    exits with ``Unknown binary 'rust-analyzer'`` and resolution silently
+    yields nothing. Resolving the concrete binary for a toolchain that *does*
+    have the component — via ``rustup which`` from a neutral directory (no
+    ``rust-toolchain.toml``) — and spawning it directly sidesteps that switch.
+    Falls back to the PATH entry when rustup is absent (a standalone install).
+    """
+    direct = shutil.which("rust-analyzer")
+    rustup = shutil.which("rustup")
+    if rustup is not None:
+        with contextlib.suppress(Exception):
+            env = {
+                k: v for k, v in os.environ.items() if k != "RUSTUP_TOOLCHAIN"
+            }
+            out = subprocess.run(
+                [rustup, "which", "rust-analyzer"],
+                cwd=tempfile.gettempdir(),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                env=env,
+            )
+            path = out.stdout.strip()
+            if out.returncode == 0 and path and Path(path).is_file():
+                return path
+    return direct or "rust-analyzer"
+
+
 def _uri_to_path(uri: str) -> Path | None:
     """Convert a ``file://`` URI to a ``Path``; None for other schemes."""
     if not uri.startswith("file://"):
@@ -100,7 +135,7 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
     """Minimal synchronous LSP JSON-RPC client for ``rust-analyzer``."""
 
     def __init__(self, project_root: Path) -> None:
-        ra_bin = shutil.which("rust-analyzer") or "rust-analyzer"
+        ra_bin = _resolve_ra_binary()
         # Capture stderr to a temp file (not DEVNULL) so a workspace that fails
         # to load — rust-analyzer exiting/panicking, e.g. on ruff — leaves a
         # diagnosable trail. A real file never blocks the child the way an
