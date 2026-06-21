@@ -109,11 +109,12 @@ class GoAdapter(LanguageAdapter):
             )
             statuses.append(self._resolver.status())
         else:
-            for go_root in find_go_roots(project_root):
+            roots = find_go_roots(project_root)
+            for go_root in roots:
                 root_files = filter_nested_root_files(
                     self.collect_files(go_root),
                     go_root,
-                    find_go_roots(project_root),
+                    roots,
                 )
                 _analyze_root(
                     graph,
@@ -174,6 +175,7 @@ def _analyze_root(  # noqa: PLR0913
     packages: dict[str, str] = {}
     parsed_files: list[tuple[str, str, TSNode]] = []
     occurrences: list[tuple[str, OccurrenceRef]] = []
+    internal_imports: list[tuple[str, str]] = []
     for file in files:
         pkg_qname = _package_qname(file, go_root, module_path)
         module_id = _ensure_package(
@@ -201,6 +203,11 @@ def _analyze_root(  # noqa: PLR0913
         occurrences.extend(
             (str(file), occ) for occ in extractor.occurrences
         )
+        internal_imports.extend(extractor.internal_imports)
+
+    # Bind internal imports to the MODULE node they reference (now that every
+    # package exists), falling back to an EXTERNAL_SYMBOL when none matches.
+    _resolve_internal_imports(graph, project_name, internal_imports, packages)
 
     # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
     span_index = SpanIndex.from_graph(graph)
@@ -210,6 +217,31 @@ def _analyze_root(  # noqa: PLR0913
     )
 
     _extract_boundaries(graph, parsed_files, boundary_extractors)
+
+
+def _resolve_internal_imports(
+    graph: GraphLens,
+    project_name: str,
+    internal_imports: list[tuple[str, str]],
+    packages: dict[str, str],
+) -> None:
+    """
+    Resolve each ``internal`` import to its MODULE node (per CLAUDE.md §9).
+
+    A Go import path of an internal package equals that package's qualified
+    name, so a direct lookup binds ``RESOLVES_TO`` to the real MODULE node.
+    Imports whose package was not analyzed fall back to an EXTERNAL_SYMBOL so
+    the edge is never missing.
+    """
+    for imp_id, import_path in internal_imports:
+        target_id = packages.get(import_path)
+        if target_id is None:
+            target_id = _ensure_external_symbol(
+                graph, project_name, import_path, "internal"
+            )
+        graph.add_relation(
+            Relation(imp_id, target_id, RelationKind.RESOLVES_TO)
+        )
 
 
 def _ensure_external_symbol(
@@ -374,7 +406,12 @@ def _add_boundary(
 
 
 def _package_qname(file: Path, go_root: Path, module_path: str) -> str:
-    rel_dir = file.parent.relative_to(go_root)
+    try:
+        rel_dir = file.parent.relative_to(go_root)
+    except ValueError:
+        # A file passed explicitly (incremental update) that lives outside
+        # the module root — treat it as the root package rather than crash.
+        return module_path
     if str(rel_dir) == ".":
         return module_path
     return f"{module_path}/{rel_dir.as_posix()}"

@@ -118,15 +118,15 @@ def run_analysis(
             typer.echo(f"  [{lang}] analysing {root} …")
         adapter = load_adapter(lang)
         g = adapter.analyze(root)
-        statuses.append(
-            ResolverStatus(
-                str(
-                    g.metadata.get(
-                        RESOLVER_STATUS_KEY, ResolverStatus.OK.value
-                    )
-                )
+        raw_status = g.metadata.get(RESOLVER_STATUS_KEY)
+        status = (
+            ResolverStatus.OK
+            if raw_status is None
+            else ResolverStatus.from_value(
+                raw_status, default=ResolverStatus.DEGRADED
             )
         )
+        statuses.append(status)
         if verbose:
             typer.echo(
                 f"  [{lang}] {len(g.nodes)} nodes,"

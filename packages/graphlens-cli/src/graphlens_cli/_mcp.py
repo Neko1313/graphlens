@@ -157,18 +157,49 @@ def _build_server(graph: GraphLens):  # noqa: ANN202  # pragma: no cover
     )
 
     server = FastMCP("graphlens")
-    server.tool(name="stats")(lambda: graph_stats(graph))
-    server.tool(name="find")(lambda name: find_nodes(graph, name))
-    server.tool(name="callers")(lambda node: callers(graph, node))
-    server.tool(name="callees")(lambda node: callees(graph, node))
-    server.tool(name="references")(lambda node: references(graph, node))
-    server.tool(name="neighbors")(
-        lambda node, depth=1: neighbors(graph, node, depth)
-    )
-    server.tool(name="communicates_with")(
-        lambda: communicates_with(graph)
-    )
-    server.tool(name="boundaries")(lambda: boundaries(graph))
+
+    # Typed wrappers (not lambdas) so FastMCP derives correct input schemas
+    # — e.g. ``depth`` is advertised as an int, ``node``/``name`` as strings.
+    @server.tool(name="stats")
+    def stats_tool() -> dict[str, object]:
+        """Return node/relation counts and the resolver status."""
+        return graph_stats(graph)
+
+    @server.tool(name="find")
+    def find_tool(name: str) -> list[dict[str, object]]:
+        """Find nodes whose short or qualified name matches ``name``."""
+        return find_nodes(graph, name)
+
+    @server.tool(name="callers")
+    def callers_tool(node: str) -> list[dict[str, object]]:
+        """Return functions/methods that call ``node`` (id or name)."""
+        return callers(graph, node)
+
+    @server.tool(name="callees")
+    def callees_tool(node: str) -> list[dict[str, object]]:
+        """Return functions/methods that ``node`` (id or name) calls."""
+        return callees(graph, node)
+
+    @server.tool(name="references")
+    def references_tool(node: str) -> list[dict[str, object]]:
+        """Return nodes that reference ``node`` (id or name)."""
+        return references(graph, node)
+
+    @server.tool(name="neighbors")
+    def neighbors_tool(node: str, depth: int = 1) -> list[dict[str, object]]:
+        """Return nodes within ``depth`` hops of ``node`` (id or name)."""
+        return neighbors(graph, node, depth)
+
+    @server.tool(name="communicates_with")
+    def communicates_with_tool() -> list[dict[str, object]]:
+        """Return cross-language ``COMMUNICATES_WITH`` edges."""
+        return communicates_with(graph)
+
+    @server.tool(name="boundaries")
+    def boundaries_tool() -> list[dict[str, object]]:
+        """Return all cross-language boundary contracts in the graph."""
+        return boundaries(graph)
+
     return server
 
 

@@ -230,15 +230,26 @@ class GrpcExtractor(RustBoundaryExtractor):
             service = _grpc_service_from_value(caps["value"][0])
             if service is not None:
                 clients[_text(caps["var"][0])] = service
-        return [
-            _grpc_ref(
-                service,
-                _snake_to_pascal(_text(caps["method"][0])),
-                caps["method"][0],
+        refs: list[BoundaryRef] = []
+        for caps in run_query(_Q_METHOD_CALL, root):
+            service = clients.get(_text(caps["recv"][0]))
+            if service is None:
+                continue
+            method = _text(caps["method"][0])
+            # An HTTP-verb method whose argument is a URL string literal is a
+            # reqwest-style HTTP call (handled by HttpClientExtractor), not a
+            # gRPC RPC — a gRPC RPC takes a request message, never a URL.
+            url = _first_string(caps["args"][0])
+            if method.lower() in _HTTP_VERBS and url is not None and (
+                url.startswith("/") or "://" in url
+            ):
+                continue
+            refs.append(
+                _grpc_ref(
+                    service, _snake_to_pascal(method), caps["method"][0]
+                )
             )
-            for caps in run_query(_Q_METHOD_CALL, root)
-            if (service := clients.get(_text(caps["recv"][0]))) is not None
-        ]
+        return refs
 
 
 def _queue_role(method: str) -> str | None:

@@ -41,16 +41,17 @@ def link_graph(graph: GraphLens, *, min_confidence: float = 0.0) -> LinkResult:
     ``consumer -> provider`` edge carrying the boundary's ``mechanism`` and
     the product of the two sides' confidences.
 
-    The graph is mutated in place.  The pass is idempotent: an edge with the
-    same ``(source, target, mechanism)`` is never added twice, so it is safe
-    to run after re-analyzing part of the graph.  Pairs whose combined
-    confidence is below ``min_confidence`` are skipped.
+    The graph is mutated in place.  The pass is idempotent: an edge for the
+    same ``(source, target, boundary)`` is never added twice, so it is safe
+    to run after re-analyzing part of the graph.  Two distinct boundaries
+    between the same consumer/provider pair each get their own edge.  Pairs
+    whose combined confidence is below ``min_confidence`` are skipped.
     """
     added = 0
     linked = 0
     boundaries = graph.nodes_by_kind(NodeKind.BOUNDARY)
     existing: set[tuple[str, str, str]] = {
-        (r.source_id, r.target_id, str(r.metadata.get("mechanism", "")))
+        (r.source_id, r.target_id, str(r.metadata.get("boundary_id", "")))
         for r in graph.relations
         if r.kind == RelationKind.COMMUNICATES_WITH
     }
@@ -71,7 +72,11 @@ def link_graph(graph: GraphLens, *, min_confidence: float = 0.0) -> LinkResult:
                 ) * _as_float(provider.metadata.get("confidence"))
                 if confidence < min_confidence:
                     continue
-                dedupe = (consumer.source_id, provider.source_id, mechanism)
+                dedupe = (
+                    consumer.source_id,
+                    provider.source_id,
+                    boundary.id,
+                )
                 if dedupe in existing:
                     continue
                 existing.add(dedupe)

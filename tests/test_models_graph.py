@@ -122,3 +122,15 @@ def test_merge_non_empty_into_empty() -> None:
     g2.add_node(n)
     g1.merge(g2)
     assert n.id in g1.nodes
+
+
+def test_merge_keeps_worst_resolver_status() -> None:
+    from graphlens import RESOLVER_STATUS_KEY, ResolverStatus
+
+    g1 = GraphLens()
+    g1.metadata[RESOLVER_STATUS_KEY] = ResolverStatus.UNAVAILABLE.value
+    g2 = GraphLens()
+    g2.metadata[RESOLVER_STATUS_KEY] = ResolverStatus.OK.value
+    g1.merge(g2)
+    # A degraded side must not be masked by a later OK graph.
+    assert g1.metadata[RESOLVER_STATUS_KEY] == ResolverStatus.UNAVAILABLE.value

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from graphlens.utils.serde import encode_metadata
 
 if TYPE_CHECKING:
     from graphlens.models.graph import GraphLens
@@ -33,8 +36,21 @@ class GraphDiff:
         )
 
 
-def _relation_key(relation: Relation) -> tuple[str, str, str]:
-    return (relation.source_id, relation.target_id, relation.kind.value)
+def _relation_key(relation: Relation) -> tuple[str, str, str, str]:
+    # Include a stable encoding of metadata so that (a) two distinct
+    # relations between the same pair (e.g. CALLS from two call sites with
+    # different spans) are not collapsed into one, and (b) a metadata-only
+    # change to an edge is detected, symmetric with node diffing which
+    # compares full content.
+    meta = json.dumps(
+        encode_metadata(relation.metadata), sort_keys=True, default=str
+    )
+    return (
+        relation.source_id,
+        relation.target_id,
+        relation.kind.value,
+        meta,
+    )
 
 
 def diff_graphs(old: GraphLens, new: GraphLens) -> GraphDiff:

@@ -9,6 +9,7 @@ import os
 import select
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -26,6 +27,23 @@ def _uri_to_path(uri: str) -> Path | None:
     if not uri.startswith("file://"):
         return None
     return Path(unquote(uri[7:]))
+
+
+def _safe_resolve(path: Path) -> Path:
+    """Best-effort ``Path.resolve()`` that never raises."""
+    try:
+        return path.resolve()
+    except OSError:  # pragma: no cover - platform dependent
+        return path
+
+
+def _within(path: Path, base: Path) -> bool:
+    """Return True if *path* is inside *base*, comparing resolved forms."""
+    try:
+        path.relative_to(_safe_resolve(base))
+    except ValueError:
+        return False
+    return True
 
 
 def _in_cargo_registry(parts: tuple[str, ...]) -> bool:
@@ -192,7 +210,38 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
                     },
                 },
             )
+            # Let rust-analyzer finish analyzing the file before the first
+            # query. Without this, a definition request sent immediately
+            # after didOpen blocks on background indexing and can hit the
+            # timeout, silently yielding no edges.
+            self._drain_for_diagnostics(uri)
         return uri
+
+    def _drain_for_diagnostics(self, uri: str, timeout: float = 10.0) -> None:
+        """Drain until publishDiagnostics for *uri* arrives (or timeout)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            msg = self._read_one(timeout=min(deadline - time.monotonic(), 1.0))
+            if msg is None:
+                break
+            method = msg.get("method", "")
+            msg_id = msg.get("id")
+            if method and msg_id is not None:
+                self._write(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {
+                            "code": -32601,
+                            "message": "Method not found",
+                        },
+                    }
+                )
+            elif (
+                method == "textDocument/publishDiagnostics"
+                and msg.get("params", {}).get("uri") == uri
+            ):
+                return
 
     def definition(
         self, file: Path, line: int, col: int
@@ -345,15 +394,17 @@ class RustAnalyzerResolver(SymbolResolver):
     def _classify(self, file_path: Path | None) -> str:
         if file_path is None:
             return "unknown"
-        parts = file_path.parts
+        # rust-analyzer may return a canonicalized (symlink-resolved) path;
+        # resolve both sides so a symlinked workspace still classifies
+        # internal definitions as "internal" rather than "unknown".
+        resolved = _safe_resolve(file_path)
+        parts = resolved.parts
         if _in_cargo_registry(parts):
             return "third_party"
         if _in_rust_stdlib(parts):
             return "stdlib"
-        if self._root is not None:
-            with contextlib.suppress(ValueError):
-                file_path.relative_to(self._root)
-                return "internal"
+        if self._root is not None and _within(resolved, self._root):
+            return "internal"
         return "unknown"
 
     def __del__(self) -> None:

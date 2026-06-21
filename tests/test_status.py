@@ -29,3 +29,16 @@ def test_combine_returns_worst() -> None:
         )
         is ResolverStatus.UNAVAILABLE
     )
+
+
+def test_from_value_roundtrips_known_values() -> None:
+    assert ResolverStatus.from_value("degraded") is ResolverStatus.DEGRADED
+    assert ResolverStatus.from_value(ResolverStatus.OK) is ResolverStatus.OK
+
+
+def test_from_value_garbage_uses_default() -> None:
+    assert ResolverStatus.from_value("bogus") is ResolverStatus.UNAVAILABLE
+    assert (
+        ResolverStatus.from_value("bogus", default=ResolverStatus.OK)
+        is ResolverStatus.OK
+    )

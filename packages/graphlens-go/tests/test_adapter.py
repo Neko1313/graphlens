@@ -3,7 +3,12 @@
 from pathlib import Path
 
 import pytest
-from graphlens import RESOLVER_STATUS_KEY, AdapterError, NodeKind
+from graphlens import (
+    RESOLVER_STATUS_KEY,
+    AdapterError,
+    NodeKind,
+    RelationKind,
+)
 
 from graphlens_go import GoAdapter
 
@@ -62,7 +67,39 @@ def test_import_origins(sample_go_project: Path):
     }
     assert "stdlib" in origins
     assert "third_party" in origins
-    assert "internal" in origins
+
+
+def test_internal_import_resolves_to_module(sample_go_project: Path):
+    # `example.com/demo/util` binds RESOLVES_TO the real util MODULE node
+    # rather than an EXTERNAL_SYMBOL (CLAUDE.md §9).
+    graph = GoAdapter().analyze(sample_go_project)
+    imp = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind == NodeKind.IMPORT
+        and n.name == "example.com/demo/util"
+    )
+    targets = [
+        graph.nodes[r.target_id]
+        for r in graph.outgoing(imp.id, RelationKind.RESOLVES_TO)
+    ]
+    assert any(
+        t.kind == NodeKind.MODULE
+        and t.qualified_name == "example.com/demo/util"
+        for t in targets
+    )
+
+
+def test_package_qname_outside_root_does_not_crash(tmp_path: Path):
+    # A file passed explicitly that lives outside the module root must not
+    # raise (it falls back to the root package).
+    from graphlens_go._adapter import _package_qname
+
+    outside = tmp_path / "elsewhere" / "x.go"
+    assert (
+        _package_qname(outside, tmp_path / "proj", "example.com/m")
+        == "example.com/m"
+    )
 
 
 def test_explicit_files(sample_go_project: Path):

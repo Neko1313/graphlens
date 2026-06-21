@@ -33,6 +33,24 @@ def test_function():
     assert "foo" in _names(_extract("pub fn foo() {}\n"), NodeKind.FUNCTION)
 
 
+def test_inline_module_items_extracted():
+    # Items inside `mod foo { ... }` must not be dropped (idiomatic Rust).
+    g = _extract("pub mod handlers { pub fn create() {} struct Repo {} }\n")
+    assert "create" in _names(g, NodeKind.FUNCTION)
+    assert "Repo" in _names(g, NodeKind.CLASS)
+
+
+def test_inline_module_nested_qname():
+    g = _extract("mod a { fn inner() {} }\n")
+    inner = next(n for n in g.nodes.values() if n.name == "inner")
+    assert inner.qualified_name == "crate::m::a::inner"
+
+
+def test_bodyless_module_declaration_no_crash():
+    # `mod util;` (external-file module) has no inline items to walk.
+    assert _names(_extract("mod util;\n"), NodeKind.FUNCTION) == set()
+
+
 def test_types_become_classes():
     g = _extract("struct S{} enum E{} trait T{} union U{ a: u8 }\n")
     assert {"S", "E", "T", "U"} <= _names(g, NodeKind.CLASS)

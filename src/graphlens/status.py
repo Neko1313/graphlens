@@ -29,3 +29,22 @@ class ResolverStatus(enum.Enum):
         if not statuses:
             return cls.OK
         return max(statuses, key=lambda s: order[s])
+
+    @classmethod
+    def from_value(
+        cls, value: object, default: ResolverStatus | None = None
+    ) -> ResolverStatus:
+        """
+        Coerce a stored ``.value`` back to a status, tolerating junk.
+
+        Returns ``default`` (or ``UNAVAILABLE``) for an unrecognized value so
+        a foreign or hand-edited graph's ``resolver_status`` never raises
+        ``ValueError``.
+        """
+        fallback = cls.UNAVAILABLE if default is None else default
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value))
+        except ValueError:
+            return fallback

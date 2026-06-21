@@ -115,13 +115,40 @@ class RustStructureExtractor:
         self._ctx = ctx
         self._classify = classify
         self.occurrences: list[OccurrenceRef] = []
+        # (import_node_id, import_path, importing_module_qname) for
+        # ``internal`` imports, resolved to the real MODULE node by the
+        # adapter once every module exists.
+        self.internal_imports: list[tuple[str, str, str]] = []
 
     def extract(self, root: TSNode) -> None:
         """Dispatch each top-level item to its ``_on_<type>`` handler."""
-        for child in root.children:
+        self._dispatch(root)
+
+    def _dispatch(self, node: TSNode) -> None:
+        """Dispatch each direct child of ``node`` to its handler."""
+        for child in node.children:
             handler = getattr(self, f"_on_{child.type}", None)
             if handler is not None:
                 handler(child)
+
+    def _on_mod_item(self, node: TSNode) -> None:
+        """
+        Recurse into an inline ``mod foo { ... }`` with a nested scope.
+
+        Without this, every item inside an inline module (idiomatic Rust,
+        e.g. ``#[cfg(test)] mod tests { ... }``) would be silently dropped.
+        A bodyless ``mod foo;`` (external-file module) has nothing to walk.
+        """
+        name_node = node.child_by_field_name("name")
+        body = node.child_by_field_name("body")
+        if name_node is None or body is None:
+            return
+        outer = self._ctx.module_qname
+        self._ctx.module_qname = f"{outer}::{_text(name_node)}"
+        try:
+            self._dispatch(body)
+        finally:
+            self._ctx.module_qname = outer
 
     def _declare(
         self,
@@ -264,6 +291,13 @@ class RustStructureExtractor:
         self._graph.add_relation(
             Relation(self._ctx.file_id, imp_id, RelationKind.DECLARES)
         )
+        if origin == "internal":
+            # Defer: bind to the real MODULE node once every module exists
+            # (falls back to an EXTERNAL_SYMBOL if none matches).
+            self.internal_imports.append(
+                (imp_id, import_path, self._ctx.module_qname)
+            )
+            return
         sym_id = make_node_id(
             self._ctx.project_name,
             import_path,

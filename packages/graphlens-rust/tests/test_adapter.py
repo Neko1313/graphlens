@@ -3,7 +3,12 @@
 from pathlib import Path
 
 import pytest
-from graphlens import RESOLVER_STATUS_KEY, AdapterError, NodeKind
+from graphlens import (
+    RESOLVER_STATUS_KEY,
+    AdapterError,
+    NodeKind,
+    RelationKind,
+)
 
 from graphlens_rust import RustAdapter
 
@@ -61,7 +66,25 @@ def test_import_origins(sample_rust_project: Path):
     }
     assert "stdlib" in origins
     assert "third_party" in origins
-    assert "internal" in origins
+
+
+def test_internal_import_resolves_to_module(sample_rust_project: Path):
+    # `use crate::util::helper` binds RESOLVES_TO the real `demo::util`
+    # MODULE node rather than an EXTERNAL_SYMBOL (CLAUDE.md §9).
+    graph = RustAdapter().analyze(sample_rust_project)
+    imp = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind == NodeKind.IMPORT and n.name == "crate::util::helper"
+    )
+    targets = [
+        graph.nodes[r.target_id]
+        for r in graph.outgoing(imp.id, RelationKind.RESOLVES_TO)
+    ]
+    assert any(
+        t.kind == NodeKind.MODULE and t.qualified_name == "demo::util"
+        for t in targets
+    )
 
 
 def test_explicit_files(sample_rust_project: Path):

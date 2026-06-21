@@ -16,6 +16,7 @@ from graphlens.serialization import (
     node_from_dict,
     relation_from_dict,
 )
+from graphlens.status import RESOLVER_STATUS_KEY, ResolverStatus
 from graphlens.utils.serde import decode_metadata
 
 if TYPE_CHECKING:
@@ -77,7 +78,18 @@ class GraphLens:
                 raise DuplicateNodeError(msg)
             self.nodes[node.id] = node
         self.relations.extend(other.relations)
+        # Preserve the worst resolver status across the merge rather than
+        # letting the last graph win, so a degraded side is never masked.
+        self_status = self.metadata.get(RESOLVER_STATUS_KEY)
+        other_status = other.metadata.get(RESOLVER_STATUS_KEY)
         self.metadata.update(other.metadata)
+        if self_status is not None and other_status is not None:
+            self.metadata[RESOLVER_STATUS_KEY] = ResolverStatus.combine(
+                [
+                    ResolverStatus.from_value(self_status),
+                    ResolverStatus.from_value(other_status),
+                ]
+            ).value
         self._out_index = None
 
     # -- edge indices ----------------------------------------------------

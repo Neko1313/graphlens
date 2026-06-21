@@ -46,6 +46,48 @@ def test_diff_relations() -> None:
     assert [r.kind for r in d.removed_relations] == [RelationKind.CALLS]
 
 
+def test_diff_detects_relation_metadata_change() -> None:
+    a = make_node(qname="proj.a", name="a")
+    b = make_node(qname="proj.b", name="b")
+    old = GraphLens()
+    new = GraphLens()
+    for g in (old, new):
+        g.add_node(a)
+        g.add_node(b)
+    old.add_relation(
+        Relation(a.id, b.id, RelationKind.CALLS, metadata={"line": 1})
+    )
+    new.add_relation(
+        Relation(a.id, b.id, RelationKind.CALLS, metadata={"line": 2})
+    )
+    d = old.diff(new)
+    assert len(d.added_relations) == 1
+    assert len(d.removed_relations) == 1
+
+
+def test_diff_keeps_duplicate_relations_distinct() -> None:
+    a = make_node(qname="proj.a", name="a")
+    b = make_node(qname="proj.b", name="b")
+    old = GraphLens()
+    new = GraphLens()
+    for g in (old, new):
+        g.add_node(a)
+        g.add_node(b)
+    # Two CALLS a->b (two call sites) in old; only one survives in new.
+    old.add_relation(
+        Relation(a.id, b.id, RelationKind.CALLS, metadata={"line": 1})
+    )
+    old.add_relation(
+        Relation(a.id, b.id, RelationKind.CALLS, metadata={"line": 2})
+    )
+    new.add_relation(
+        Relation(a.id, b.id, RelationKind.CALLS, metadata={"line": 1})
+    )
+    d = old.diff(new)
+    assert len(d.removed_relations) == 1
+    assert d.removed_relations[0].metadata["line"] == 2
+
+
 def test_diff_empty_when_identical() -> None:
     g1 = GraphLens()
     g2 = GraphLens()

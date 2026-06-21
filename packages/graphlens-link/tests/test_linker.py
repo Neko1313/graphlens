@@ -92,6 +92,41 @@ def test_links_consumer_to_provider() -> None:
     )
 
 
+def test_distinct_boundaries_same_pair_get_separate_edges() -> None:
+    # A consumer and provider that share two different boundaries (e.g. two
+    # queue topics) must yield two edges, not one collapsed by mechanism.
+    graph = GraphLens()
+    provider = _fn("prov", "server.handle")
+    consumer = _fn("cons", "client.call")
+    b1 = _boundary("queue", "orders.created")
+    b2 = _boundary("queue", "orders.shipped")
+    for node in (provider, consumer, b1, b2):
+        graph.add_node(node)
+    for b in (b1, b2):
+        graph.add_relation(
+            Relation(
+                provider.id, b.id, RelationKind.EXPOSES,
+                metadata={"confidence": 1.0},
+            )
+        )
+        graph.add_relation(
+            Relation(
+                consumer.id, b.id, RelationKind.CONSUMES,
+                metadata={"confidence": 1.0},
+            )
+        )
+
+    result = link_graph(graph)
+
+    edges = _comm_edges(graph)
+    assert len(edges) == 2
+    assert {e.metadata["boundary_key"] for e in edges} == {
+        "orders.created",
+        "orders.shipped",
+    }
+    assert result.relations_added == 2
+
+
 def test_no_link_without_consumer() -> None:
     graph, _ = _scenario()
     # Drop the CONSUMES edge -> only a provider remains.

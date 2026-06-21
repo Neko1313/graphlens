@@ -12,7 +12,10 @@ import re
 
 _BRACE_PARAM = re.compile(r"\{[^}]*\}")
 _ANGLE_PARAM = re.compile(r"<[^>]*>")
-_COLON_PARAM = re.compile(r":[^/]+")
+# Express ``:id`` params only at a segment start (right after ``/``), so a
+# literal colon inside a segment (``/v1/users/123:activate``, ``sha256:abc``)
+# is left intact instead of being collapsed to ``{}``.
+_COLON_PARAM = re.compile(r"(?<=/):[^/]+")
 
 
 def normalize_http_path(raw: str) -> str:

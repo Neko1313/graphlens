@@ -79,6 +79,10 @@ class TestHttpServer:
     def test_route_without_string_ignored(self):
         assert self.ex.extract(_root("app.get(path, h);"), "ts") == []
 
+    def test_settings_getter_ignored(self):
+        # `app.get("view engine")` is an Express settings getter, not a route.
+        assert self.ex.extract(_root('app.get("view engine");'), "ts") == []
+
     def test_non_verb_decorator_ignored(self):
         assert self.ex.extract(_root("class C { @Injectable() m(){} }"), "ts") == []
 
@@ -101,6 +105,18 @@ class TestHttpClient:
         refs = self.ex.extract(_root('fetch("/api/x");'), "ts")
         assert _keys(refs) == {"GET /api/x"}
         assert refs[0].role == "client"
+
+    def test_fetch_method_from_options(self):
+        refs = self.ex.extract(
+            _root('fetch("/api/x", {method: "POST"});'), "ts"
+        )
+        assert _keys(refs) == {"POST /api/x"}
+
+    def test_fetch_method_non_literal_defaults_get(self):
+        refs = self.ex.extract(
+            _root('fetch("/api/x", {method: verb});'), "ts"
+        )
+        assert _keys(refs) == {"GET /api/x"}
 
     def test_fetch_template_string(self):
         refs = self.ex.extract(_root("fetch(`/u/${id}`);"), "ts")
