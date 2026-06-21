@@ -307,7 +307,17 @@ def test_status_reflects_client_presence():
     r = RustAnalyzerResolver()
     assert r.status() is ResolverStatus.UNAVAILABLE
     r._client = MagicMock(spec=_RustAnalyzerClient)
+    r._client.is_alive.return_value = True
     assert r.status() is ResolverStatus.OK
+
+
+def test_status_degraded_when_client_process_died():
+    # A client that started but whose rust-analyzer process exited (e.g. a
+    # workspace that failed to load) is reported DEGRADED, not OK.
+    r = RustAnalyzerResolver()
+    r._client = MagicMock(spec=_RustAnalyzerClient)
+    r._client.is_alive.return_value = False
+    assert r.status() is ResolverStatus.DEGRADED
 
 
 # ---------------------------------------------------------------------------
