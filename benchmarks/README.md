@@ -27,11 +27,21 @@ Timings come from a single cold run on a shared CI runner, so treat them as
 
 ## Projects
 
-Targets live in [`projects.json`](projects.json) — one representative project
-per adapter, pinned to a tag for reproducibility. Edit the file to add or swap
-projects; the workflow loops over every entry. If a pinned `ref` has gone
-missing the harness falls back to the default branch and reports the actual
-commit SHA, so a stale entry degrades gracefully instead of breaking the run.
+Targets live in [`projects.json`](projects.json) — a medium-to-large size
+gradient per adapter (with extra Go and Rust coverage), each pinned to an
+upstream tag for reproducibility:
+
+| Adapter | Projects |
+|---|---|
+| Python | apache/superset |
+| TypeScript | colinhacks/zod |
+| Go | gin-gonic/gin · casdoor/casdoor · gohugoio/hugo |
+| Rust | BurntSushi/ripgrep · tokio-rs/axum · astral-sh/ruff |
+
+Edit the file to add or swap projects; the workflow loops over every entry and
+the README table follows the manifest order. If a pinned `ref` has gone missing
+the harness falls back to the default branch and reports the actual commit SHA,
+so a stale entry degrades gracefully instead of breaking the run.
 
 ## Run it locally
 

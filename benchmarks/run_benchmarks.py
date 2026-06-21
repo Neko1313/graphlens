@@ -365,6 +365,22 @@ def load_results(results_dir: Path) -> list[BenchResult]:
     return out
 
 
+def order_by_manifest(
+    results: list[BenchResult], manifest_path: Path
+) -> list[BenchResult]:
+    """Order *results* to match the manifest; unknown names sort last."""
+    try:
+        order = {
+            str(p.get("name")): i
+            for i, p in enumerate(load_manifest(manifest_path))
+        }
+    except (OSError, json.JSONDecodeError):
+        return sorted(results, key=lambda r: r.name)
+    return sorted(
+        results, key=lambda r: (order.get(r.name, len(order)), r.name)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Manifest
 # ---------------------------------------------------------------------------
@@ -411,6 +427,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     if not results:
         sys.stderr.write("no result files found; nothing to render\n")
         return 1
+    results = order_by_manifest(results, Path(args.manifest))
     block = render_table(results, args.image_tag)
     if args.print:
         sys.stdout.write(block + "\n")
@@ -446,6 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     p_rn.add_argument("--results", default=str(DEFAULT_RESULTS))
     p_rn.add_argument("--readme", default="README.md")
     p_rn.add_argument("--image-tag", default="latest")
+    p_rn.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     p_rn.add_argument("--print", action="store_true")
     p_rn.set_defaults(func=_cmd_render)
 

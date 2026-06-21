@@ -1,33 +1,61 @@
 {
-  "_comment": "Load-benchmark targets. One representative real-world project per adapter, pinned to a tag for reproducibility. Edit freely — the workflow loops over every entry. 'ref' may be a tag or branch; if it has gone missing the run falls back to the default branch and reports the actual commit SHA.",
+  "_comment": "Load-benchmark targets, spanning a medium-to-large size gradient per adapter with extra coverage for Go and Rust. Tags verified against the upstream repos. Edit freely — bench.yml loops over every entry, table order follows this file. 'ref' may be a tag or branch; if it has gone missing the run falls back to the default branch and reports the actual commit SHA.",
   "projects": [
     {
       "name": "apache/superset",
       "repo": "https://github.com/apache/superset",
-      "ref": "4.1.1",
+      "ref": "6.1.0",
       "langs": ["python"],
       "description": "Data exploration & visualization platform (Flask)"
     },
     {
+      "name": "colinhacks/zod",
+      "repo": "https://github.com/colinhacks/zod",
+      "ref": "v4.4.3",
+      "langs": ["typescript"],
+      "description": "TypeScript-first schema validation library"
+    },
+    {
+      "name": "gin-gonic/gin",
+      "repo": "https://github.com/gin-gonic/gin",
+      "ref": "v1.12.0",
+      "langs": ["go"],
+      "description": "HTTP web framework (medium, HTTP boundaries)"
+    },
+    {
       "name": "casdoor/casdoor",
       "repo": "https://github.com/casdoor/casdoor",
-      "ref": "v1.811.0",
+      "ref": "v3.98.0",
       "langs": ["go"],
-      "description": "Identity & access management / SSO (Go)"
+      "description": "Identity & access management / SSO (HTTP)"
+    },
+    {
+      "name": "gohugoio/hugo",
+      "repo": "https://github.com/gohugoio/hugo",
+      "ref": "v0.163.3",
+      "langs": ["go"],
+      "description": "Static site generator (large, scale test)"
     },
     {
       "name": "BurntSushi/ripgrep",
       "repo": "https://github.com/BurntSushi/ripgrep",
       "ref": "14.1.1",
       "langs": ["rust"],
-      "description": "Recursive line-oriented search tool (Rust)"
+      "description": "Recursive line-oriented search tool (medium CLI)"
     },
     {
-      "name": "colinhacks/zod",
-      "repo": "https://github.com/colinhacks/zod",
-      "ref": "v3.23.8",
-      "langs": ["typescript"],
-      "description": "TypeScript-first schema validation library"
+      "name": "tokio-rs/axum",
+      "repo": "https://github.com/tokio-rs/axum",
+      "ref": "axum-v0.8.9",
+      "langs": ["rust"],
+      "description": "Async HTTP web framework (HTTP boundaries)"
+    },
+    {
+      "name": "astral-sh/ruff",
+      "repo": "https://github.com/astral-sh/ruff",
+      "ref": "0.15.18",
+      "langs": ["rust"],
+      "description": "Python linter & formatter (large, scale test)"
     }
   ]
 }
