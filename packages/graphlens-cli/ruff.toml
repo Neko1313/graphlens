@@ -59,5 +59,6 @@ select = [
 ]
 "src/graphlens_cli/_visualize.py" = ["E501"]
 "src/graphlens_cli/_analyze.py" = ["TCH"]
+"src/graphlens_cli/_mcp.py" = ["TCH"]
 "src/graphlens_cli/_neo4j.py" = ["TCH"]
 "src/graphlens_cli/_query.py" = ["TCH"]
