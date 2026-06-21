@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from graphlens.contracts import Occurrence, ResolvedRef, SymbolResolver
+from graphlens.status import ResolverStatus
 
 logger = logging.getLogger("graphlens_python")
 
@@ -326,6 +327,13 @@ class TyResolver(SymbolResolver):
         self, file: Path, line: int, col: int  # noqa: ARG002
     ) -> ResolvedRef | None:
         return None
+
+    def status(self) -> ResolverStatus:
+        return (
+            ResolverStatus.OK
+            if self._client is not None
+            else ResolverStatus.UNAVAILABLE
+        )
 
     def references_to(
         self, file: Path, line: int, col: int

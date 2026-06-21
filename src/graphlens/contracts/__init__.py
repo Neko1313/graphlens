@@ -2,6 +2,7 @@
 
 from graphlens.contracts.adapter import LanguageAdapter
 from graphlens.contracts.backend import GraphBackend
+from graphlens.contracts.boundary import BoundaryRef
 from graphlens.contracts.deps import (
     DependencyFileParser,
     normalize_pkg_name,
@@ -14,6 +15,7 @@ from graphlens.contracts.resolver import (
 )
 
 __all__ = [
+    "BoundaryRef",
     "DependencyFileParser",
     "DiscoveredProject",
     "GraphBackend",

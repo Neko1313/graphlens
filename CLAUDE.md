@@ -8,7 +8,9 @@ graphlens/                      ← uv workspace root (also the core library)
   packages/
     graphlens-python/           ← Python language adapter
     graphlens-typescript/       ← TypeScript language adapter
-    graphlens-cli/              ← CLI package: graphlens analyze / visualize / neo4j
+    graphlens-go/               ← Go language adapter (structure + go.mod)
+    graphlens-rust/             ← Rust language adapter (structure + Cargo.toml)
+    graphlens-cli/              ← CLI: analyze / query / visualize / neo4j
   tests/                         ← core library tests
   examples/                      ← standalone usage examples (no CLI dep)
     demo_resolved_graph.py      ← Python: print node/edge stats + find-usages

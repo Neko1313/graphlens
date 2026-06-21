@@ -10,7 +10,7 @@
   [![CI](https://img.shields.io/github/actions/workflow/status/Neko1313/graphlens/ci.yml?label=CI)](https://github.com/Neko1313/graphlens/actions)
   [![codecov](https://codecov.io/gh/Neko1313/graphlens/graph/badge.svg?token=n3oRe180jg)](https://codecov.io/gh/Neko1313/graphlens)
 
-  [Repository](https://github.com/Neko1313/graphlens) · [Issues](https://github.com/Neko1313/graphlens/issues)
+  [Documentation](https://Neko1313.github.io/graphlens/) · [Repository](https://github.com/Neko1313/graphlens) · [Issues](https://github.com/Neko1313/graphlens/issues)
 
 </div>
 
@@ -34,9 +34,24 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 
 - **Language-agnostic** — one shared model for Python, TypeScript, Rust, …
 - **Plugin-based adapters** — each language is a separate package, registered via Python entry points
-- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript)
+- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript, gopls for Go, rust-analyzer for Rust)
+- **Cross-language aware** — adapters emit language-agnostic `BOUNDARY` ports (HTTP, queues, gRPC, Temporal); `graphlens-link` connects a consumer in one language to a provider in another
 - **Monorepo aware** — `can_handle()` and `find_*_roots()` handle multi-language repos correctly
 - **Deterministic node IDs** — SHA-256 hash of `project::kind::qualified_name` → stable across re-scans
+
+## Documentation
+
+Full product documentation lives at **<https://Neko1313.github.io/graphlens/>**
+(built with Docusaurus from [`website/`](website/)):
+
+- [Getting Started](https://Neko1313.github.io/graphlens/docs/getting-started/installation) — install, quick start, core concepts
+- [Guides](https://Neko1313.github.io/graphlens/docs/guides/library-api) — library API, CLI, querying, visualization, Neo4j, cross-language, MCP
+- [CI Integration](https://Neko1313.github.io/graphlens/docs/ci-integration/overview) — strict mode, GitHub Actions, Docker, local hooks
+- [Adapters](https://Neko1313.github.io/graphlens/docs/adapters/overview) — Python, TypeScript, Go, Rust, and writing your own
+- [Graph Model](https://Neko1313.github.io/graphlens/docs/graph-model/nodes) — nodes, relations, boundaries, serialization
+- [API Reference](https://Neko1313.github.io/graphlens/docs/api-reference/graphlens) — exact signatures
+
+To run the docs locally: `cd website && pnpm install && pnpm start`.
 
 ## Installation
 
@@ -50,9 +65,13 @@ pip install "graphlens[python]"
 # Core + TypeScript adapter
 pip install "graphlens[typescript]"
 
-# CLI (graphlens analyze / visualize / neo4j)
+# Core + Go / Rust adapters
+pip install "graphlens[go]"
+pip install "graphlens[rust]"
+
+# CLI (graphlens analyze / visualize / query / neo4j)
 pip install "graphlens-cli[python]"          # with Python adapter
-pip install "graphlens-cli[all]"             # Python + TypeScript + Neo4j
+pip install "graphlens-cli[all]"             # Python + TS + Go + Rust + Neo4j
 ```
 
 With uv:
@@ -63,6 +82,22 @@ uv add "graphlens[python]"
 uv add "graphlens[typescript]"
 uv add "graphlens-cli[all]"
 ```
+
+### Docker (all adapters + toolchains pre-installed)
+
+For CI, the published image bundles the CLI with every adapter **and** the
+toolchains their resolvers drive (ty, Node, Go + gopls, Rust + rust-analyzer)
+— no local setup required, and the supported way to get the Go and Rust
+adapters (which are not published to PyPI). Mount your project at
+`/workspace`:
+
+```bash
+docker run --rm -v "$PWD:/workspace" ghcr.io/neko1313/graphlens \
+    analyze /workspace --output /workspace/graph.json
+```
+
+The image is published to the GitHub Container Registry on each release
+(`:latest` plus `:X.Y.Z` / `:X.Y` version tags).
 
 ## Quick start
 
@@ -84,16 +119,44 @@ from graphlens import NodeKind
 
 modules = [n for n in graph.nodes.values() if n.kind == NodeKind.MODULE]
 classes = [n for n in graph.nodes.values() if n.kind == NodeKind.CLASS]
+
+# Check the resolver actually ran (don't trust a silently degraded graph)
+from graphlens import RESOLVER_STATUS_KEY
+assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"
+
+# Query the graph (indexed lookups, no manual scanning)
+fn = next(n for n in graph.nodes.values() if n.name == "my_function")
+callers = graph.callers(fn.id)          # who calls it
+callees = graph.callees(fn.id)          # what it calls
+near = graph.neighbors(fn.id, depth=2)  # 2-hop neighbourhood
+
+# Serialize for pipelines / agents (round-trippable JSON), then reload
+text = graph.to_json(indent=2)
+graph2 = type(graph).from_json(text)
+
+# Diff two scans (e.g. before/after a change)
+diff = old_graph.diff(graph)
+print(diff.added_nodes, diff.removed_relations, diff.is_empty)
 ```
 
 ## CLI (`graphlens-cli`)
 
-Install `graphlens-cli` to get the `graphlens` entry point with three commands:
+Install `graphlens-cli` to get the `graphlens` entry point:
 
 ```bash
 # Print node/relation statistics
 graphlens analyze <project_root>
-graphlens analyze ~/myrepo --lang python,typescript
+graphlens analyze ~/myrepo --lang python,typescript,go,rust
+
+# Serialize the graph to JSON (CI indexing step); --strict fails on a
+# degraded resolver so a pipeline never feeds agents an incomplete graph
+graphlens analyze ~/myrepo --output graph.json
+graphlens analyze ~/myrepo --format json
+graphlens analyze ~/myrepo --strict
+
+# Query a saved graph (callers | callees | references | neighbors)
+graphlens query my_function --graph graph.json --op callers
+graphlens query MyClass.method --graph graph.json --op neighbors --depth 2
 
 # Interactive HTML graph viewer (opens in browser)
 graphlens visualize <project_root>
@@ -103,7 +166,18 @@ graphlens visualize . --output graph.html --no-open
 # Export to Neo4j
 graphlens neo4j <project_root> --uri bolt://localhost:7687 --user neo4j --password secret
 graphlens neo4j . --wipe --batch-size 200
+
+# Serve the graph to agents over the Model Context Protocol (needs the
+# optional `mcp` extra: pip install "graphlens-cli[mcp]")
+graphlens mcp --graph graph.json
 ```
+
+### `mcp` — Model Context Protocol server
+
+Exposes a saved graph to LLM agents as MCP tools: `graph_stats`,
+`find_nodes`, `callers`, `callees`, `references`, `neighbors`,
+`boundaries`, and `communicates_with`. Install with the `mcp` extra and
+point it at a JSON graph produced by `graphlens analyze --output`.
 
 ### `visualize` — interactive HTML graph viewer
 
@@ -153,6 +227,7 @@ pip install "graphlens-cli[neo4j]"
 | `IMPORT` | Import statement |
 | `DEPENDENCY` | Declared package dependency |
 | `EXTERNAL_SYMBOL` | External symbol (stdlib, third-party, or unknown); carries `metadata["origin"]` |
+| `BOUNDARY` | Cross-language interface port (HTTP route, queue topic, gRPC method, Temporal activity); shared id collapses matching server/client across languages |
 
 ### Relation kinds
 
@@ -167,6 +242,29 @@ pip install "graphlens-cli[neo4j]"
 | `INHERITS_FROM` | Class inheritance (resolved to declaration node) |
 | `HAS_TYPE` | Type annotation/inference edge (function/param/variable → class or external) |
 | `DEPENDS_ON` | Package dependency |
+| `EXPOSES` | A server/provider exposes a `BOUNDARY` (e.g. an HTTP route handler) |
+| `CONSUMES` | A client/consumer consumes a `BOUNDARY` (e.g. an HTTP call) |
+| `COMMUNICATES_WITH` | Consumer → provider, added by `graphlens-link` from matching `EXPOSES`/`CONSUMES` |
+
+### Cross-language boundaries
+
+Adapters emit `BOUNDARY` ports for the interfaces a service exposes or
+consumes — HTTP/REST routes and clients, message-queue topics, gRPC
+methods, and Temporal activities. Each port has a language-agnostic id
+(`make_boundary_id(mechanism, key)`), so a Python FastAPI route and a
+TypeScript `fetch` call to the same path collapse onto **one** `BOUNDARY`
+node when their graphs are merged. The `graphlens-link` package then pairs
+`CONSUMES` with `EXPOSES` into `COMMUNICATES_WITH` edges:
+
+```python
+from graphlens_link import link_graph
+
+merged = python_graph.merge(ts_graph, allow_shared=True)
+result = link_graph(merged)          # adds COMMUNICATES_WITH edges
+```
+
+See `examples/demo_cross_language.py` for a Python-server ↔ TypeScript-client
+walkthrough.
 
 ## Adapter plugin system
 
@@ -231,7 +329,10 @@ graphlens/                      ← uv workspace root (core library)
   packages/
     graphlens-python/           ← Python adapter (tree-sitter + ty)
     graphlens-typescript/       ← TypeScript adapter (tree-sitter + Compiler API)
-    graphlens-cli/              ← CLI package (typer): analyze, visualize, neo4j
+    graphlens-go/               ← Go adapter (tree-sitter + gopls)
+    graphlens-rust/             ← Rust adapter (tree-sitter + rust-analyzer)
+    graphlens-link/             ← cross-language linker (COMMUNICATES_WITH)
+    graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j, mcp
   tests/                         ← core tests (100% coverage)
   examples/                      ← standalone usage examples
 ```

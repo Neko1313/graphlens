@@ -10,7 +10,7 @@ tasks:
           mkdir -p {{.TASKFILE_DIR}}/reports
           uv run ruff check --output-format json --output-file {{.TASKFILE_DIR}}/reports/ruff.json {{.TASKFILE_DIR}}/src {{.TASKFILE_DIR}}/tests
           uv run bandit -c {{.TASKFILE_DIR}}/pyproject.toml -r {{.TASKFILE_DIR}}/src -o {{.TASKFILE_DIR}}/reports/bandit.json --format json
-          uv run ty check --output-format github > {{.TASKFILE_DIR}}/reports/gl-code-quality-report.json
+          uv run ty check --output-format github > {{.TASKFILE_DIR}}/reports/gl-code-quality-report.json || { rc=$?; uv run ty check; exit $rc; }
         else
           echo "Running TypeScript linters for development..."
           uv run ruff check --fix {{.TASKFILE_DIR}}/src {{.TASKFILE_DIR}}/tests

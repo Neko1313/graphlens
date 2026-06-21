@@ -1,0 +1,8 @@
+{
+  "label": "CI Integration",
+  "position": 4,
+  "link": {
+    "type": "generated-index",
+    "description": "Run graphlens in continuous integration and locally — index your repo on every change and gate on a complete graph."
+  }
+}

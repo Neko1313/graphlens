@@ -23,3 +23,7 @@ class DiscoveryError(GraphLensError):
 
 class BackendError(GraphLensError):
     """Error raised during graph backend operation."""
+
+
+class SerializationError(GraphLensError):
+    """Error raised during graph (de)serialization."""

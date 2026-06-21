@@ -26,6 +26,7 @@ class NodeKind(enum.Enum):
     VARIABLE = "variable"
     ATTRIBUTE = "attribute"
     TYPE_ALIAS = "type_alias"
+    BOUNDARY = "boundary"
 
 
 @dataclass(frozen=True, slots=True)

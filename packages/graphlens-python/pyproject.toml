@@ -7,7 +7,9 @@ dependencies = [
     "graphlens",
     "tree-sitter>=0.24",
     "tree-sitter-python>=0.23",
-    "ty",
+    # Pinned: ty is pre-1.0; 0.0.x releases can change LSP/diagnostic
+    # behaviour, so float-pinning makes analysis non-reproducible.
+    "ty==0.0.26",
 ]
 
 [build-system]

@@ -18,6 +18,9 @@ class RelationKind(enum.Enum):
     RESOLVES_TO = "resolves_to"
     INHERITS_FROM = "inherits_from"
     HAS_TYPE = "has_type"
+    EXPOSES = "exposes"
+    CONSUMES = "consumes"
+    COMMUNICATES_WITH = "communicates_with"
 
 
 @dataclass(frozen=True, slots=True)

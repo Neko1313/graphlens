@@ -31,3 +31,15 @@ def test_concrete_subclass_must_implement_all():
             ...
     with pytest.raises(TypeError):
         Partial()  # type: ignore[abstract]
+
+
+def test_status_defaults_to_ok():
+    from graphlens import ResolverStatus
+
+    class Dummy(SymbolResolver):
+        def prepare(self, project_root, files): ...
+        def definition_at(self, file, line, col): return None
+        def infer_type_at(self, file, line, col): return None
+        def references_to(self, file, line, col): return []
+
+    assert Dummy().status() is ResolverStatus.OK

@@ -14,11 +14,15 @@ class ConcreteAdapter(LanguageAdapter):
     def language(self) -> str:
         return "test"
 
-    def can_handle(self, project_root: Path) -> bool:
+    def can_handle(self, project_root: str | Path) -> bool:
         return True
 
     def analyze(
-        self, project_root: Path, files: list[Path] | None = None
+        self,
+        project_root: str | Path,
+        files: list[Path] | None = None,
+        *,
+        strict: bool = False,
     ) -> GraphLens:
         return GraphLens()
 
@@ -32,10 +36,16 @@ class MinimalAdapter(LanguageAdapter):
     def language(self) -> str:
         return "minimal"
 
-    def can_handle(self, project_root: Path) -> bool:
+    def can_handle(self, project_root: str | Path) -> bool:
         return False
 
-    def analyze(self, project_root: Path, files: list[Path] | None = None) -> GraphLens:
+    def analyze(
+        self,
+        project_root: str | Path,
+        files: list[Path] | None = None,
+        *,
+        strict: bool = False,
+    ) -> GraphLens:
         return GraphLens()
 
 
@@ -156,3 +166,9 @@ class TestCollectFiles:
         adapter = ConcreteAdapter(extensions={".py"})
         files = adapter.collect_files(tmp_path)
         assert files == []
+
+    def test_collect_files_accepts_str_path(self, tmp_path: Path) -> None:
+        (tmp_path / "a.py").write_text("pass")
+        adapter = ConcreteAdapter(extensions={".py"})
+        files = adapter.collect_files(str(tmp_path))
+        assert len(files) == 1

@@ -6,7 +6,12 @@ import time
 from typing import TYPE_CHECKING
 
 import typer
-from graphlens import GraphLens, adapter_registry
+from graphlens import (
+    RESOLVER_STATUS_KEY,
+    GraphLens,
+    ResolverStatus,
+    adapter_registry,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,6 +81,14 @@ def load_adapter(lang: str) -> LanguageAdapter:
         from graphlens_typescript import TypescriptAdapter
 
         return TypescriptAdapter()
+    if lang == "go":
+        from graphlens_go import GoAdapter
+
+        return GoAdapter()
+    if lang == "rust":
+        from graphlens_rust import RustAdapter
+
+        return RustAdapter()
 
     msg = f"Unknown or unavailable adapter: {lang!r}"
     raise typer.BadParameter(msg)
@@ -98,16 +111,29 @@ def run_analysis(
 ) -> tuple[GraphLens, float]:
     """Analyse *root* with each adapter; return merged graph and elapsed."""
     combined = GraphLens()
+    statuses: list[ResolverStatus] = []
     t0 = time.monotonic()
     for lang in langs:
         if verbose:
             typer.echo(f"  [{lang}] analysing {root} …")
         adapter = load_adapter(lang)
         g = adapter.analyze(root)
+        raw_status = g.metadata.get(RESOLVER_STATUS_KEY)
+        status = (
+            ResolverStatus.OK
+            if raw_status is None
+            else ResolverStatus.from_value(
+                raw_status, default=ResolverStatus.DEGRADED
+            )
+        )
+        statuses.append(status)
         if verbose:
             typer.echo(
                 f"  [{lang}] {len(g.nodes)} nodes,"
                 f" {len(g.relations)} relations"
             )
         merge_graph(combined, g)
+    combined.metadata[RESOLVER_STATUS_KEY] = ResolverStatus.combine(
+        statuses
+    ).value
     return combined, time.monotonic() - t0

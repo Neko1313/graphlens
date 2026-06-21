@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from graphlens import (
+    RESOLVER_STATUS_KEY,
+    AdapterError,
+    BoundaryRef,
     GraphLens,
     LanguageAdapter,
     Node,
     NodeKind,
     Relation,
     RelationKind,
+    ResolverStatus,
+    make_boundary_id,
 )
 from graphlens.utils import SpanIndex, make_node_id
 from graphlens.utils.roots import filter_nested_root_files
 
+from graphlens_typescript._boundary import (
+    TYPESCRIPT_DEFAULT_BOUNDARY_EXTRACTORS,
+    TsBoundaryExtractor,
+)
 from graphlens_typescript._deps import (
     TYPESCRIPT_DEFAULT_DEP_PARSERS,
     get_stdlib_names,
@@ -42,6 +51,7 @@ from graphlens_typescript._visitor import (
 
 if TYPE_CHECKING:
     from graphlens.contracts import DependencyFileParser, SymbolResolver
+    from tree_sitter import Node as TSNode
 
 logger = logging.getLogger("graphlens_typescript")
 
@@ -70,6 +80,7 @@ class TypescriptAdapter(LanguageAdapter):
         self,
         dep_parsers: list[DependencyFileParser] | None = None,
         resolver: SymbolResolver | None = None,
+        boundary_extractors: list[TsBoundaryExtractor] | None = None,
     ) -> None:
         """
         Initialize the TypeScript adapter.
@@ -83,6 +94,11 @@ class TypescriptAdapter(LanguageAdapter):
                 calls, references, annotations, and base classes.
                 Defaults to ``TsResolver``. Inject a custom or null
                 resolver to override resolution behaviour.
+            boundary_extractors: extractors that detect cross-language
+                boundary ports (HTTP routes/calls) and emit ``BOUNDARY``
+                nodes with ``EXPOSES`` / ``CONSUMES`` edges. Defaults to
+                ``TYPESCRIPT_DEFAULT_BOUNDARY_EXTRACTORS``; pass ``[]`` to
+                disable boundary extraction.
 
         """
         self._dep_parsers = (
@@ -93,6 +109,11 @@ class TypescriptAdapter(LanguageAdapter):
         self._resolver: SymbolResolver = (
             resolver if resolver is not None else TsResolver()
         )
+        self._boundary_extractors = (
+            boundary_extractors
+            if boundary_extractors is not None
+            else TYPESCRIPT_DEFAULT_BOUNDARY_EXTRACTORS
+        )
 
     def language(self) -> str:
         """Return the language identifier for this adapter."""
@@ -102,11 +123,11 @@ class TypescriptAdapter(LanguageAdapter):
         """Return the set of file extensions handled by this adapter."""
         return {".ts", ".tsx", ".mts", ".cts"}
 
-    def can_handle(self, project_root: Path) -> bool:
+    def can_handle(self, project_root: str | Path) -> bool:
         """Return True if the project root is a TypeScript project."""
-        return is_typescript_project(project_root)
+        return is_typescript_project(Path(project_root))
 
-    def collect_files(self, project_root: Path) -> list[Path]:
+    def collect_files(self, project_root: str | Path) -> list[Path]:
         """
         Collect TypeScript source files, excluding declaration files.
 
@@ -121,22 +142,29 @@ class TypescriptAdapter(LanguageAdapter):
 
     def analyze(
         self,
-        project_root: Path,
+        project_root: str | Path,
         files: list[Path] | None = None,
+        *,
+        strict: bool = False,
     ) -> GraphLens:
         """
         Analyze a TypeScript project and return a populated GraphLens.
 
         Args:
-            project_root: the root directory of the project (or monorepo).
+            project_root: the root directory of the project (or monorepo);
+                accepts a ``str`` or ``Path``.
             files: optional explicit list of files to analyze; when omitted
                 all TypeScript source files are collected automatically.
+            strict: when True, raise ``AdapterError`` instead of returning a
+                graph whose resolver status is not ``ok``.
 
         Returns:
             A ``GraphLens`` containing the structural and relational nodes.
 
         """
+        project_root = Path(project_root).resolve()
         graph = GraphLens()
+        statuses: list[ResolverStatus] = []
 
         if files is not None:
             _analyze_root(
@@ -146,7 +174,9 @@ class TypescriptAdapter(LanguageAdapter):
                 files,
                 self._dep_parsers,
                 self._resolver,
+                self._boundary_extractors,
             )
+            statuses.append(self._resolver.status())
         else:
             lang_roots = find_typescript_roots(project_root)
             for lang_root in lang_roots:
@@ -163,8 +193,18 @@ class TypescriptAdapter(LanguageAdapter):
                     root_files,
                     self._dep_parsers,
                     self._resolver,
+                    self._boundary_extractors,
                 )
+                statuses.append(self._resolver.status())
 
+        status = ResolverStatus.combine(statuses)
+        graph.metadata[RESOLVER_STATUS_KEY] = status.value
+        if strict and status is not ResolverStatus.OK:
+            msg = (
+                f"TypeScript resolver status is '{status.value}'; refusing "
+                "to return a degraded graph in strict mode"
+            )
+            raise AdapterError(msg)
         return graph
 
 
@@ -240,7 +280,7 @@ def _resolve_occurrences(
     queries: list[tuple[Path, int, int]] = [
         (Path(p), o.line, o.col) for (p, o) in occurrences
     ]
-    refs = resolver.resolve_all(queries)
+    refs = cast("TsResolver", resolver).resolve_all(queries)
     for (_p, occ), ref in zip(occurrences, refs, strict=True):
         if ref is None:
             continue
@@ -281,6 +321,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
     resolver: SymbolResolver,
+    boundary_extractors: list[TsBoundaryExtractor],
 ) -> None:
     """Analyze one TypeScript project root and populate graph in-place."""
     project_name = detect_project_name(lang_root)
@@ -331,6 +372,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
 
     modules: dict[str, str] = {}
     all_occurrences: list[tuple[str, OccurrenceRef]] = []
+    parsed_files: list[tuple[Path, str, TSNode, str]] = []
 
     for file in files:
         source_root = (
@@ -404,6 +446,9 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
         all_occurrences.extend(
             (visitor.abs_file_path, o) for o in visitor.occurrences
         )
+        parsed_files.append(
+            (file, file_id, tree.root_node, "tsx" if is_tsx else "ts")
+        )
 
     # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL
     span_index = SpanIndex.from_graph(graph)
@@ -411,6 +456,9 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
     _resolve_occurrences(
         graph, project_name, resolver, span_index, all_occurrences
     )
+
+    # Boundary pass: emit BOUNDARY nodes + EXPOSES/CONSUMES edges.
+    _extract_boundaries(graph, parsed_files, boundary_extractors)
 
     # PROJECT --CONTAINS--> top-level modules
     top_level = {qn: mid for qn, mid in modules.items() if "." not in qn}
@@ -422,6 +470,92 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
                 kind=RelationKind.CONTAINS,
             )
         )
+
+
+def _extract_boundaries(
+    graph: GraphLens,
+    parsed_files: list[tuple[Path, str, TSNode, str]],
+    extractors: list[TsBoundaryExtractor],
+) -> None:
+    """Run boundary extractors and emit BOUNDARY nodes + EXPOSES/CONSUMES."""
+    if not extractors:
+        return
+    enclosers: dict[str, list[Node]] = {}
+    for node in graph.nodes.values():
+        if (
+            node.kind in (NodeKind.FUNCTION, NodeKind.METHOD)
+            and node.span is not None
+            and node.file_path is not None
+        ):
+            enclosers.setdefault(node.file_path, []).append(node)
+
+    for file, file_id, root, lang in parsed_files:
+        candidates = enclosers.get(str(file), [])
+        for extractor in extractors:
+            for ref in extractor.extract(root, lang):
+                enclosing_id = (
+                    _innermost_enclosing(candidates, ref.line, ref.col)
+                    or file_id
+                )
+                _add_boundary(graph, enclosing_id, ref)
+
+
+def _innermost_enclosing(
+    candidates: list[Node], line: int, col: int
+) -> str | None:
+    """Return the id of the deepest function/method containing (line, col)."""
+    best_id: str | None = None
+    best_start: tuple[int, int] | None = None
+    for node in candidates:
+        span = node.span
+        if span is None:
+            continue  # pragma: no cover - filtered before insertion
+        start = (span.start_line, span.start_col)
+        end = (span.end_line, span.end_col)
+        if start <= (line, col) <= end and (
+            best_start is None or start >= best_start
+        ):
+            best_id = node.id
+            best_start = start
+    return best_id
+
+
+def _add_boundary(
+    graph: GraphLens, enclosing_id: str, ref: BoundaryRef
+) -> None:
+    boundary_id = make_boundary_id(ref.mechanism, ref.key)
+    if boundary_id not in graph.nodes:
+        graph.add_node(
+            Node(
+                id=boundary_id,
+                kind=NodeKind.BOUNDARY,
+                qualified_name=f"{ref.mechanism}:{ref.key}",
+                name=ref.key,
+                metadata={"mechanism": ref.mechanism, "key": ref.key},
+            )
+        )
+    kind = (
+        RelationKind.EXPOSES
+        if ref.role == "server"
+        else RelationKind.CONSUMES
+    )
+    metadata: dict[str, object] = {
+        "mechanism": ref.mechanism,
+        "key": ref.key,
+        "confidence": ref.confidence,
+        "role": ref.role,
+        "line": ref.line,
+        "col": ref.col,
+    }
+    metadata.update(ref.detail)
+    graph.add_relation(
+        Relation(
+            source_id=enclosing_id,
+            target_id=boundary_id,
+            kind=kind,
+            metadata=metadata,
+        )
+    )
 
 
 def _find_source_root_for(file: Path, source_roots: list[Path]) -> Path | None:

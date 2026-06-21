@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from graphlens.models.graph import GraphLens
 
 _EXCLUDED_DIRS: frozenset[str] = frozenset(
@@ -27,7 +26,7 @@ class LanguageAdapter(ABC):
         ...
 
     @abstractmethod
-    def can_handle(self, project_root: Path) -> bool:
+    def can_handle(self, project_root: str | Path) -> bool:
         """
         Return True if this adapter can handle the project at the given root.
 
@@ -38,14 +37,26 @@ class LanguageAdapter(ABC):
 
     @abstractmethod
     def analyze(
-        self, project_root: Path, files: list[Path] | None = None
+        self,
+        project_root: str | Path,
+        files: list[Path] | None = None,
+        *,
+        strict: bool = False,
     ) -> GraphLens:
         """
         Parse the project and return a GraphLens with nodes and relations.
 
+        ``project_root`` accepts a ``str`` or ``Path``.
+
         If ``files`` is None, the adapter collects source files itself via
         ``collect_files()``. Pass an explicit list to override (e.g. for
         incremental updates or custom filtering in a pipeline).
+
+        The returned graph records ``resolver_status`` in ``metadata`` so a
+        caller can tell whether the type-aware layer ran. When ``strict`` is
+        True, the adapter raises ``AdapterError`` instead of returning a
+        graph whose resolver status is not ``ok`` — useful for pipelines
+        feeding agents that must not consume a silently degraded graph.
 
         Adapters must not write to any backend — they return data only.
         """
@@ -59,7 +70,7 @@ class LanguageAdapter(ABC):
         """
         return set()
 
-    def collect_files(self, project_root: Path) -> list[Path]:
+    def collect_files(self, project_root: str | Path) -> list[Path]:
         """
         Return all source files under project_root for this adapter.
 
@@ -67,13 +78,14 @@ class LanguageAdapter(ABC):
         (.venv, __pycache__, .git, etc.).
         Override for custom discovery logic.
         """
+        root = Path(project_root)
         extensions = self.file_extensions()
         if not extensions:
             return []
         return sorted(
             p
-            for p in project_root.rglob("*")
+            for p in root.rglob("*")
             if p.is_file()
             and p.suffix in extensions
-            and not (_EXCLUDED_DIRS & set(p.relative_to(project_root).parts))
+            and not (_EXCLUDED_DIRS & set(p.relative_to(root).parts))
         )

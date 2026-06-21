@@ -15,7 +15,7 @@ from graphlens import (
     RelationKind,
 )
 from graphlens.utils import Span, make_node_id
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Parser, Tree
 from tree_sitter import Node as TSNode
 
 from graphlens_python._module_resolver import resolve_relative_import
@@ -56,7 +56,7 @@ class OccurrenceRef:
 _parser = Parser(_PY_LANGUAGE)
 
 
-def parse_python(source: bytes) -> object:
+def parse_python(source: bytes) -> Tree:
     """Parse Python source bytes and return a tree-sitter Tree."""
     return _parser.parse(source)
 
@@ -962,7 +962,7 @@ class PythonASTVisitor:
 
 
 def _node_text(node: TSNode) -> str:
-    return node.text.decode("utf-8")
+    return node.text.decode("utf-8") if node.text is not None else ""
 
 
 def _dotted_name(node: TSNode) -> str:

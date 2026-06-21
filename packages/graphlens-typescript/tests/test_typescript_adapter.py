@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from conftest import nodes_of_kind
-from graphlens import NodeKind, RelationKind
+from graphlens import AdapterError, NodeKind, RelationKind, ResolverStatus
 from graphlens.contracts import ResolvedRef, SymbolResolver
 
 from graphlens_typescript import TypescriptAdapter
@@ -630,6 +631,7 @@ class TestBatchResolutionPass:
                 [ts_file],
                 [],
                 FakeResolver(None),
+                [],
             )
             file_nodes = [
                 n for n in graph.nodes.values() if n.kind.value == "file"
@@ -668,11 +670,11 @@ class TestBatchResolutionPass:
         graph = GraphLens()
         # First call: creates the project node
         _analyze_root(
-            graph, tmp_path, root1, [file1], [], FakeResolver(None)
+            graph, tmp_path, root1, [file1], [], FakeResolver(None), []
         )
         # Second call: project_id already in graph → False branch of guard
         _analyze_root(
-            graph, tmp_path, root2, [file2], [], FakeResolver(None)
+            graph, tmp_path, root2, [file2], [], FakeResolver(None), []
         )
         projects = [n for n in graph.nodes.values() if n.kind.value == "project"]
         assert len(projects) == 1  # deduped
@@ -728,6 +730,7 @@ class TestBatchResolutionPass:
                 [good_file, outside_file],
                 [],
                 FakeResolver(None),
+                [],
             )
             # good_file was processed; outside_file was skipped
             file_nodes = [
@@ -962,3 +965,19 @@ class TestRootConfigPollutionFix:
             f"Expected third_party but got "
             f"{express_default.metadata.get('origin')}"
         )
+
+
+class _DegradedResolver(FakeResolver):
+    """A resolver that reports it failed to run, for strict-mode tests."""
+
+    def status(self) -> ResolverStatus:
+        """Report an unavailable resolver."""
+        return ResolverStatus.UNAVAILABLE
+
+
+def test_strict_raises_on_degraded_resolver(
+    sample_typescript_project: Path,
+) -> None:
+    adapter = TypescriptAdapter(resolver=_DegradedResolver(None))
+    with pytest.raises(AdapterError, match="strict"):
+        adapter.analyze(sample_typescript_project, strict=True)

@@ -12,7 +12,7 @@ class TestRelationKind:
         expected = {
             "CONTAINS", "DECLARES", "IMPORTS", "CALLS",
             "REFERENCES", "DEPENDS_ON", "RESOLVES_TO", "INHERITS_FROM",
-            "HAS_TYPE",
+            "HAS_TYPE", "EXPOSES", "CONSUMES", "COMMUNICATES_WITH",
         }
         assert {m.name for m in RelationKind} == expected
 
@@ -27,7 +27,7 @@ class TestRelationKind:
         assert RelationKind.INHERITS_FROM.value == "inherits_from"
 
     def test_count(self) -> None:
-        assert len(RelationKind) == 9
+        assert len(RelationKind) == 12
 
 
 class TestRelation:
