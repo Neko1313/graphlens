@@ -2,107 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.5.0] - 2026-06-21
 ### Features
 
-- **core**: serialize a graph to/from JSON (`GraphLens.to_json` /
-  `from_json` / `to_dict` / `from_dict`), round-trippable including `Span`
-  metadata, with `SerializationError` on unsupported `schema_version` and
-  forward-compatible unknown-field handling (TCK-1).
-- **core**: indexed query API — `outgoing`/`incoming`, `callers`,
-  `callees`, `references_to`, `neighbors`, `nodes_by_kind`/`_in_file`/
-  `_by_name`, and `subgraph` — backed by lazily-built edge indices (TCK-2).
-- **core**: `ResolverStatus` (`ok`/`degraded`/`unavailable`) plus a
-  `graph.metadata["resolver_status"]` field so adapters report a truthful
-  resolution state instead of silently degrading; `SymbolResolver.status()`
-  contract method (TCK-3).
-- **core**: deterministic `GraphLens.diff` → `GraphDiff` (added/removed/
-  changed nodes and relations), order-independent (TCK-4).
-- **adapters**: `analyze()` accepts `str | Path` (resolved to absolute,
-  fixing the relative-path resolver-startup failure) and a `strict` flag
-  that raises `AdapterError` rather than returning a degraded graph (TCK-3).
-- **go**: new `graphlens-go` adapter — structural graph + go.mod
-  dependency/import-origin classification + monorepo discovery (TCK-9).
-- **rust**: new `graphlens-rust` adapter — structural graph + Cargo.toml
-  parsing + workspace-aware crate discovery (TCK-10).
-- **cli**: `analyze --format json` / `--output PATH` serialization,
-  `analyze --strict` exit code, and a `query` subcommand over a saved graph
-  (callers/callees/references/neighbors); `--lang go`/`rust` and
-  auto-detect (TCK-11).
-- **adapters**: declarative tree-sitter query helpers (`_queries.run_query`,
-  cached `Query`/`QueryCursor`) now back pattern matching instead of
-  hand-written traversals (TCK-5).
-- **core**: cross-language boundary model — a language-agnostic `BOUNDARY`
-  node plus `EXPOSES` / `CONSUMES` / `COMMUNICATES_WITH` relations, the
-  `BoundaryRef` contract, `make_boundary_id`, and a shared
-  `normalize_http_path`; boundaries with identical ids collapse on
-  `GraphLens.merge(..., allow_shared=True)` so a server and a client in
-  different languages meet at one node (TCK-6).
-- **adapters**: cross-language boundary extraction for Python, TypeScript,
-  Go, and Rust — HTTP/REST routes and clients (all four), message-queue
-  producers/consumers (all four), Temporal activities (Python, Go), and
-  gRPC services/stubs (Python, Go, Rust). Each adapter accepts a
-  `boundary_extractors` constructor parameter for custom overrides (TCK-6).
-- **link**: new `graphlens-link` package — `link_graph()` pairs each
-  `CONSUMES` with the matching `EXPOSES` on a boundary and emits a
-  `COMMUNICATES_WITH` edge (consumer → provider), idempotently, with a
-  `min_confidence` filter (TCK-6).
-- **cli**: `mcp` subcommand — a Model Context Protocol server exposing the
-  graph query API (stats, find, callers/callees/references, neighbors,
-  boundaries, communicates-with) to agents, behind an optional `mcp` extra
-  (TCK-7).
-- **go**: `GoplsResolver` — a gopls LSP-backed `SymbolResolver`. The visitor
-  collects call and struct/interface-embedding occurrences and the adapter
-  resolves them to CALLS and INHERITS_FROM edges from real cross-file
-  definitions; the structure-only `GoResolver` is kept as an injectable
-  fallback (TCK-12).
-- **rust**: `RustAnalyzerResolver` — a rust-analyzer LSP-backed
-  `SymbolResolver`; the structure-only `RustResolver` is kept as an
-  injectable fallback (TCK-12).
-- **examples**: `demo_cross_language.py` merges a Python server graph with a
-  TypeScript client graph and runs `link_graph` to print the resolved
-  `COMMUNICATES_WITH` edges.
-- **docker**: a published GHCR image (`ghcr.io/neko1313/graphlens`) bundling
-  the CLI, every adapter, and the toolchains their resolvers drive (ty, Node,
-  Go + gopls, Rust + rust-analyzer) so projects can run the full analysis in
-  CI with `docker run … analyze /workspace`; built from source and published
-  on each release, with a build-only check on pull requests that touch it.
+- feat: graph IR + Go/Rust LSP semantics, cross-language boundaries, MCP, CLI, Docker & docs by @Neko1313 in [#12](https://github.com/Neko1313/graphlens/pull/12)
 
-### Bug Fixes
 
-- **python**: `analyze(str)` no longer crashes; relative roots resolve so
-  the ty LSP starts instead of silently producing an import-only graph.
-- **rust**: extract items inside inline `mod foo { ... }` blocks (functions,
-  types, impls, `use` imports, calls) instead of silently dropping them —
-  idiomatic modules such as `#[cfg(test)] mod tests` are no longer invisible.
-- **typescript**: `fetch(url, {method: "..."})` is keyed by its real HTTP
-  method instead of always `GET`, so non-GET calls link to the right route;
-  `app.get("view engine")`-style settings getters no longer register as routes.
-- **go**: `go.mod` parsing no longer captures the `require (` block opener as a
-  bogus `(` dependency; generic interface type-sets (`interface { A | B }`) are
-  no longer mis-modeled as embedding/`INHERITS_FROM`; `_package_qname` no longer
-  raises for a file passed outside the module root.
-- **rust**: a reqwest-style `.get("/path")` on a gRPC client variable is no
-  longer double-counted as a spurious gRPC RPC boundary.
-- **go/rust**: `internal` imports now resolve `RESOLVES_TO` the real `MODULE`
-  node when present (falling back to `EXTERNAL_SYMBOL`), per the import-origin
-  contract; LSP resolvers drain `publishDiagnostics` after `didOpen` and
-  resolve symlinked paths so internal definitions classify correctly.
-- **core**: `GraphDiff` keys relations by metadata too, so duplicate call-site
-  edges and metadata-only edge changes are no longer lost; `normalize_http_path`
-  only collapses `:param` at a segment start, preserving literal colons
-  (`/v1/users/123:activate`); `merge` keeps the worst `resolver_status` instead
-  of letting the last graph win.
-- **link**: cross-language edges dedupe per boundary, so two distinct contracts
-  between the same consumer/provider pair both produce a `COMMUNICATES_WITH`.
-- **cli**: a foreign `resolver_status` is parsed leniently instead of crashing
-  `analyze`; MCP tools expose typed schemas (e.g. `neighbors` `depth: int`).
 
-### Dependencies
 
-- **python**: pin `ty==0.0.26` (pre-1.0; 0.0.x can change LSP behaviour)
-  for reproducible analysis (TCK-8).
-
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.4.0...v0.5.0
 ## [0.4.0] - 2026-06-20
 ### Bug Fixes
 
