@@ -29,6 +29,37 @@ All notable changes to this project will be documented in this file.
   `analyze --strict` exit code, and a `query` subcommand over a saved graph
   (callers/callees/references/neighbors); `--lang go`/`rust` and
   auto-detect (TCK-11).
+- **adapters**: declarative tree-sitter query helpers (`_queries.run_query`,
+  cached `Query`/`QueryCursor`) now back pattern matching instead of
+  hand-written traversals (TCK-5).
+- **core**: cross-language boundary model — a language-agnostic `BOUNDARY`
+  node plus `EXPOSES` / `CONSUMES` / `COMMUNICATES_WITH` relations, the
+  `BoundaryRef` contract, `make_boundary_id`, and a shared
+  `normalize_http_path`; boundaries with identical ids collapse on
+  `GraphLens.merge(..., allow_shared=True)` so a server and a client in
+  different languages meet at one node (TCK-6).
+- **adapters**: cross-language boundary extraction for Python, TypeScript,
+  Go, and Rust — HTTP/REST routes and clients (all four), message-queue
+  producers/consumers (all four), Temporal activities (Python, Go), and
+  gRPC services/stubs (Python, Go, Rust). Each adapter accepts a
+  `boundary_extractors` constructor parameter for custom overrides (TCK-6).
+- **link**: new `graphlens-link` package — `link_graph()` pairs each
+  `CONSUMES` with the matching `EXPOSES` on a boundary and emits a
+  `COMMUNICATES_WITH` edge (consumer → provider), idempotently, with a
+  `min_confidence` filter (TCK-6).
+- **cli**: `mcp` subcommand — a Model Context Protocol server exposing the
+  graph query API (stats, find, callers/callees/references, neighbors,
+  boundaries, communicates-with) to agents, behind an optional `mcp` extra
+  (TCK-7).
+- **go**: `GoplsResolver` — a gopls LSP-backed `SymbolResolver` that emits
+  CALLS edges resolved from real cross-file definitions; the structure-only
+  `GoResolver` is kept as an injectable fallback (TCK-12).
+- **rust**: `RustAnalyzerResolver` — a rust-analyzer LSP-backed
+  `SymbolResolver`; the structure-only `RustResolver` is kept as an
+  injectable fallback (TCK-12).
+- **examples**: `demo_cross_language.py` merges a Python server graph with a
+  TypeScript client graph and runs `link_graph` to print the resolved
+  `COMMUNICATES_WITH` edges.
 
 ### Bug Fixes
 

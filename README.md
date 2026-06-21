@@ -34,7 +34,8 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 
 - **Language-agnostic** — one shared model for Python, TypeScript, Rust, …
 - **Plugin-based adapters** — each language is a separate package, registered via Python entry points
-- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript)
+- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript, gopls for Go, rust-analyzer for Rust)
+- **Cross-language aware** — adapters emit language-agnostic `BOUNDARY` ports (HTTP, queues, gRPC, Temporal); `graphlens-link` connects a consumer in one language to a provider in another
 - **Monorepo aware** — `can_handle()` and `find_*_roots()` handle multi-language repos correctly
 - **Deterministic node IDs** — SHA-256 hash of `project::kind::qualified_name` → stable across re-scans
 
@@ -135,7 +136,18 @@ graphlens visualize . --output graph.html --no-open
 # Export to Neo4j
 graphlens neo4j <project_root> --uri bolt://localhost:7687 --user neo4j --password secret
 graphlens neo4j . --wipe --batch-size 200
+
+# Serve the graph to agents over the Model Context Protocol (needs the
+# optional `mcp` extra: pip install "graphlens-cli[mcp]")
+graphlens mcp --graph graph.json
 ```
+
+### `mcp` — Model Context Protocol server
+
+Exposes a saved graph to LLM agents as MCP tools: `graph_stats`,
+`find_nodes`, `callers`, `callees`, `references`, `neighbors`,
+`boundaries`, and `communicates_with`. Install with the `mcp` extra and
+point it at a JSON graph produced by `graphlens analyze --output`.
 
 ### `visualize` — interactive HTML graph viewer
 
@@ -185,6 +197,7 @@ pip install "graphlens-cli[neo4j]"
 | `IMPORT` | Import statement |
 | `DEPENDENCY` | Declared package dependency |
 | `EXTERNAL_SYMBOL` | External symbol (stdlib, third-party, or unknown); carries `metadata["origin"]` |
+| `BOUNDARY` | Cross-language interface port (HTTP route, queue topic, gRPC method, Temporal activity); shared id collapses matching server/client across languages |
 
 ### Relation kinds
 
@@ -199,6 +212,29 @@ pip install "graphlens-cli[neo4j]"
 | `INHERITS_FROM` | Class inheritance (resolved to declaration node) |
 | `HAS_TYPE` | Type annotation/inference edge (function/param/variable → class or external) |
 | `DEPENDS_ON` | Package dependency |
+| `EXPOSES` | A server/provider exposes a `BOUNDARY` (e.g. an HTTP route handler) |
+| `CONSUMES` | A client/consumer consumes a `BOUNDARY` (e.g. an HTTP call) |
+| `COMMUNICATES_WITH` | Consumer → provider, added by `graphlens-link` from matching `EXPOSES`/`CONSUMES` |
+
+### Cross-language boundaries
+
+Adapters emit `BOUNDARY` ports for the interfaces a service exposes or
+consumes — HTTP/REST routes and clients, message-queue topics, gRPC
+methods, and Temporal activities. Each port has a language-agnostic id
+(`make_boundary_id(mechanism, key)`), so a Python FastAPI route and a
+TypeScript `fetch` call to the same path collapse onto **one** `BOUNDARY`
+node when their graphs are merged. The `graphlens-link` package then pairs
+`CONSUMES` with `EXPOSES` into `COMMUNICATES_WITH` edges:
+
+```python
+from graphlens_link import link_graph
+
+merged = python_graph.merge(ts_graph, allow_shared=True)
+result = link_graph(merged)          # adds COMMUNICATES_WITH edges
+```
+
+See `examples/demo_cross_language.py` for a Python-server ↔ TypeScript-client
+walkthrough.
 
 ## Adapter plugin system
 
@@ -263,9 +299,10 @@ graphlens/                      ← uv workspace root (core library)
   packages/
     graphlens-python/           ← Python adapter (tree-sitter + ty)
     graphlens-typescript/       ← TypeScript adapter (tree-sitter + Compiler API)
-    graphlens-go/               ← Go adapter (tree-sitter + go.mod)
-    graphlens-rust/             ← Rust adapter (tree-sitter + Cargo.toml)
-    graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j
+    graphlens-go/               ← Go adapter (tree-sitter + gopls)
+    graphlens-rust/             ← Rust adapter (tree-sitter + rust-analyzer)
+    graphlens-link/             ← cross-language linker (COMMUNICATES_WITH)
+    graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j, mcp
   tests/                         ← core tests (100% coverage)
   examples/                      ← standalone usage examples
 ```
