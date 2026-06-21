@@ -186,13 +186,18 @@ def _occ(line=2, col=3, enclosing="caller"):
     )
 
 
-def _resolve(graph, resolver, occs):
+def _resolve(graph, resolver, occs, project_root=Path("/nonexistent")):
     from graphlens.utils import SpanIndex
 
     from graphlens_go._adapter import _resolve_occurrences
 
     _resolve_occurrences(
-        graph, "m", resolver, SpanIndex.from_graph(graph), occs
+        graph,
+        "m",
+        project_root,
+        resolver,
+        SpanIndex.from_graph(graph),
+        occs,
     )
 
 
@@ -222,6 +227,16 @@ def test_resolve_internal_hit_emits_call_edge():
     calls = _calls(g)
     assert len(calls) == 1
     assert calls[0].source_id == "caller"
+    assert calls[0].target_id == "callee"
+
+
+def test_resolve_internal_hit_with_absolute_path(tmp_path):
+    """An absolute resolver path is relativized to the graph's convention."""
+    g = _resolution_graph()
+    ref = _ref("internal", file_path=tmp_path / "a.go", line=5, col=6)
+    _resolve(g, _FakeResolver(ref), [_occ()], project_root=tmp_path)
+    calls = _calls(g)
+    assert len(calls) == 1
     assert calls[0].target_id == "callee"
 
 

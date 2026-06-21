@@ -203,7 +203,7 @@ def _analyze_root(  # noqa: PLR0913
     span_index = SpanIndex.from_graph(graph)
     resolver.prepare(go_root, files)
     _resolve_occurrences(
-        graph, project_name, resolver, span_index, occurrences
+        graph, project_name, project_root, resolver, span_index, occurrences
     )
 
     _extract_boundaries(graph, parsed_files, boundary_extractors)
@@ -229,9 +229,25 @@ def _ensure_external_symbol(
     return sym_id
 
 
-def _resolve_occurrences(
+def _relative_to(file_path: Path, project_root: Path) -> str:
+    """
+    Map an absolute resolver path to the graph's project-relative form.
+
+    The resolver (gopls) returns absolute paths, but graph nodes store
+    file paths relative to ``project_root``; reconcile them so SpanIndex
+    lookups hit. Falls back to the absolute string for paths outside the
+    project (which then resolve to an EXTERNAL_SYMBOL).
+    """
+    try:
+        return str(file_path.resolve().relative_to(project_root))
+    except (ValueError, OSError):
+        return str(file_path)
+
+
+def _resolve_occurrences(  # noqa: PLR0913
     graph: GraphLens,
     project_name: str,
+    project_root: Path,
     resolver: SymbolResolver,
     span_index: SpanIndex,
     occurrences: list[tuple[str, OccurrenceRef]],
@@ -245,7 +261,9 @@ def _resolve_occurrences(
         target_id: str | None = None
         if ref.origin == "internal" and ref.file_path is not None:
             target_id = span_index.at(
-                str(ref.file_path), ref.line, ref.col
+                _relative_to(ref.file_path, project_root),
+                ref.line,
+                ref.col,
             )
         if target_id is None:
             fallback_qname = (
