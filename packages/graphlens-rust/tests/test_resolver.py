@@ -14,6 +14,7 @@ from graphlens_rust._resolver import (
     _in_cargo_registry,
     _in_rust_stdlib,
     _loc_uri_and_start,
+    _resolve_ra_binary,
     _RustAnalyzerClient,
     _uri_to_path,
 )
@@ -21,6 +22,45 @@ from graphlens_rust._resolver import (
 # ---------------------------------------------------------------------------
 # Module helpers
 # ---------------------------------------------------------------------------
+
+
+def test_resolve_ra_binary_prefers_rustup_which(tmp_path):
+    # rustup resolves to the real toolchain binary; that path is returned so a
+    # project's rust-toolchain.toml can't redirect the proxy to a toolchain
+    # without the rust-analyzer component (the ruff failure).
+    real = tmp_path / "rust-analyzer"
+    real.write_text("#!/bin/sh\n")
+    with patch.object(
+        shutil, "which",
+        side_effect={
+            "rust-analyzer": "/root/.cargo/bin/rust-analyzer",
+            "rustup": "/root/.cargo/bin/rustup",
+        }.get,
+    ), patch("graphlens_rust._resolver.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stdout=f"{real}\n")
+        assert _resolve_ra_binary() == str(real)
+
+
+def test_resolve_ra_binary_falls_back_without_rustup():
+    with patch.object(
+        shutil, "which",
+        side_effect=lambda name: (
+            "/usr/bin/rust-analyzer" if name == "rust-analyzer" else None
+        ),
+    ):
+        assert _resolve_ra_binary() == "/usr/bin/rust-analyzer"
+
+
+def test_resolve_ra_binary_falls_back_when_rustup_which_fails():
+    with patch.object(
+        shutil, "which",
+        side_effect={
+            "rust-analyzer": "/root/.cargo/bin/rust-analyzer",
+            "rustup": "/root/.cargo/bin/rustup",
+        }.get,
+    ), patch("graphlens_rust._resolver.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=1, stdout="")
+        assert _resolve_ra_binary() == "/root/.cargo/bin/rust-analyzer"
 
 
 def test_uri_to_path_file_scheme():
