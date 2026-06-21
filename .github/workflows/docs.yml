@@ -38,6 +38,9 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           run_install: false
+          # The repo root has no package.json (it is a uv/Python workspace),
+          # so point action-setup at the docs package for the pnpm version.
+          package_json_file: website/package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
