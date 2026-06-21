@@ -14,12 +14,12 @@
 
 FROM python:3.13-slim
 
-ARG GO_VERSION=1.22.10
+ARG GO_VERSION=1.26.0
+ARG GOPLS_VERSION=v0.22.0
 ARG NODE_MAJOR=20
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GOPATH=/root/go \
-    GOTOOLCHAIN=local \
     PATH="/root/.cargo/bin:/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # --- Base OS deps -----------------------------------------------------------
@@ -43,7 +43,7 @@ RUN ARCH="$(dpkg --print-architecture)" \
         -o /tmp/go.tar.gz \
     && tar -C /usr/local -xzf /tmp/go.tar.gz \
     && rm /tmp/go.tar.gz \
-    && go install golang.org/x/tools/gopls@latest \
+    && go install "golang.org/x/tools/gopls@${GOPLS_VERSION}" \
     && rm -rf /root/.cache/go-build
 
 # --- Rust toolchain + rust-analyzer (Rust semantic resolver) ----------------
