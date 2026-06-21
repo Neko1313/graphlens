@@ -32,6 +32,20 @@ def test_parse_require_single_line(tmp_path):
     assert "github.com/a/b" in GoModParser().parse(tmp_path)
 
 
+def test_parse_single_line_then_block_no_paren(tmp_path):
+    # A single-line require followed by a require(...) block must not capture
+    # the block opener's "(" as a module path.
+    (tmp_path / "go.mod").write_text(
+        "module x\n"
+        "require golang.org/x/sync v0.1.0\n"
+        "require (\n\tgithub.com/a/b v1.0.0\n)\n"
+    )
+    deps = GoModParser().parse(tmp_path)
+    assert "golang.org/x/sync" in deps
+    assert "github.com/a/b" in deps
+    assert "(" not in deps
+
+
 def test_parse_missing_file_returns_empty(tmp_path):
     assert GoModParser().parse(tmp_path) == frozenset()
 

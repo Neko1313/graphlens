@@ -72,6 +72,31 @@ All notable changes to this project will be documented in this file.
 
 - **python**: `analyze(str)` no longer crashes; relative roots resolve so
   the ty LSP starts instead of silently producing an import-only graph.
+- **rust**: extract items inside inline `mod foo { ... }` blocks (functions,
+  types, impls, `use` imports, calls) instead of silently dropping them —
+  idiomatic modules such as `#[cfg(test)] mod tests` are no longer invisible.
+- **typescript**: `fetch(url, {method: "..."})` is keyed by its real HTTP
+  method instead of always `GET`, so non-GET calls link to the right route;
+  `app.get("view engine")`-style settings getters no longer register as routes.
+- **go**: `go.mod` parsing no longer captures the `require (` block opener as a
+  bogus `(` dependency; generic interface type-sets (`interface { A | B }`) are
+  no longer mis-modeled as embedding/`INHERITS_FROM`; `_package_qname` no longer
+  raises for a file passed outside the module root.
+- **rust**: a reqwest-style `.get("/path")` on a gRPC client variable is no
+  longer double-counted as a spurious gRPC RPC boundary.
+- **go/rust**: `internal` imports now resolve `RESOLVES_TO` the real `MODULE`
+  node when present (falling back to `EXTERNAL_SYMBOL`), per the import-origin
+  contract; LSP resolvers drain `publishDiagnostics` after `didOpen` and
+  resolve symlinked paths so internal definitions classify correctly.
+- **core**: `GraphDiff` keys relations by metadata too, so duplicate call-site
+  edges and metadata-only edge changes are no longer lost; `normalize_http_path`
+  only collapses `:param` at a segment start, preserving literal colons
+  (`/v1/users/123:activate`); `merge` keeps the worst `resolver_status` instead
+  of letting the last graph win.
+- **link**: cross-language edges dedupe per boundary, so two distinct contracts
+  between the same consumer/provider pair both produce a `COMMUNICATES_WITH`.
+- **cli**: a foreign `resolver_status` is parsed leniently instead of crashing
+  `analyze`; MCP tools expose typed schemas (e.g. `neighbors` `depth: int`).
 
 ### Dependencies
 

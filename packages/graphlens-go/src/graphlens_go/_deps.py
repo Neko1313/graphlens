@@ -12,7 +12,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _REQUIRE_BLOCK = re.compile(r"require\s*\((.*?)\)", re.DOTALL)
-_REQUIRE_LINE = re.compile(r"^\s*require\s+(\S+)\s+\S+", re.MULTILINE)
+# Single-line ``require <path> <version>``. Whitespace is restricted to
+# spaces/tabs (not ``\s``, which spans newlines) so the block opener
+# ``require (`` — whose path/version live on following lines — is not matched
+# and ``(`` is never captured as a module path.
+_REQUIRE_LINE = re.compile(r"^[ \t]*require[ \t]+(\S+)[ \t]+\S+", re.MULTILINE)
 _MODULE_RE = re.compile(r"^\s*module\s+(\S+)", re.MULTILINE)
 
 

@@ -11,6 +11,22 @@ def test_scheme_without_path() -> None:
     assert normalize_http_path("http://host") == "/"
 
 
+def test_colon_param_at_segment_start() -> None:
+    assert normalize_http_path("/users/:id") == "/users/{}"
+    assert (
+        normalize_http_path("/users/:id/posts/:pid") == "/users/{}/posts/{}"
+    )
+
+
+def test_literal_colon_in_segment_preserved() -> None:
+    # A colon inside a segment (custom verbs, digests) is not a path param.
+    assert (
+        normalize_http_path("/v1/users/123:activate")
+        == "/v1/users/123:activate"
+    )
+    assert normalize_http_path("/repo/sha256:abc") == "/repo/sha256:abc"
+
+
 def test_adds_leading_slash() -> None:
     assert normalize_http_path("api/x") == "/api/x"
 

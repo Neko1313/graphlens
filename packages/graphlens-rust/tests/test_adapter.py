@@ -3,9 +3,20 @@
 from pathlib import Path
 
 import pytest
-from graphlens import RESOLVER_STATUS_KEY, AdapterError, NodeKind
+from graphlens import (
+    RESOLVER_STATUS_KEY,
+    AdapterError,
+    GraphLens,
+    Node,
+    NodeKind,
+    RelationKind,
+)
 
 from graphlens_rust import RustAdapter
+from graphlens_rust._adapter import (
+    _module_candidates,
+    _resolve_internal_imports,
+)
 
 
 def _kinds(graph):
@@ -61,7 +72,79 @@ def test_import_origins(sample_rust_project: Path):
     }
     assert "stdlib" in origins
     assert "third_party" in origins
-    assert "internal" in origins
+
+
+def test_internal_import_resolves_to_module(sample_rust_project: Path):
+    # `use crate::util::helper` binds RESOLVES_TO the real `demo::util`
+    # MODULE node rather than an EXTERNAL_SYMBOL (CLAUDE.md §9).
+    graph = RustAdapter().analyze(sample_rust_project)
+    imp = next(
+        n
+        for n in graph.nodes.values()
+        if n.kind == NodeKind.IMPORT and n.name == "crate::util::helper"
+    )
+    targets = [
+        graph.nodes[r.target_id]
+        for r in graph.outgoing(imp.id, RelationKind.RESOLVES_TO)
+    ]
+    assert any(
+        t.kind == NodeKind.MODULE and t.qualified_name == "demo::util"
+        for t in targets
+    )
+
+
+def test_module_candidates_crate_and_crate_name_rooted():
+    assert _module_candidates("crate::util::helper", "demo", "demo") == [
+        "demo::util::helper",
+        "demo::util",
+    ]
+    assert _module_candidates("demo::util::helper", "demo", "demo") == [
+        "demo::util::helper",
+        "demo::util",
+    ]
+
+
+def test_module_candidates_self_and_super():
+    assert _module_candidates("self::helper", "demo", "demo::util") == [
+        "demo::util::helper",
+        "demo::util",
+    ]
+    assert _module_candidates(
+        "super::sibling", "demo", "demo::util::helper"
+    ) == ["demo::util::sibling", "demo::util"]
+
+
+def test_module_candidates_edge_cases():
+    # `super` past the crate root, and an empty path, yield no candidates.
+    assert _module_candidates("super::super::x", "demo", "demo") == []
+    assert _module_candidates("", "demo", "demo") == []
+    # A single segment has no parent candidate.
+    assert _module_candidates("crate", "demo", "demo") == ["demo"]
+    # All-`super` path (no trailing item) resolves to the ancestor module.
+    assert _module_candidates("super::super", "demo", "demo::a::b") == [
+        "demo"
+    ]
+
+
+def test_resolve_internal_imports_falls_back_to_external_symbol():
+    # An internal import whose module was not analyzed still gets an edge.
+    graph = GraphLens()
+    graph.add_node(
+        Node(
+            id="imp1",
+            kind=NodeKind.IMPORT,
+            qualified_name="src/m.rs::crate::missing",
+            name="crate::missing",
+        )
+    )
+    _resolve_internal_imports(
+        graph, "demo", [("imp1", "crate::missing", "demo")], {}
+    )
+    rels = graph.outgoing("imp1", RelationKind.RESOLVES_TO)
+    assert len(rels) == 1
+    target = graph.nodes[rels[0].target_id]
+    assert target.kind == NodeKind.EXTERNAL_SYMBOL
+    assert target.metadata["origin"] == "internal"
 
 
 def test_explicit_files(sample_rust_project: Path):

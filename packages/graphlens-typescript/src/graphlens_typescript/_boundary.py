@@ -84,6 +84,48 @@ def _first_url(args: TSNode) -> str | None:
     return _url_template(kids[0])
 
 
+def _string_literal(node: TSNode) -> str | None:
+    """Return the content of a plain ``"..."`` string literal, else None."""
+    if node.type != "string":
+        return None
+    for child in node.children:
+        if child.type == "string_fragment":
+            return _text(child)
+    return ""
+
+
+def _fetch_method(args: TSNode) -> str:
+    """
+    Return the HTTP method from ``fetch(url, {method: "..."})``.
+
+    Defaults to ``GET`` when there is no options object or the ``method``
+    value is not a string literal (so a non-GET fetch is keyed correctly
+    instead of always being recorded as a GET boundary).
+    """
+    kids = args.named_children
+    if len(kids) < 2 or kids[1].type != "object":  # noqa: PLR2004
+        return "GET"
+    for pair in kids[1].named_children:
+        if pair.type != "pair":
+            continue
+        key = pair.child_by_field_name("key")
+        if key is None:  # pragma: no cover - a pair always has a key
+            continue
+        key_name = _string_literal(key) if key.type == "string" else _text(key)
+        if key_name != "method":
+            continue
+        value = pair.child_by_field_name("value")
+        method = _string_literal(value) if value is not None else None
+        if method:
+            return method.upper()
+    return "GET"
+
+
+def _is_http_path(url: str) -> bool:
+    """Return True if *url* looks like a request path or absolute URL."""
+    return url.startswith("/") or "://" in url
+
+
 class TsBoundaryExtractor(ABC):
     """Recognizes one boundary mechanism in a parsed TypeScript file."""
 
@@ -128,7 +170,9 @@ class HttpServerExtractor(TsBoundaryExtractor):
             if method not in _HTTP_VERBS:
                 continue
             url = _first_url(caps["args"][0])
-            if url is None:
+            # Express routes are absolute paths; a non-path string is an
+            # ``app.get("view engine")`` settings getter, not a route.
+            if url is None or not _is_http_path(url):
                 continue
             refs.append(
                 _http_ref("server", method.upper(), url, caps["method"][0])
@@ -138,7 +182,9 @@ class HttpServerExtractor(TsBoundaryExtractor):
             if method not in _HTTP_VERBS:
                 continue
             url = _first_url(caps["args"][0])
-            if url is None:
+            # NestJS decorator paths may be relative (``@Get("users")``) but
+            # an empty string is never a real route.
+            if not url:
                 continue
             refs.append(
                 _http_ref("server", method.upper(), url, caps["deco"][0])
@@ -158,11 +204,10 @@ class HttpClientExtractor(TsBoundaryExtractor):
             if _text(caps["fn"][0]) != "fetch":
                 continue
             url = _first_url(caps["args"][0])
-            if url is None or (
-                not url.startswith("/") and "://" not in url
-            ):
+            if url is None or not _is_http_path(url):
                 continue
-            refs.append(_http_ref("client", "GET", url, caps["fn"][0]))
+            method = _fetch_method(caps["args"][0])
+            refs.append(_http_ref("client", method, url, caps["fn"][0]))
         for caps in run_query(_Q_MEMBER_CALL, root, lang):
             if _text(caps["obj"][0]) not in _CLIENT_OBJECTS:
                 continue
@@ -170,9 +215,7 @@ class HttpClientExtractor(TsBoundaryExtractor):
             if method not in _HTTP_VERBS:
                 continue
             url = _first_url(caps["args"][0])
-            if url is None or (
-                not url.startswith("/") and "://" not in url
-            ):
+            if url is None or not _is_http_path(url):
                 continue
             refs.append(
                 _http_ref("client", method.upper(), url, caps["method"][0])

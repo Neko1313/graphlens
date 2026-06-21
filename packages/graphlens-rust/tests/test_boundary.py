@@ -181,6 +181,17 @@ class TestGrpc:
         code = _fn("let c = Client::new(conn); let r = c.get_user(req);")
         assert self.ex.extract(_root(code)) == []
 
+    def test_http_style_call_on_grpc_var_not_grpc(self):
+        # A reqwest-style `.get("/url")` on a gRPC client var is an HTTP call,
+        # not a gRPC RPC — it must not be double-emitted as gRPC.
+        code = (
+            "fn run() {\n"
+            "  let client = pb::UserServiceClient::connect(addr).await?;\n"
+            '  let r = client.get("/api/v1/users/42").await?;\n'
+            "}\n"
+        )
+        assert self.ex.extract(_root(code)) == []
+
     def test_non_ctor_scoped_call_ignored(self):
         code = _fn("let x = foo::Bar::baz(y); let r = x.get_user(req);")
         assert self.ex.extract(_root(code)) == []

@@ -124,6 +124,9 @@ class GoStructureExtractor:
         self._ctx = ctx
         self._classify = classify
         self.occurrences: list[OccurrenceRef] = []
+        # (import_node_id, import_path) for ``internal`` imports, resolved to
+        # the real MODULE node by the adapter once all packages exist.
+        self.internal_imports: list[tuple[str, str]] = []
 
     def extract(self, root: TSNode) -> None:
         """Dispatch each top-level child to its ``_on_<type>`` handler."""
@@ -212,10 +215,16 @@ class GoStructureExtractor:
         for elem in iface_type.children:
             if elem.type != "type_elem":
                 continue
-            for child in elem.named_children:
-                name_node = _type_name_node(child)
-                if name_node is not None:
-                    self._add_occurrence("base", name_node, enclosing_id)
+            # A ``type_elem`` with more than one term is a generic type-set
+            # union (``A | B``, ``~int``), i.e. a constraint — not interface
+            # embedding. Real embedding has exactly one term per element
+            # (separate embeds use separate ``type_elem``s).
+            terms = elem.named_children
+            if len(terms) != 1:
+                continue
+            name_node = _type_name_node(terms[0])
+            if name_node is not None:
+                self._add_occurrence("base", name_node, enclosing_id)
 
     def _on_function_declaration(self, node: TSNode) -> None:
         name_node = node.child_by_field_name("name")
@@ -310,6 +319,11 @@ class GoStructureExtractor:
         self._graph.add_relation(
             Relation(self._ctx.file_id, imp_id, RelationKind.DECLARES)
         )
+        if origin == "internal":
+            # Defer: bind to the real MODULE node once every package has been
+            # created (falls back to an EXTERNAL_SYMBOL if none matches).
+            self.internal_imports.append((imp_id, import_path))
+            return
         sym_id = make_node_id(
             self._ctx.project_name,
             import_path,

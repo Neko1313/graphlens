@@ -34,6 +34,29 @@ def _names(g: GraphLens, kind: NodeKind) -> set[str]:
     return {n.name for n in g.nodes.values() if n.kind == kind}
 
 
+def _base_occurrences(source: str):
+    g = GraphLens()
+    ctx = GoFileContext(
+        project_name="p",
+        package_qname="m/pkg",
+        file_id="file1",
+        file_rel="pkg/a.go",
+    )
+    ex = GoStructureExtractor(g, ctx, lambda _path: "stdlib")
+    ex.extract(parse_go(source.encode()).root_node)
+    return [o for o in ex.occurrences if o.role == "base"]
+
+
+def test_interface_embedding_emits_base():
+    assert _base_occurrences("package pkg\ntype R interface { Reader }\n")
+
+
+def test_interface_typeset_union_not_base():
+    # `A | B` is a generic type-set constraint, not interface embedding.
+    occs = _base_occurrences("package pkg\ntype N interface { A | B }\n")
+    assert occs == []
+
+
 def test_function_and_method():
     g = _extract("package pkg\nfunc Foo() {}\nfunc (r Bar) Baz() {}\n")
     assert "Foo" in _names(g, NodeKind.FUNCTION)

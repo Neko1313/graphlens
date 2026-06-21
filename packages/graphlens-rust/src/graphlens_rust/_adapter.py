@@ -185,6 +185,7 @@ def _analyze_root(  # noqa: PLR0913
     modules: dict[str, str] = {}
     parsed_files: list[tuple[str, str, TSNode]] = []
     occurrences: list[tuple[str, OccurrenceRef]] = []
+    internal_imports: list[tuple[str, str, str]] = []
     for file in files:
         module_qname = _module_qname(file, crate_root, crate_name)
         module_id = _ensure_module(
@@ -212,6 +213,11 @@ def _analyze_root(  # noqa: PLR0913
         occurrences.extend(
             (str(file), occ) for occ in extractor.occurrences
         )
+        internal_imports.extend(extractor.internal_imports)
+
+    # Bind internal imports to the MODULE node they reference (now that every
+    # module exists), falling back to an EXTERNAL_SYMBOL when none matches.
+    _resolve_internal_imports(graph, crate_name, internal_imports, modules)
 
     # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
     span_index = SpanIndex.from_graph(graph)
@@ -221,6 +227,73 @@ def _analyze_root(  # noqa: PLR0913
     )
 
     _extract_boundaries(graph, parsed_files, boundary_extractors)
+
+
+def _module_candidates(
+    import_path: str, crate_name: str, module_qname: str
+) -> list[str]:
+    """
+    Return MODULE qnames an internal ``use`` path may resolve to.
+
+    Translates the path root to the crate-rooted module namespace
+    (``crate`` -> crate name, ``self`` -> current module, ``super`` ->
+    parent), then offers the full path (the path *is* a module) and its
+    parent (the final segment is an imported item, not a module).
+    """
+    segs = [s.strip() for s in import_path.split("::") if s.strip()]
+    if not segs:
+        return []
+    head = segs[0]
+    if head == "crate":
+        base, rest = [crate_name], segs[1:]
+    elif head == "self":
+        base, rest = module_qname.split("::"), segs[1:]
+    elif head == "super":
+        parts = module_qname.split("::")
+        supers = 0
+        for seg in segs:
+            if seg != "super":
+                break
+            supers += 1
+        if supers >= len(parts):
+            return []
+        base, rest = parts[: len(parts) - supers], segs[supers:]
+    elif crate_name and head.replace("-", "_") == crate_name.replace("-", "_"):
+        base, rest = [crate_name], segs[1:]
+    else:  # pragma: no cover - classifier only marks the above as internal
+        return []
+    full = [*base, *rest]
+    candidates = ["::".join(full)] if full else []
+    if len(full) > 1:
+        candidates.append("::".join(full[:-1]))
+    return candidates
+
+
+def _resolve_internal_imports(
+    graph: GraphLens,
+    crate_name: str,
+    internal_imports: list[tuple[str, str, str]],
+    modules: dict[str, str],
+) -> None:
+    """
+    Resolve each ``internal`` import to its MODULE node (per CLAUDE.md §9).
+
+    Imports whose module was not analyzed fall back to an EXTERNAL_SYMBOL so
+    the ``RESOLVES_TO`` edge is never missing.
+    """
+    for imp_id, import_path, module_qname in internal_imports:
+        target_id: str | None = None
+        for cand in _module_candidates(import_path, crate_name, module_qname):
+            target_id = modules.get(cand)
+            if target_id is not None:
+                break
+        if target_id is None:
+            target_id = _ensure_external_symbol(
+                graph, crate_name, import_path, "internal"
+            )
+        graph.add_relation(
+            Relation(imp_id, target_id, RelationKind.RESOLVES_TO)
+        )
 
 
 def _ensure_external_symbol(
