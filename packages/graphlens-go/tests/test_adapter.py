@@ -10,7 +10,7 @@ from graphlens import (
     RelationKind,
 )
 
-from graphlens_go import GoAdapter
+from graphlens_go import GoAdapter, GoResolver
 
 
 def _kinds(graph):
@@ -44,7 +44,9 @@ def test_analyze_structural(sample_go_project: Path):
 
 
 def test_analyze_status_unavailable(sample_go_project: Path):
-    graph = GoAdapter().analyze(sample_go_project)
+    # Pin the structure-only fallback so the test asserts the degraded path
+    # regardless of whether gopls (the default) is installed in this env.
+    graph = GoAdapter(resolver=GoResolver()).analyze(sample_go_project)
     assert graph.metadata[RESOLVER_STATUS_KEY] == "unavailable"
 
 
@@ -55,7 +57,9 @@ def test_analyze_accepts_str_path(sample_go_project: Path):
 
 def test_strict_raises_when_unavailable(sample_go_project: Path):
     with pytest.raises(AdapterError, match="strict"):
-        GoAdapter().analyze(sample_go_project, strict=True)
+        GoAdapter(resolver=GoResolver()).analyze(
+            sample_go_project, strict=True
+        )
 
 
 def test_import_origins(sample_go_project: Path):
