@@ -13,6 +13,7 @@ from graphlens_go import GoplsResolver, GoResolver
 from graphlens_go._resolver import (
     _GoplsClient,
     _in_mod_cache,
+    _loc_uri_and_start,
     _uri_to_path,
 )
 
@@ -84,9 +85,56 @@ def test_definition_at_hit(resolver, tmp_path):
     assert ref.origin == "internal"
 
 
+def test_definition_at_locationlink(resolver, tmp_path):
+    """gopls may return a LocationLink (targetUri/targetSelectionRange)."""
+    target = tmp_path / "util.go"
+    resolver._client.definition.return_value = {
+        "targetUri": target.as_uri(),
+        "targetSelectionRange": {"start": {"line": 2, "character": 5}},
+    }
+    ref = resolver.definition_at(tmp_path / "main.go", 4, 1)
+    assert ref is not None
+    assert ref.file_path == target
+    assert ref.line == 3
+    assert ref.col == 6
+    assert ref.origin == "internal"
+
+
 def test_definition_at_miss(resolver, tmp_path):
     resolver._client.definition.return_value = None
     assert resolver.definition_at(tmp_path / "main.go", 1, 1) is None
+
+
+def test_loc_uri_and_start_location():
+    uri, start = _loc_uri_and_start(
+        {"uri": "file:///a.go", "range": {"start": {"line": 1}}}
+    )
+    assert uri == "file:///a.go"
+    assert start == {"line": 1}
+
+
+def test_loc_uri_and_start_locationlink():
+    uri, start = _loc_uri_and_start(
+        {
+            "targetUri": "file:///b.go",
+            "targetSelectionRange": {"start": {"line": 3}},
+        }
+    )
+    assert uri == "file:///b.go"
+    assert start == {"line": 3}
+
+
+def test_loc_uri_and_start_targetrange_fallback():
+    _uri, start = _loc_uri_and_start(
+        {"targetUri": "file:///c.go", "targetRange": {"start": {"line": 4}}}
+    )
+    assert start == {"line": 4}
+
+
+def test_loc_uri_and_start_empty():
+    uri, start = _loc_uri_and_start({})
+    assert uri == ""
+    assert start == {}
 
 
 def test_definition_at_swallows_exception(resolver, tmp_path):

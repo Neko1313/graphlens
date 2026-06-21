@@ -35,6 +35,24 @@ def _in_mod_cache(parts: tuple[str, ...]) -> bool:
     )
 
 
+def _loc_uri_and_start(loc: dict) -> tuple[str, dict]:  # type: ignore[type-arg]
+    """
+    Extract (uri, start) from an LSP Location or LocationLink.
+
+    gopls may return a ``LocationLink`` (``targetUri`` /
+    ``targetSelectionRange``) rather than a plain ``Location`` (``uri`` /
+    ``range``); normalize both so resolution binds to the real definition.
+    """
+    uri = loc.get("uri") or loc.get("targetUri") or ""
+    rng = (
+        loc.get("range")
+        or loc.get("targetSelectionRange")
+        or loc.get("targetRange")
+        or {}
+    )
+    return uri, rng.get("start", {})
+
+
 def _detect_goroot() -> Path | None:  # pragma: no cover - needs go toolchain
     """Return ``go env GOROOT`` as a Path, or None if go is unavailable."""
     go_bin = shutil.which("go")
@@ -302,10 +320,10 @@ class GoplsResolver(SymbolResolver):
             return []
         out: list[Occurrence] = []
         for loc in locs:
-            fp = _uri_to_path(loc.get("uri", ""))
+            uri, start = _loc_uri_and_start(loc)
+            fp = _uri_to_path(uri)
             if fp is None:
                 continue
-            start = loc.get("range", {}).get("start", {})
             out.append(
                 Occurrence(
                     file_path=fp,
@@ -325,8 +343,8 @@ class GoplsResolver(SymbolResolver):
         )
 
     def _loc_to_ref(self, loc: dict) -> ResolvedRef:  # type: ignore[type-arg]
-        fp = _uri_to_path(loc.get("uri", ""))
-        start = loc.get("range", {}).get("start", {})
+        uri, start = _loc_uri_and_start(loc)
+        fp = _uri_to_path(uri)
         return ResolvedRef(
             full_name="",
             file_path=fp,
