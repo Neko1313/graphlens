@@ -201,6 +201,7 @@ class TestInternalHelpers:
             [f],
             PYTHON_DEFAULT_DEP_PARSERS,
             TyResolver(),
+            [],
         )
         # The file path falls back to py_root-relative
         assert graph is not None
