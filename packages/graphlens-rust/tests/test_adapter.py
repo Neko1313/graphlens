@@ -456,3 +456,51 @@ def test_rust_analyzer_integration_runs_pipeline(tmp_path: Path):
     )
     graph = RustAdapter(resolver=RustAnalyzerResolver()).analyze(tmp_path)
     assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"
+
+
+@pytest.mark.skipif(
+    not __import__("shutil").which("rust-analyzer"),
+    reason="rust-analyzer not installed",
+)
+def test_rust_analyzer_resolves_cross_crate_in_workspace(tmp_path: Path):
+    """A call into a sibling workspace crate resolves to its definition.
+
+    Regression guard for the workspace-rooting fix: a single rust-analyzer
+    rooted at the workspace root (not one per member crate) plus waiting for
+    the workspace to finish loading lets ``crate_b`` resolve ``crate_a``'s
+    function as an internal CALLS edge instead of an EXTERNAL_SYMBOL.
+    """
+    from graphlens import NodeKind, RelationKind
+
+    from graphlens_rust import RustAnalyzerResolver
+
+    (tmp_path / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["crate_a", "crate_b"]\nresolver = "2"\n'
+    )
+    a = tmp_path / "crate_a" / "src"
+    a.mkdir(parents=True)
+    (tmp_path / "crate_a" / "Cargo.toml").write_text(
+        '[package]\nname = "crate_a"\nversion = "0.1.0"\nedition = "2021"\n'
+    )
+    (a / "lib.rs").write_text("pub fn helper_a(x: i64) -> i64 { x + 1 }\n")
+    b = tmp_path / "crate_b" / "src"
+    b.mkdir(parents=True)
+    (tmp_path / "crate_b" / "Cargo.toml").write_text(
+        '[package]\nname = "crate_b"\nversion = "0.1.0"\nedition = "2021"\n\n'
+        '[dependencies]\ncrate_a = { path = "../crate_a" }\n'
+    )
+    (b / "lib.rs").write_text(
+        "use crate_a::helper_a;\npub fn run() -> i64 { helper_a(10) }\n"
+    )
+
+    graph = RustAdapter(resolver=RustAnalyzerResolver()).analyze(tmp_path)
+
+    calls = [r for r in graph.relations if r.kind == RelationKind.CALLS]
+    assert calls, "expected at least one CALLS edge"
+    # The cross-crate call must bind to crate_a's real function declaration,
+    # not fall back to an EXTERNAL_SYMBOL.
+    targets = {graph.nodes[r.target_id].kind for r in calls}
+    assert NodeKind.FUNCTION in targets
+    assert NodeKind.EXTERNAL_SYMBOL not in targets
+    metrics = graph.metadata["resolver_metrics"]
+    assert metrics["internal"] >= 1

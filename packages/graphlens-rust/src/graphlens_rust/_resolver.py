@@ -22,6 +22,10 @@ logger = logging.getLogger("graphlens_rust")
 # Consecutive path parts marking Cargo's downloaded-crate cache.
 _REGISTRY = ("registry", "src")
 
+# If rust-analyzer emits no $/progress within this many seconds, assume it does
+# not report progress and treat the workspace as ready (see _wait_until_ready).
+_NO_PROGRESS_GRACE_S = 10.0
+
 
 def _uri_to_path(uri: str) -> Path | None:
     """Convert a ``file://`` URI to a ``Path``; None for other schemes."""
@@ -109,12 +113,15 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         except OSError:
             pass
 
-    def _read_one(self, timeout: float = 30.0) -> dict | None:  # type: ignore[type-arg]
+    def _read_one(
+        self, timeout: float = 30.0, *, warn_on_timeout: bool = True
+    ) -> dict | None:  # type: ignore[type-arg]
         if self._proc.stdout is None or self._proc.poll() is not None:
             return None
         ready, _, _ = select.select([self._proc.stdout], [], [], timeout)
         if not ready:
-            logger.warning("rust-analyzer timed out after %.0fs", timeout)
+            if warn_on_timeout:
+                logger.warning("rust-analyzer timed out after %.0fs", timeout)
             return None
         content_length = 0
         try:
@@ -183,6 +190,9 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
                 "processId": os.getpid(),
                 "rootUri": project_root.as_uri(),
                 "capabilities": {
+                    # Opt into $/progress so we can tell when the workspace has
+                    # finished loading (see _wait_until_ready).
+                    "window": {"workDoneProgress": True},
                     "textDocument": {
                         "definition": {"dynamicRegistration": False},
                         "references": {"dynamicRegistration": False},
@@ -196,6 +206,68 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         )
         if resp is not None:
             self._notify("initialized", {})
+            self._wait_until_ready()
+
+    def _wait_until_ready(self, timeout: float = 240.0) -> None:
+        """
+        Block until rust-analyzer has finished loading the workspace.
+
+        Cross-crate definitions only resolve once rust-analyzer has built the
+        crate graph and primed its caches — completion is signalled by
+        ``$/progress`` notifications, not per-file diagnostics. Returns as soon
+        as every begun progress token has ended (the server is idle), or on
+        timeout. ``window/workDoneProgress/create`` server requests are
+        answered so the server does not stall.
+        """
+        deadline = time.monotonic() + timeout
+        start = time.monotonic()
+        active: set[str | int | None] = set()
+        saw_progress = False
+        while time.monotonic() < deadline:
+            if self._proc.poll() is not None:
+                return
+            msg = self._read_one(
+                timeout=min(deadline - time.monotonic(), 2.0),
+                warn_on_timeout=False,
+            )
+            if msg is None:
+                if saw_progress and not active:
+                    return  # every progress token ended → workspace ready
+                if (
+                    not saw_progress
+                    and time.monotonic() - start > _NO_PROGRESS_GRACE_S
+                ):
+                    return  # server emits no progress; assume ready
+                continue
+            method = msg.get("method", "")
+            msg_id = msg.get("id")
+            if method == "window/workDoneProgress/create":
+                if msg_id is not None:
+                    self._write(
+                        {"jsonrpc": "2.0", "id": msg_id, "result": None}
+                    )
+                continue
+            if method == "$/progress":
+                value = msg.get("params", {}).get("value", {})
+                token = msg.get("params", {}).get("token")
+                kind = value.get("kind")
+                if kind == "begin":
+                    active.add(token)
+                    saw_progress = True
+                elif kind == "end":
+                    active.discard(token)
+                continue
+            if method and msg_id is not None:
+                self._write(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {
+                            "code": -32601,
+                            "message": "Method not found",
+                        },
+                    }
+                )
 
     def open_file(self, file: Path) -> str:
         uri = file.as_uri()
@@ -227,7 +299,10 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         """Drain until publishDiagnostics for *uri* arrives (or timeout)."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            msg = self._read_one(timeout=min(deadline - time.monotonic(), 1.0))
+            msg = self._read_one(
+                timeout=min(deadline - time.monotonic(), 1.0),
+                warn_on_timeout=False,
+            )
             if msg is None:
                 break
             method = msg.get("method", "")
@@ -251,13 +326,13 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
 
     def open_files(self, files: list[Path]) -> None:
         """
-        Open many files at once: send every ``didOpen`` first, then drain.
+        Open many files at once by sending every ``didOpen`` up front.
 
-        Batching the opens lets rust-analyzer index the whole set in parallel
-        and collapses N serial per-file diagnostic waits into one — the bulk
-        of the win on file-heavy crates.
+        No per-file diagnostic wait is needed: :meth:`_wait_until_ready`
+        already blocked until the workspace finished loading, and
+        rust-analyzer processes each ``didOpen`` before the definition
+        requests that follow it (notifications/requests are handled in order).
         """
-        pending: set[str] = set()
         for file in files:
             uri = file.as_uri()
             if uri in self._opened_uris:
@@ -278,41 +353,6 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
                     },
                 },
             )
-            pending.add(uri)
-        if pending:
-            self._drain_for_diagnostics_multi(pending)
-
-    def _drain_for_diagnostics_multi(
-        self, uris: set[str], timeout: float = 60.0
-    ) -> None:
-        """Wait for ``publishDiagnostics`` from every uri (or until time)."""
-        deadline = time.monotonic() + timeout
-        remaining = set(uris)
-        while remaining and time.monotonic() < deadline:
-            if self._proc.poll() is not None:
-                return
-            msg = self._read_one(timeout=min(deadline - time.monotonic(), 2.0))
-            if msg is None:
-                # A quiet slice during workspace load is expected; keep
-                # waiting until the deadline instead of bailing on the first
-                # gap (the per-file drain bailed here and fired queries
-                # before indexing finished, silently yielding no edges).
-                continue
-            method = msg.get("method", "")
-            msg_id = msg.get("id")
-            if method and msg_id is not None:
-                self._write(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "error": {
-                            "code": -32601,
-                            "message": "Method not found",
-                        },
-                    }
-                )
-            elif method == "textDocument/publishDiagnostics":
-                remaining.discard(msg.get("params", {}).get("uri"))
 
     @staticmethod
     def _normalize_result(result: object) -> dict | None:  # type: ignore[type-arg]
