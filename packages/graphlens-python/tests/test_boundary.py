@@ -14,6 +14,7 @@ from graphlens_python._adapter import (
 )
 from graphlens_python._boundary import (
     PY_DEFAULT_BOUNDARY_EXTRACTORS,
+    GrpcExtractor,
     HttpClientExtractor,
     HttpServerExtractor,
     QueueExtractor,
@@ -211,6 +212,86 @@ class TestTemporal:
 
     def test_non_temporal_method_skipped(self):
         code = 'def f():\n    requests.get("/x")\n'
+        assert _keys(self.ex.extract(_root(code)), "client") == set()
+
+
+class TestGrpc:
+    ex = GrpcExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "grpc"
+
+    def test_servicer_methods_are_servers(self):
+        code = (
+            "class S(pb2.UserServiceServicer):\n"
+            "    def __init__(self):\n        pass\n"
+            "    def GetUser(self, req, ctx):\n        pass\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "server") == {
+            "UserService/GetUser"
+        }
+
+    def test_decorated_servicer_method(self):
+        code = (
+            "class S(UserServiceServicer):\n"
+            "    @log\n"
+            "    def GetUser(self, req, ctx):\n        pass\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "server") == {
+            "UserService/GetUser"
+        }
+
+    def test_servicer_with_non_method_body(self):
+        code = (
+            "class S(UserServiceServicer):\n"
+            '    """doc."""\n'
+            "    x = 1\n"
+        )
+        assert self.ex.extract(_root(code)) == []
+
+    def test_servicer_skips_decorated_non_function(self):
+        code = (
+            "class S(UserServiceServicer):\n"
+            "    @deco\n"
+            "    class Inner:\n        pass\n"
+            "    def GetUser(self, r, c):\n        pass\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "server") == {
+            "UserService/GetUser"
+        }
+
+    def test_non_servicer_class_ignored(self):
+        code = "class S(object):\n    def m(self):\n        pass\n"
+        assert self.ex.extract(_root(code)) == []
+
+    def test_bare_servicer_suffix_ignored(self):
+        code = "class S(Servicer):\n    def M(self, r, c):\n        pass\n"
+        assert self.ex.extract(_root(code)) == []
+
+    def test_stub_calls_are_clients(self):
+        code = (
+            "def f():\n"
+            "    x = make()\n"  # non-stub assignment
+            "    stub = pb2.UserServiceStub(ch)\n"
+            "    pb2.helper(z)\n"  # non-stub obj-call
+            "    stub.GetUser(req)\n"
+            "    stub.GetOrder(req)\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "client") == {
+            "UserService/GetUser",
+            "UserService/GetOrder",
+        }
+
+    def test_non_stub_object_call_ignored(self):
+        code = (
+            "def f():\n"
+            "    stub = UserServiceStub(ch)\n"
+            "    other.GetUser(req)\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "client") == set()
+
+    def test_no_stub_no_clients(self):
+        code = "def f():\n    obj.Method(x)\n"
         assert _keys(self.ex.extract(_root(code)), "client") == set()
 
 

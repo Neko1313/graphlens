@@ -310,6 +310,115 @@ class TemporalExtractor(PyBoundaryExtractor):
         )
 
 
+# gRPC: protoc generates ``<Service>Servicer`` bases and ``<Service>Stub``.
+_Q_SERVICER_CLASS = """
+(class_definition
+  superclasses: (argument_list) @bases
+  body: (block) @body)
+"""
+_Q_STUB_ASSIGN = """
+(assignment
+  left: (identifier) @var
+  right: (call function: (_) @callee))
+"""
+_Q_OBJ_CALL = """
+(call function: (attribute
+  object: (identifier) @obj
+  attribute: (identifier) @method))
+"""
+_SERVICER = "Servicer"
+_STUB = "Stub"
+
+
+def _strip_suffix(text: str, suffix: str) -> str | None:
+    """Return the leading service name if ``text`` ends with ``suffix``."""
+    last = text.rsplit(".", 1)[-1]
+    if last.endswith(suffix) and len(last) > len(suffix):
+        return last[: -len(suffix)]
+    return None
+
+
+def _grpc_ref(
+    role: str, service: str, method: str, node: TSNode
+) -> BoundaryRef:
+    line, col = _pos(node)
+    return BoundaryRef(
+        mechanism="grpc",
+        role=role,
+        key=f"{service}/{method}",
+        line=line,
+        col=col,
+        confidence=0.85,
+        detail={"service": service, "method": method},
+    )
+
+
+class GrpcExtractor(PyBoundaryExtractor):
+    """gRPC servicer implementations (server) and stub calls (client)."""
+
+    def mechanism(self) -> str:
+        return "grpc"
+
+    def extract(self, root: TSNode) -> list[BoundaryRef]:
+        return [*self._servers(root), *self._clients(root)]
+
+    def _servers(self, root: TSNode) -> list[BoundaryRef]:
+        refs: list[BoundaryRef] = []
+        for caps in run_query(_Q_SERVICER_CLASS, root):
+            service = self._service_of(caps["bases"][0])
+            if service is None:
+                continue
+            for fn in _methods(caps["body"][0]):
+                name_node = fn.child_by_field_name("name")
+                if name_node is None:
+                    continue  # pragma: no cover - method always named
+                method = _text(name_node)
+                if method.startswith("__"):
+                    continue
+                refs.append(
+                    _grpc_ref("server", service, method, name_node)
+                )
+        return refs
+
+    def _clients(self, root: TSNode) -> list[BoundaryRef]:
+        stubs: dict[str, str] = {}
+        for caps in run_query(_Q_STUB_ASSIGN, root):
+            service = _strip_suffix(_text(caps["callee"][0]), _STUB)
+            if service is not None:
+                stubs[_text(caps["var"][0])] = service
+        return [
+            _grpc_ref(
+                "client",
+                svc,
+                _text(caps["method"][0]),
+                caps["method"][0],
+            )
+            for caps in run_query(_Q_OBJ_CALL, root)
+            if (svc := stubs.get(_text(caps["obj"][0]))) is not None
+        ]
+
+    @staticmethod
+    def _service_of(bases: TSNode) -> str | None:
+        for base in bases.named_children:
+            service = _strip_suffix(_text(base), _SERVICER)
+            if service is not None:
+                return service
+        return None
+
+
+def _methods(body: TSNode) -> list[TSNode]:
+    """Return the function_definition nodes directly inside a class body."""
+    methods: list[TSNode] = []
+    for child in body.children:
+        if child.type == "function_definition":
+            methods.append(child)
+        elif child.type == "decorated_definition":
+            inner = child.child_by_field_name("definition")
+            if inner is not None and inner.type == "function_definition":
+                methods.append(inner)
+    return methods
+
+
 def _queue_role(method: str) -> str | None:
     """Map a queue method name to a boundary role, else None."""
     if method in ("publish", "produce"):
@@ -355,4 +464,5 @@ PY_DEFAULT_BOUNDARY_EXTRACTORS: list[PyBoundaryExtractor] = [
     HttpClientExtractor(),
     TemporalExtractor(),
     QueueExtractor(),
+    GrpcExtractor(),
 ]
