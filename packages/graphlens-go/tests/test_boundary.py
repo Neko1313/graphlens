@@ -18,6 +18,7 @@ from graphlens_go._adapter import (
 )
 from graphlens_go._boundary import (
     GO_DEFAULT_BOUNDARY_EXTRACTORS,
+    GrpcExtractor,
     HttpClientExtractor,
     HttpServerExtractor,
     QueueExtractor,
@@ -161,6 +162,37 @@ class TestTemporal:
         assert self.ex.extract(_root(code)) == []
 
     def test_non_temporal_method_skipped(self):
+        code = _fn('http.Get("/x")')
+        assert self.ex.extract(_root(code)) == []
+
+
+class TestGrpc:
+    ex = GrpcExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "grpc"
+
+    def test_new_client_calls_are_clients(self):
+        code = (
+            "package m\n"
+            "func f() {\n"
+            "  c := pb.NewUserServiceClient(conn)\n"
+            "  x := pb.Other(z)\n"
+            "  c.GetUser(ctx, req)\n"
+            "  other.Foo(req)\n"
+            "  c.GetOrder(ctx, req)\n"
+            "}\n"
+        )
+        assert _keys(self.ex.extract(_root(code)), "client") == {
+            "UserService/GetUser",
+            "UserService/GetOrder",
+        }
+
+    def test_bare_new_client_suffix_ignored(self):
+        code = _fn("c := pb.NewClient(conn)")
+        assert self.ex.extract(_root(code)) == []
+
+    def test_no_grpc_client(self):
         code = _fn('http.Get("/x")')
         assert self.ex.extract(_root(code)) == []
 

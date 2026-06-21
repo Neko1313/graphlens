@@ -144,6 +144,59 @@ _TEMPORAL_EXEC = frozenset(
     {"executeactivity", "executelocalactivity"}
 )
 
+# gRPC: protoc generates ``New<Service>Client`` constructors.
+_Q_GRPC_CLIENT_ASSIGN = """
+(short_var_declaration
+  left: (expression_list (identifier) @var)
+  right: (expression_list (call_expression
+    function: (selector_expression field: (field_identifier) @callee))))
+"""
+_GRPC_NEW = "New"
+_GRPC_CLIENT = "Client"
+
+
+def _grpc_client_service(callee: str) -> str | None:
+    """Return the service from a ``New<Service>Client`` constructor name."""
+    if (
+        callee.startswith(_GRPC_NEW)
+        and callee.endswith(_GRPC_CLIENT)
+        and len(callee) > len(_GRPC_NEW) + len(_GRPC_CLIENT)
+    ):
+        return callee[len(_GRPC_NEW) : -len(_GRPC_CLIENT)]
+    return None
+
+
+def _grpc_ref(service: str, method: str, node: TSNode) -> BoundaryRef:
+    line, col = _pos(node)
+    return BoundaryRef(
+        mechanism="grpc",
+        role="client",
+        key=f"{service}/{method}",
+        line=line,
+        col=col,
+        confidence=0.85,
+        detail={"service": service, "method": method},
+    )
+
+
+class GrpcExtractor(GoBoundaryExtractor):
+    """gRPC client calls on a ``New<Service>Client`` stub (client side)."""
+
+    def mechanism(self) -> str:
+        return "grpc"
+
+    def extract(self, root: TSNode) -> list[BoundaryRef]:
+        clients: dict[str, str] = {}
+        for caps in run_query(_Q_GRPC_CLIENT_ASSIGN, root):
+            service = _grpc_client_service(_text(caps["callee"][0]))
+            if service is not None:
+                clients[_text(caps["var"][0])] = service
+        return [
+            _grpc_ref(service, _text(caps["method"][0]), caps["method"][0])
+            for caps in run_query(_Q_SELECTOR_CALL, root)
+            if (service := clients.get(_text(caps["obj"][0]))) is not None
+        ]
+
 
 def _activity_name(args: TSNode, index: int) -> str | None:
     """Return the activity name from the index-th positional argument."""
@@ -240,4 +293,5 @@ GO_DEFAULT_BOUNDARY_EXTRACTORS: list[GoBoundaryExtractor] = [
     HttpClientExtractor(),
     QueueExtractor(),
     TemporalExtractor(),
+    GrpcExtractor(),
 ]
