@@ -69,6 +69,22 @@ uv add "graphlens[typescript]"
 uv add "graphlens-cli[all]"
 ```
 
+### Docker (all adapters + toolchains pre-installed)
+
+For CI, the published image bundles the CLI with every adapter **and** the
+toolchains their resolvers drive (ty, Node, Go + gopls, Rust + rust-analyzer)
+— no local setup required, and the supported way to get the Go and Rust
+adapters (which are not published to PyPI). Mount your project at
+`/workspace`:
+
+```bash
+docker run --rm -v "$PWD:/workspace" ghcr.io/neko1313/graphlens \
+    analyze /workspace --output /workspace/graph.json
+```
+
+The image is published to the GitHub Container Registry on each release
+(`:latest` plus `:X.Y.Z` / `:X.Y` version tags).
+
 ## Quick start
 
 ```python

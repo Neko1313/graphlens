@@ -62,6 +62,11 @@ All notable changes to this project will be documented in this file.
 - **examples**: `demo_cross_language.py` merges a Python server graph with a
   TypeScript client graph and runs `link_graph` to print the resolved
   `COMMUNICATES_WITH` edges.
+- **docker**: a published GHCR image (`ghcr.io/neko1313/graphlens`) bundling
+  the CLI, every adapter, and the toolchains their resolvers drive (ty, Node,
+  Go + gopls, Rust + rust-analyzer) so projects can run the full analysis in
+  CI with `docker run … analyze /workspace`; built from source and published
+  on each release, with a build-only check on pull requests that touch it.
 
 ### Bug Fixes
 
