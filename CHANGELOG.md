@@ -51,9 +51,11 @@ All notable changes to this project will be documented in this file.
   graph query API (stats, find, callers/callees/references, neighbors,
   boundaries, communicates-with) to agents, behind an optional `mcp` extra
   (TCK-7).
-- **go**: `GoplsResolver` — a gopls LSP-backed `SymbolResolver` that emits
-  CALLS edges resolved from real cross-file definitions; the structure-only
-  `GoResolver` is kept as an injectable fallback (TCK-12).
+- **go**: `GoplsResolver` — a gopls LSP-backed `SymbolResolver`. The visitor
+  collects call and struct/interface-embedding occurrences and the adapter
+  resolves them to CALLS and INHERITS_FROM edges from real cross-file
+  definitions; the structure-only `GoResolver` is kept as an injectable
+  fallback (TCK-12).
 - **rust**: `RustAnalyzerResolver` — a rust-analyzer LSP-backed
   `SymbolResolver`; the structure-only `RustResolver` is kept as an
   injectable fallback (TCK-12).
