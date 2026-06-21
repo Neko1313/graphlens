@@ -9,6 +9,7 @@ import os
 import select
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -25,6 +26,20 @@ _REGISTRY = ("registry", "src")
 # If rust-analyzer emits no $/progress within this many seconds, assume it does
 # not report progress and treat the workspace as ready (see _wait_until_ready).
 _NO_PROGRESS_GRACE_S = 10.0
+
+# rust-analyzer settings that trade work we never use for a lighter, more
+# robust workspace load. We never save files, so cargo check (checkOnSave) is
+# pure overhead; build-script and cache-priming work can dominate (or fail
+# outright, e.g. needing network/a compiler) on large workspaces such as ruff
+# without improving definition resolution. proc-macro expansion stays ENABLED
+# because disabling it measurably lowers resolution on macro-heavy crates
+# (e.g. axum's derive/attribute macros).
+_RA_INIT_OPTIONS: dict = {  # type: ignore[type-arg]
+    "checkOnSave": False,
+    "cargo": {"buildScripts": {"enable": False}},
+    "cachePriming": {"enable": False},
+    "procMacro": {"enable": True},
+}
 
 
 def _uri_to_path(uri: str) -> Path | None:
@@ -86,11 +101,17 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
 
     def __init__(self, project_root: Path) -> None:
         ra_bin = shutil.which("rust-analyzer") or "rust-analyzer"
+        # Capture stderr to a temp file (not DEVNULL) so a workspace that fails
+        # to load — rust-analyzer exiting/panicking, e.g. on ruff — leaves a
+        # diagnosable trail. A real file never blocks the child the way an
+        # unread PIPE would.
+        self._stderr = tempfile.TemporaryFile()  # noqa: SIM115
+        self._crash_logged = False
         self._proc: subprocess.Popen = subprocess.Popen(  # type: ignore[type-arg]
             [ra_bin],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=self._stderr,
             cwd=str(project_root),
         )
         self._next_id = 0
@@ -100,6 +121,28 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         # two threads can race on stdin and interleave a frame's bytes.
         self._write_lock = threading.Lock()
         self._initialize(project_root)
+
+    def _log_crash_if_dead(self) -> None:
+        """If rust-analyzer exited, log its code and stderr tail once."""
+        if self._crash_logged or self._proc.poll() is None:
+            return
+        self._crash_logged = True
+        tail = ""
+        try:
+            self._stderr.flush()
+            self._stderr.seek(0)
+            data = self._stderr.read()
+            if isinstance(data, bytes):
+                tail = data.decode("utf-8", errors="replace")
+            tail = tail[-2000:].strip()
+        except OSError:
+            tail = ""
+        logger.warning(
+            "rust-analyzer exited (code %s) before resolution completed; "
+            "the workspace likely failed to load. stderr tail:\n%s",
+            self._proc.returncode,
+            tail or "<empty>",
+        )
 
     def _write(self, msg: dict) -> None:  # type: ignore[type-arg]
         if self._proc.stdin is None or self._proc.poll() is not None:
@@ -189,6 +232,10 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
             {
                 "processId": os.getpid(),
                 "rootUri": project_root.as_uri(),
+                # Lighten the workspace load (skip cargo check / build
+                # scripts / cache priming) so large workspaces load faster and
+                # are less likely to fail outright. See _RA_INIT_OPTIONS.
+                "initializationOptions": _RA_INIT_OPTIONS,
                 "capabilities": {
                     # Opt into $/progress so we can tell when the workspace has
                     # finished loading (see _wait_until_ready).
@@ -207,6 +254,7 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         if resp is not None:
             self._notify("initialized", {})
             self._wait_until_ready()
+        self._log_crash_if_dead()
 
     def _wait_until_ready(self, timeout: float = 240.0) -> None:
         """
@@ -395,6 +443,7 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         self.open_files([f for (f, _l, _c) in queries])
         results: list[dict | None] = [None] * len(queries)
         if self._proc.poll() is not None:
+            self._log_crash_if_dead()
             return results
         id2idx: dict[int, int] = {}
         reqs: list[dict] = []  # type: ignore[type-arg]
@@ -465,15 +514,20 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         return result if isinstance(result, list) else []
 
     def shutdown(self) -> None:
-        if self._proc.poll() is not None:
-            return
-        try:
-            self._request("shutdown", None)
-            self._notify("exit", None)
-            self._proc.wait(timeout=5)
-        except Exception:
-            with contextlib.suppress(Exception):
-                self._proc.kill()
+        if self._proc.poll() is None:
+            try:
+                self._request("shutdown", None)
+                self._notify("exit", None)
+                self._proc.wait(timeout=5)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self._proc.kill()
+        with contextlib.suppress(Exception):
+            self._stderr.close()
+
+    def is_alive(self) -> bool:
+        """Return True while the rust-analyzer process is still running."""
+        return self._proc.poll() is None
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
@@ -568,11 +622,14 @@ class RustAnalyzerResolver(SymbolResolver):
         return out
 
     def status(self) -> ResolverStatus:
-        return (
-            ResolverStatus.OK
-            if self._client is not None
-            else ResolverStatus.UNAVAILABLE
-        )
+        if self._client is None:
+            return ResolverStatus.UNAVAILABLE
+        # A client that started but whose process has since exited (e.g. a
+        # workspace that failed to load) produced an incomplete graph — report
+        # DEGRADED rather than OK so callers don't trust a half result.
+        if not self._client.is_alive():
+            return ResolverStatus.DEGRADED
+        return ResolverStatus.OK
 
     def _loc_to_ref(self, loc: dict) -> ResolvedRef:  # type: ignore[type-arg]
         uri, start = _loc_uri_and_start(loc)
