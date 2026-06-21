@@ -60,15 +60,19 @@ jobs:
       - name: Pull image (waits for the release build to finish)
         run: |
           image="${{ steps.img.outputs.image }}"
-          for attempt in $(seq 1 30); do
+          attempts=20
+          for attempt in $(seq 1 "$attempts"); do
             if docker pull "$image"; then
               echo "Pulled $image"
               exit 0
             fi
-            echo "Attempt ${attempt}/30: $image not ready yet, waiting 60s…"
-            sleep 60
+            echo "Attempt ${attempt}/${attempts}: $image not pullable yet" \
+                 "(a concurrent release image build may still be running)," \
+                 "waiting 45s…"
+            sleep 45
           done
-          echo "::error::image $image never became available"
+          echo "::error::$image never became available — is the image" \
+               "published? (docker.yml publishes on release / manual dispatch)"
           exit 1
 
       - name: Run benchmarks

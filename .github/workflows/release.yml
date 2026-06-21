@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -12,6 +13,8 @@ jobs:
     environment: release
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -82,3 +85,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: task release:github TAG=${{ steps.version.outputs.tag }}
+
+  # Build and publish the CLI image for the release. The release job pushes the
+  # tag with GITHUB_TOKEN, which deliberately does not trigger the tag-push
+  # workflow, so the image is built here via a direct reusable-workflow call.
+  image:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.release.outputs.version }}
