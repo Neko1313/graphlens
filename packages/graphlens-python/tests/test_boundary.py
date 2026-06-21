@@ -16,6 +16,7 @@ from graphlens_python._boundary import (
     PY_DEFAULT_BOUNDARY_EXTRACTORS,
     HttpClientExtractor,
     HttpServerExtractor,
+    QueueExtractor,
     TemporalExtractor,
     _string_template,
     _text,
@@ -211,6 +212,34 @@ class TestTemporal:
     def test_non_temporal_method_skipped(self):
         code = 'def f():\n    requests.get("/x")\n'
         assert _keys(self.ex.extract(_root(code)), "client") == set()
+
+
+class TestQueue:
+    ex = QueueExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "queue"
+
+    def test_publish_is_producer(self):
+        code = 'def f():\n    redis.publish("orders", msg)\n'
+        refs = self.ex.extract(_root(code))
+        assert _keys(refs, "client") == {"orders"}
+
+    def test_produce_is_producer(self):
+        code = 'def f():\n    producer.produce("events", v)\n'
+        assert _keys(self.ex.extract(_root(code)), "client") == {"events"}
+
+    def test_subscribe_is_consumer(self):
+        code = 'def f():\n    consumer.subscribe("orders")\n'
+        assert _keys(self.ex.extract(_root(code)), "server") == {"orders"}
+
+    def test_non_queue_method_skipped(self):
+        code = 'def f():\n    obj.send("x")\n'
+        assert self.ex.extract(_root(code)) == []
+
+    def test_non_string_topic_skipped(self):
+        code = "def f():\n    redis.publish(topic, msg)\n"
+        assert self.ex.extract(_root(code)) == []
 
 
 # --------------------------------------------------------------------------

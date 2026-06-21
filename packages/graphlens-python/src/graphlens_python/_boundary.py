@@ -310,8 +310,49 @@ class TemporalExtractor(PyBoundaryExtractor):
         )
 
 
+def _queue_role(method: str) -> str | None:
+    """Map a queue method name to a boundary role, else None."""
+    if method in ("publish", "produce"):
+        return "client"  # a producer invokes the topic
+    if method == "subscribe":
+        return "server"  # a consumer handles the topic
+    return None
+
+
+class QueueExtractor(PyBoundaryExtractor):
+    """Message-queue producers (publish/produce) and consumers (subscribe)."""
+
+    def mechanism(self) -> str:
+        return "queue"
+
+    def extract(self, root: TSNode) -> list[BoundaryRef]:
+        refs: list[BoundaryRef] = []
+        for caps in run_query(_Q_ATTR_CALL, root):
+            role = _queue_role(_text(caps["method"][0]).lower())
+            if role is None:
+                continue
+            topic_node = _first_string(caps["args"][0])
+            if topic_node is None:
+                continue
+            topic = _string_template(topic_node)
+            line, col = _pos(caps["method"][0])
+            refs.append(
+                BoundaryRef(
+                    mechanism="queue",
+                    role=role,
+                    key=topic,
+                    line=line,
+                    col=col,
+                    confidence=0.75 if role == "server" else 0.7,
+                    detail={"topic": topic},
+                )
+            )
+        return refs
+
+
 PY_DEFAULT_BOUNDARY_EXTRACTORS: list[PyBoundaryExtractor] = [
     HttpServerExtractor(),
     HttpClientExtractor(),
     TemporalExtractor(),
+    QueueExtractor(),
 ]

@@ -180,7 +180,47 @@ class HttpClientExtractor(TsBoundaryExtractor):
         return refs
 
 
+def _queue_role(method: str) -> str | None:
+    """Map a queue method name to a boundary role, else None."""
+    if method in ("publish", "produce", "emit"):
+        return "client"  # a producer invokes the topic
+    if method == "subscribe":
+        return "server"  # a consumer handles the topic
+    return None
+
+
+class QueueExtractor(TsBoundaryExtractor):
+    """Message-queue producers (publish/produce/emit) and consumers."""
+
+    def mechanism(self) -> str:
+        return "queue"
+
+    def extract(self, root: TSNode, lang: str) -> list[BoundaryRef]:
+        refs: list[BoundaryRef] = []
+        for caps in run_query(_Q_MEMBER_CALL, root, lang):
+            role = _queue_role(_text(caps["method"][0]).lower())
+            if role is None:
+                continue
+            topic = _first_url(caps["args"][0])
+            if topic is None:
+                continue
+            line, col = _pos(caps["method"][0])
+            refs.append(
+                BoundaryRef(
+                    mechanism="queue",
+                    role=role,
+                    key=topic,
+                    line=line,
+                    col=col,
+                    confidence=0.75 if role == "server" else 0.7,
+                    detail={"topic": topic},
+                )
+            )
+        return refs
+
+
 TYPESCRIPT_DEFAULT_BOUNDARY_EXTRACTORS: list[TsBoundaryExtractor] = [
     HttpServerExtractor(),
     HttpClientExtractor(),
+    QueueExtractor(),
 ]

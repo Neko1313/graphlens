@@ -20,6 +20,7 @@ from graphlens_rust._boundary import (
     RUST_DEFAULT_BOUNDARY_EXTRACTORS,
     HttpClientExtractor,
     HttpServerExtractor,
+    QueueExtractor,
     _string_content,
     _text,
 )
@@ -137,6 +138,29 @@ class TestClient:
 
     def test_empty_args_ignored(self):
         code = _fn("let r = client.get();")
+        assert self.ex.extract(_root(code)) == []
+
+
+class TestQueue:
+    ex = QueueExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "queue"
+
+    def test_publish_is_producer(self):
+        code = _fn('let _ = bus.publish("orders", m);')
+        assert _keys(self.ex.extract(_root(code)), "client") == {"orders"}
+
+    def test_subscribe_is_consumer(self):
+        code = _fn('let _ = c.subscribe("orders");')
+        assert _keys(self.ex.extract(_root(code)), "server") == {"orders"}
+
+    def test_non_queue_method_skipped(self):
+        code = _fn('let _ = tx.send("x");')
+        assert self.ex.extract(_root(code)) == []
+
+    def test_non_string_topic_skipped(self):
+        code = _fn("let _ = bus.publish(t, m);")
         assert self.ex.extract(_root(code)) == []
 
 

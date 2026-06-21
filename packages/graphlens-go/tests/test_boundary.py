@@ -20,6 +20,7 @@ from graphlens_go._boundary import (
     GO_DEFAULT_BOUNDARY_EXTRACTORS,
     HttpClientExtractor,
     HttpServerExtractor,
+    QueueExtractor,
     _string_content,
     _text,
 )
@@ -113,6 +114,27 @@ class TestClient:
 
     def test_empty_args_ignored(self):
         assert self.ex.extract(_root(_fn("http.Get()"))) == []
+
+
+class TestQueue:
+    ex = QueueExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "queue"
+
+    def test_publish_is_producer(self):
+        refs = self.ex.extract(_root(_fn('bus.Publish("orders", m)')))
+        assert _keys(refs, "client") == {"orders"}
+
+    def test_subscribe_is_consumer(self):
+        refs = self.ex.extract(_root(_fn('c.Subscribe("orders")')))
+        assert _keys(refs, "server") == {"orders"}
+
+    def test_non_queue_method_skipped(self):
+        assert self.ex.extract(_root(_fn('o.Send("x")'))) == []
+
+    def test_non_string_topic_skipped(self):
+        assert self.ex.extract(_root(_fn("bus.Publish(t, m)"))) == []
 
 
 # --------------------------------------------------------------------------

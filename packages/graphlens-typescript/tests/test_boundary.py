@@ -16,6 +16,7 @@ from graphlens_typescript._boundary import (
     TYPESCRIPT_DEFAULT_BOUNDARY_EXTRACTORS,
     HttpClientExtractor,
     HttpServerExtractor,
+    QueueExtractor,
     _text,
     _url_template,
 )
@@ -126,6 +127,27 @@ class TestHttpClient:
 
     def test_axios_non_verb_ignored(self):
         assert self.ex.extract(_root('axios.create("/x");'), "ts") == []
+
+
+class TestQueue:
+    ex = QueueExtractor()
+
+    def test_mechanism(self):
+        assert self.ex.mechanism() == "queue"
+
+    def test_publish_is_producer(self):
+        refs = self.ex.extract(_root('bus.publish("orders", m);'), "ts")
+        assert _keys(refs, "client") == {"orders"}
+
+    def test_subscribe_is_consumer(self):
+        refs = self.ex.extract(_root('bus.subscribe("orders");'), "ts")
+        assert _keys(refs, "server") == {"orders"}
+
+    def test_non_queue_method_skipped(self):
+        assert self.ex.extract(_root('obj.send("x");'), "ts") == []
+
+    def test_rxjs_subscribe_callback_skipped(self):
+        assert self.ex.extract(_root("obs.subscribe(fn);"), "ts") == []
 
 
 # --------------------------------------------------------------------------
