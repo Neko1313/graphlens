@@ -6,9 +6,14 @@ from graphlens_go._visitor import (
     GoFileContext,
     GoStructureExtractor,
     _text,
+    _type_name_node,
     _walk_type,
     parse_go,
 )
+
+
+def test_type_name_node_none():
+    assert _type_name_node(None) is None
 
 
 def _extract(source: str) -> GraphLens:
@@ -160,6 +165,60 @@ def test_call_on_expression_result_is_skipped():
 def test_function_without_calls_has_no_occurrences():
     _g, ex = _extractor("package pkg\nfunc F() { x := 1; _ = x }\n")
     assert ex.occurrences == []
+
+
+def _bases(ex):
+    return [o for o in ex.occurrences if o.role == "base"]
+
+
+def test_struct_embedding_collected_as_base():
+    src = (
+        "package pkg\n"
+        "type Dog struct {\n"
+        "  Animal\n"
+        "  pkg.Base\n"
+        "  *Cat\n"
+        "  Name string\n"
+        "}\n"
+    )
+    g, ex = _extractor(src)
+    bases = _bases(ex)
+    assert len(bases) == 3  # Animal, Base, Cat — not the named field Name
+    cls = next(n for n in g.nodes.values() if n.kind == NodeKind.CLASS)
+    assert {o.enclosing_id for o in bases} == {cls.id}
+
+
+def test_struct_generic_embedding_skipped():
+    _g, ex = _extractor(
+        "package pkg\ntype X struct {\n  Base[int]\n}\n"
+    )
+    assert _bases(ex) == []
+
+
+def test_interface_embedding_collected_as_base():
+    src = (
+        "package pkg\n"
+        "type RW interface {\n"
+        "  Reader\n"
+        "  io.Closer\n"
+        "  Read() int\n"
+        "}\n"
+    )
+    _g, ex = _extractor(src)
+    assert len(_bases(ex)) == 2  # Reader, Closer — not the method Read
+
+
+def test_struct_base_points_at_type_name():
+    src = "package pkg\ntype Dog struct {\n  Animal\n}\n"
+    _g, ex = _extractor(src)
+    occ = _bases(ex)[0]
+    line = src.splitlines()[occ.line - 1]
+    assert line[occ.col - 1 :].startswith("Animal")
+
+
+def test_interface_type_constraint_skipped():
+    _g, ex = _extractor("package pkg\ntype C interface {\n  ~int\n}\n")
+    assert _bases(ex) == []
 
 
 def test_shared_external_symbol_reused_across_files():

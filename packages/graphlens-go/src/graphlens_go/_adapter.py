@@ -47,7 +47,10 @@ if TYPE_CHECKING:
     from graphlens_go._visitor import OccurrenceRef
 
 # Occurrence role -> the edge kind the resolution pass emits for it.
-_ROLE_TO_KIND = {"call": RelationKind.CALLS}
+_ROLE_TO_KIND = {
+    "call": RelationKind.CALLS,
+    "base": RelationKind.INHERITS_FROM,
+}
 
 logger = logging.getLogger("graphlens_go")
 

@@ -73,6 +73,17 @@ def _called_name(fn: TSNode) -> TSNode | None:
     return None  # calling an expression result, e.g. funcs[0]()
 
 
+def _type_name_node(type_node: TSNode | None) -> TSNode | None:
+    """Return the type_identifier naming a (possibly qualified) type."""
+    if type_node is None:
+        return None
+    if type_node.type == "type_identifier":
+        return type_node  # Animal
+    if type_node.type == "qualified_type":
+        return type_node.child_by_field_name("name")  # pkg.Base -> Base
+    return None  # e.g. a generic instantiation Base[int]
+
+
 @dataclass(frozen=True)
 class OccurrenceRef:
     """
@@ -173,6 +184,39 @@ class GoStructureExtractor:
             if name_node is not None:
                 self._add_occurrence("call", name_node, enclosing_id)
 
+    def _collect_bases(self, type_node: TSNode, enclosing_id: str) -> None:
+        """Record a ``base`` occurrence for each embedded type."""
+        if type_node.type == "struct_type":
+            self._collect_struct_bases(type_node, enclosing_id)
+        else:  # interface_type
+            self._collect_iface_bases(type_node, enclosing_id)
+
+    def _collect_struct_bases(
+        self, struct_type: TSNode, enclosing_id: str
+    ) -> None:
+        for fdl in struct_type.children:
+            if fdl.type != "field_declaration_list":
+                continue
+            for fd in fdl.children:
+                if fd.type != "field_declaration":
+                    continue
+                if fd.child_by_field_name("name") is not None:
+                    continue  # a named field, not an embedded type
+                name_node = _type_name_node(fd.child_by_field_name("type"))
+                if name_node is not None:
+                    self._add_occurrence("base", name_node, enclosing_id)
+
+    def _collect_iface_bases(
+        self, iface_type: TSNode, enclosing_id: str
+    ) -> None:
+        for elem in iface_type.children:
+            if elem.type != "type_elem":
+                continue
+            for child in elem.named_children:
+                name_node = _type_name_node(child)
+                if name_node is not None:
+                    self._add_occurrence("base", name_node, enclosing_id)
+
     def _on_function_declaration(self, node: TSNode) -> None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -210,7 +254,11 @@ class GoStructureExtractor:
             )
             kind = NodeKind.CLASS if is_struct_like else NodeKind.TYPE_ALIAS
             qname = f"{self._ctx.package_qname}.{_text(name_node)}"
-            self._declare(qname, _text(name_node), kind, spec, name_node)
+            node_id = self._declare(
+                qname, _text(name_node), kind, spec, name_node
+            )
+            if is_struct_like and type_node is not None:
+                self._collect_bases(type_node, node_id)
 
     def _on_var_declaration(self, node: TSNode) -> None:
         self._handle_value_specs(node, "var_spec")

@@ -169,7 +169,7 @@ class _FakeResolver:
         return ResolverStatus.OK
 
 
-def _occ(line=2, col=3, enclosing="caller"):
+def _occ(line=2, col=3, enclosing="caller", role="call"):
     from graphlens.utils.span import Span
 
     from graphlens_go._visitor import OccurrenceRef
@@ -177,7 +177,7 @@ def _occ(line=2, col=3, enclosing="caller"):
     return (
         "a.go",
         OccurrenceRef(
-            role="call",
+            role=role,
             line=line,
             col=col,
             enclosing_id=enclosing,
@@ -238,6 +238,20 @@ def test_resolve_internal_hit_with_absolute_path(tmp_path):
     calls = _calls(g)
     assert len(calls) == 1
     assert calls[0].target_id == "callee"
+
+
+def test_resolve_base_emits_inherits_from():
+    from graphlens import RelationKind
+
+    g = _resolution_graph()
+    ref = _ref("internal", file_path=Path("a.go"), line=5, col=6)
+    _resolve(g, _FakeResolver(ref), [_occ(role="base")])
+    inh = [
+        r for r in g.relations if r.kind == RelationKind.INHERITS_FROM
+    ]
+    assert len(inh) == 1
+    assert inh[0].source_id == "caller"
+    assert inh[0].target_id == "callee"
 
 
 def test_resolve_external_creates_external_symbol():
