@@ -118,6 +118,20 @@ class TestHttpClient:
         )
         assert _keys(refs) == {"GET /api/x"}
 
+    def test_fetch_options_without_method_defaults_get(self):
+        refs = self.ex.extract(
+            _root('fetch("/api/x", {headers: {}});'), "ts"
+        )
+        assert _keys(refs) == {"GET /api/x"}
+
+    def test_fetch_empty_method_defaults_get(self):
+        refs = self.ex.extract(_root('fetch("/api/x", {method: ""});'), "ts")
+        assert _keys(refs) == {"GET /api/x"}
+
+    def test_fetch_spread_options_defaults_get(self):
+        refs = self.ex.extract(_root('fetch("/api/x", {...opts});'), "ts")
+        assert _keys(refs) == {"GET /api/x"}
+
     def test_fetch_template_string(self):
         refs = self.ex.extract(_root("fetch(`/u/${id}`);"), "ts")
         assert _keys(refs) == {"GET /u/{}"}

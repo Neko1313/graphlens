@@ -102,6 +102,29 @@ def test_package_qname_outside_root_does_not_crash(tmp_path: Path):
     )
 
 
+def test_resolve_internal_imports_falls_back_to_external_symbol():
+    # An internal import whose package was not analyzed still gets an edge.
+    from graphlens import GraphLens, Node
+
+    from graphlens_go._adapter import _resolve_internal_imports
+
+    graph = GraphLens()
+    graph.add_node(
+        Node(
+            id="imp1",
+            kind=NodeKind.IMPORT,
+            qualified_name="a.go::example.com/m/missing",
+            name="example.com/m/missing",
+        )
+    )
+    _resolve_internal_imports(graph, "m", [("imp1", "example.com/m/missing")], {})
+    rels = graph.outgoing("imp1", RelationKind.RESOLVES_TO)
+    assert len(rels) == 1
+    target = graph.nodes[rels[0].target_id]
+    assert target.kind == NodeKind.EXTERNAL_SYMBOL
+    assert target.metadata["origin"] == "internal"
+
+
 def test_explicit_files(sample_go_project: Path):
     files = [sample_go_project / "main.go"]
     graph = GoAdapter().analyze(sample_go_project, files=files)

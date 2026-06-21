@@ -109,7 +109,7 @@ def _fetch_method(args: TSNode) -> str:
         if pair.type != "pair":
             continue
         key = pair.child_by_field_name("key")
-        if key is None:
+        if key is None:  # pragma: no cover - a pair always has a key
             continue
         key_name = _string_literal(key) if key.type == "string" else _text(key)
         if key_name != "method":
