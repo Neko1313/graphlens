@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-06-21
+### Bug Fixes
+
+- **ci**: fix(ci): publish the CLI image on release and manual dispatch by @Neko1313 in [#16](https://github.com/Neko1313/graphlens/pull/16)
+
+### Documentation
+
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **meta**: docs(meta): enrich PyPI package metadata for discoverability by @Neko1313 in [#19](https://github.com/Neko1313/graphlens/pull/19)
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+
+### Features
+
+- **benchmarks**: feat(benchmarks): release-time load benchmark on real-world projects by @Neko1313 in [#15](https://github.com/Neko1313/graphlens/pull/15)
+- **go,rust**: feat(go,rust): default to semantic resolvers (gopls / rust-analyzer) by @Neko1313 in [#17](https://github.com/Neko1313/graphlens/pull/17)
+
+### Performance
+
+- **rust,go,python,ts**: perf(rust,go): batch+pipeline LSP resolution and record resolver metrics by @Neko1313 in [#18](https://github.com/Neko1313/graphlens/pull/18)
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.5.0...v0.6.0
 ## [0.5.0] - 2026-06-21
 ### Features
 

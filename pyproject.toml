@@ -1,6 +1,6 @@
 [project]
 name = "graphlens"
-version = "0.5.0"
+version = "0.6.0"
 description = "Polyglot code-analysis framework — parse Python, TypeScript, Go and Rust into a shared graph IR with type-aware resolution"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
