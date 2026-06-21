@@ -342,6 +342,41 @@ class TestBatchResolutionPass:
         # No resolution edges should be emitted when ref is None
         assert not _edges(graph, "calls")
 
+    def test_resolver_metrics_recorded(self, tmp_path: Path):
+        """Resolved queries are tallied onto graph.metadata."""
+        from graphlens import RESOLVER_METRICS_KEY
+
+        (tmp_path / "util.ts").write_text(
+            "export function helper() { return 1; }\n"
+        )
+        (tmp_path / "main.ts").write_text(
+            "import { helper } from './util';\n"
+            "export function run() { helper(); }\n"
+        )
+        target = ResolvedRef(
+            full_name="helper", file_path=tmp_path / "util.ts",
+            line=1, col=17, kind="function", origin="internal",
+        )
+        graph = TypescriptAdapter(resolver=FakeResolver(target)).analyze(
+            tmp_path
+        )
+        metrics = graph.metadata[RESOLVER_METRICS_KEY]
+        assert metrics["queries"] >= 1
+        assert metrics["resolved"] == metrics["queries"]
+        assert metrics["internal"] >= 1
+        assert metrics["unresolved"] == 0
+
+    def test_resolver_metrics_counts_unresolved(self, tmp_path: Path):
+        from graphlens import RESOLVER_METRICS_KEY
+
+        (tmp_path / "main.ts").write_text(
+            "export function run() { unknownFn(); }\n"
+        )
+        graph = TypescriptAdapter(resolver=FakeResolver(None)).analyze(tmp_path)
+        metrics = graph.metadata[RESOLVER_METRICS_KEY]
+        assert metrics["resolved"] == 0
+        assert metrics["unresolved"] == metrics["queries"]
+
     def test_read_occurrence_carries_access_metadata(self, tmp_path: Path):
         """
         A ``read`` occurrence resolved internally must produce a REFERENCES

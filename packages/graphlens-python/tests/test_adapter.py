@@ -582,3 +582,48 @@ def test_analyze_with_explicit_files_records_status(tmp_path):
         tmp_path, files=[f]
     )
     assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"
+
+
+class _ExternalResolver(SymbolResolver):
+    """Resolves every query to a third-party external ref."""
+
+    def prepare(self, project_root, files):
+        pass
+
+    def definition_at(self, file, line, col):
+        from graphlens.contracts import ResolvedRef
+
+        return ResolvedRef(
+            full_name="ext.thing", file_path=None, line=1,
+            col=1, kind="function", origin="third_party",
+        )
+
+    def infer_type_at(self, file, line, col):
+        return None
+
+    def references_to(self, file, line, col):
+        return []
+
+
+def test_resolver_metrics_recorded(tmp_path):
+    from graphlens import RESOLVER_METRICS_KEY
+
+    (tmp_path / "m.py").write_text("import os\nos.getcwd()\n")
+    graph = PythonAdapter(resolver=_ExternalResolver()).analyze(tmp_path)
+    metrics = graph.metadata[RESOLVER_METRICS_KEY]
+    assert metrics["queries"] >= 1
+    assert metrics["resolved"] == metrics["queries"]
+    assert metrics["external"] == metrics["resolved"]
+    assert metrics["unresolved"] == 0
+    assert metrics["resolved_pct"] == 100.0
+
+
+def test_resolver_metrics_counts_unresolved(tmp_path):
+    from graphlens import RESOLVER_METRICS_KEY
+
+    (tmp_path / "m.py").write_text("import os\nos.getcwd()\n")
+    graph = PythonAdapter(resolver=_FakeResolver()).analyze(tmp_path)
+    metrics = graph.metadata[RESOLVER_METRICS_KEY]
+    assert metrics["queries"] >= 1
+    assert metrics["resolved"] == 0
+    assert metrics["unresolved"] == metrics["queries"]

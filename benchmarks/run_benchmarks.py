@@ -80,6 +80,9 @@ class BenchResult:
     peak_mem_mb: float = 0.0
     mem_source: str = ""
     resolver_status: str = ""
+    resolver_queries: int = 0
+    resolver_resolved: int = 0
+    resolver_seconds: float = 0.0
     status: str = "ok"
     error: str = ""
     notes: list[str] = field(default_factory=list)
@@ -90,6 +93,13 @@ class BenchResult:
         if self.seconds <= 0:
             return 0.0
         return (self.loc / 1000.0) / self.seconds
+
+    @property
+    def resolved_pct(self) -> float:
+        """Share of resolver queries that returned a definition, in percent."""
+        if self.resolver_queries <= 0:
+            return 0.0
+        return 100.0 * self.resolver_resolved / self.resolver_queries
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +191,7 @@ def count_loc(files: list[Path]) -> tuple[int, int]:
 def analyze_project(project: dict, workdir: Path) -> BenchResult:
     """Clone and analyse one project, returning its metrics."""
     from graphlens import (  # noqa: PLC0415 — lazy so list/render need no adapters
+        RESOLVER_METRICS_KEY,
         RESOLVER_STATUS_KEY,
         adapter_registry,
     )
@@ -209,6 +220,8 @@ def analyze_project(project: dict, workdir: Path) -> BenchResult:
     all_files: set[Path] = set()
     nodes = relations = 0
     statuses: list[str] = []
+    res_queries = res_resolved = 0
+    res_seconds = 0.0
     start = time.perf_counter()
     try:
         for lang in langs:
@@ -222,6 +235,10 @@ def analyze_project(project: dict, workdir: Path) -> BenchResult:
             statuses.append(
                 str(graph.metadata.get(RESOLVER_STATUS_KEY, "unknown"))
             )
+            rm = graph.metadata.get(RESOLVER_METRICS_KEY) or {}
+            res_queries += int(rm.get("queries", 0))
+            res_resolved += int(rm.get("resolved", 0))
+            res_seconds += float(rm.get("seconds", 0.0))
     except Exception as exc:
         result.status = "error"
         result.error = f"{type(exc).__name__}: {exc}"
@@ -235,6 +252,9 @@ def analyze_project(project: dict, workdir: Path) -> BenchResult:
     result.nodes = nodes
     result.relations = relations
     result.resolver_status = _worst_status(statuses)
+    result.resolver_queries = res_queries
+    result.resolver_resolved = res_resolved
+    result.resolver_seconds = res_seconds
     result.peak_mem_mb, result.mem_source = peak_memory()
     return result
 
@@ -274,10 +294,10 @@ def render_table(results: list[BenchResult], image_tag: str) -> str:
         "",
         (
             "| Project | Lang | Commit | LOC | Files | Nodes | Relations "
-            "| Time | Peak RSS | KLOC/s | Resolver |"
+            "| Time | Peak RSS | KLOC/s | Resolver | Resolved |"
         ),
         (
-            "|---|---|---|--:|--:|--:|--:|--:|--:|--:|:--|"
+            "|---|---|---|--:|--:|--:|--:|--:|--:|--:|:--|--:|"
         ),
     ]
     for r in results:
@@ -285,9 +305,16 @@ def render_table(results: list[BenchResult], image_tag: str) -> str:
             lines.append(
                 f"| [{r.name}](https://github.com/{r.name}) "
                 f"| {', '.join(r.langs)} | `{r.commit or '—'}` "
-                f"| — | — | — | — | — | — | — | ⚠️ {r.status} |"
+                f"| — | — | — | — | — | — | — | ⚠️ {r.status} | — |"
             )
             continue
+        if r.resolver_queries > 0:
+            resolved = (
+                f"{r.resolved_pct:.0f}% of {_fmt_int(r.resolver_queries)} "
+                f"({r.resolver_seconds:.0f}s)"
+            )
+        else:
+            resolved = "—"
         lines.append(
             f"| [{r.name}](https://github.com/{r.name}) "
             f"| {', '.join(r.langs)} "
@@ -299,17 +326,26 @@ def render_table(results: list[BenchResult], image_tag: str) -> str:
             f"| {r.seconds:.1f}s "
             f"| {r.peak_mem_mb:,.0f} MB "
             f"| {r.kloc_per_s:.1f} "
-            f"| {r.resolver_status} |"
+            f"| {r.resolver_status} "
+            f"| {resolved} |"
         )
 
     totals_loc = sum(r.loc for r in results if r.status == "ok")
     totals_nodes = sum(r.nodes for r in results if r.status == "ok")
     totals_time = sum(r.seconds for r in results if r.status == "ok")
+    totals_q = sum(r.resolver_queries for r in results if r.status == "ok")
+    totals_r = sum(r.resolver_resolved for r in results if r.status == "ok")
     if totals_time > 0:
+        total_resolved = (
+            f"**{100.0 * totals_r / totals_q:.0f}% of {_fmt_int(totals_q)}**"
+            if totals_q > 0
+            else ""
+        )
         lines.append(
             f"| **Total** | | | **{_fmt_int(totals_loc)}** | | "
             f"**{_fmt_int(totals_nodes)}** | | **{totals_time:.1f}s** | | "
-            f"**{(totals_loc / 1000.0) / totals_time:.1f}** | |"
+            f"**{(totals_loc / 1000.0) / totals_time:.1f}** | | "
+            f"{total_resolved} |"
         )
 
     notes = sorted({n for r in results for n in r.notes})

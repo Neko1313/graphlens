@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from graphlens import (
+    RESOLVER_METRICS_KEY,
     RESOLVER_STATUS_KEY,
     AdapterError,
     BoundaryRef,
@@ -17,6 +19,7 @@ from graphlens import (
     NodeKind,
     Relation,
     RelationKind,
+    ResolverMetrics,
     ResolverStatus,
     make_boundary_id,
 )
@@ -98,16 +101,19 @@ class GoAdapter(LanguageAdapter):
         project_root = Path(project_root).resolve()
         graph = GraphLens()
         statuses: list[ResolverStatus] = []
+        metrics = ResolverMetrics()
 
         if files is not None:
-            _analyze_root(
-                graph,
-                project_root,
-                project_root,
-                files,
-                self._dep_parsers,
-                self._resolver,
-                self._boundary_extractors,
+            metrics.merge(
+                _analyze_root(
+                    graph,
+                    project_root,
+                    project_root,
+                    files,
+                    self._dep_parsers,
+                    self._resolver,
+                    self._boundary_extractors,
+                )
             )
             statuses.append(self._resolver.status())
         else:
@@ -118,19 +124,22 @@ class GoAdapter(LanguageAdapter):
                     go_root,
                     roots,
                 )
-                _analyze_root(
-                    graph,
-                    project_root,
-                    go_root,
-                    root_files,
-                    self._dep_parsers,
-                    self._resolver,
-                    self._boundary_extractors,
+                metrics.merge(
+                    _analyze_root(
+                        graph,
+                        project_root,
+                        go_root,
+                        root_files,
+                        self._dep_parsers,
+                        self._resolver,
+                        self._boundary_extractors,
+                    )
                 )
                 statuses.append(self._resolver.status())
 
         status = ResolverStatus.combine(statuses)
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
+        graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
             msg = (
                 f"Go resolver status is '{status.value}'; refusing to "
@@ -148,7 +157,7 @@ def _analyze_root(  # noqa: PLR0913
     dep_parsers: list[DependencyFileParser],
     resolver: SymbolResolver,
     boundary_extractors: list[GoBoundaryExtractor],
-) -> None:
+) -> ResolverMetrics:
     """Analyse one Go module root and populate ``graph`` in place."""
     module_path = read_module_path(go_root) or go_root.name
     project_name = module_path.rstrip("/").split("/")[-1]
@@ -214,11 +223,12 @@ def _analyze_root(  # noqa: PLR0913
     # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
     span_index = SpanIndex.from_graph(graph)
     resolver.prepare(go_root, files)
-    _resolve_occurrences(
+    metrics = _resolve_occurrences(
         graph, project_name, project_root, resolver, span_index, occurrences
     )
 
     _extract_boundaries(graph, parsed_files, boundary_extractors)
+    return metrics
 
 
 def _resolve_internal_imports(
@@ -288,13 +298,29 @@ def _resolve_occurrences(  # noqa: PLR0913
     resolver: SymbolResolver,
     span_index: SpanIndex,
     occurrences: list[tuple[str, OccurrenceRef]],
-) -> None:
-    """Resolve each occurrence to a definition node and emit its edge."""
-    for abs_path, occ in occurrences:
-        rel_kind = _ROLE_TO_KIND[occ.role]
-        ref = resolver.definition_at(Path(abs_path), occ.line, occ.col)
+) -> ResolverMetrics:
+    """
+    Resolve all occurrences in one batch and emit their edges.
+
+    Issues a single ``resolver.resolve_all(queries)`` (pipelined LSP requests)
+    instead of one round-trip per occurrence, then maps each result back to a
+    graph edge. Returns the pass's :class:`ResolverMetrics`.
+    """
+    metrics = ResolverMetrics(queries=len(occurrences))
+    if not occurrences:
+        return metrics
+    queries: list[tuple[Path, int, int]] = [
+        (Path(p), o.line, o.col) for (p, o) in occurrences
+    ]
+    start = time.perf_counter()
+    refs = resolver.resolve_all(queries)
+    metrics.seconds = time.perf_counter() - start
+    for (_p, occ), ref in zip(occurrences, refs, strict=True):
         if ref is None:
+            metrics.unresolved += 1
             continue
+        metrics.resolved += 1
+        rel_kind = _ROLE_TO_KIND[occ.role]
         target_id: str | None = None
         if ref.origin == "internal" and ref.file_path is not None:
             target_id = span_index.at(
@@ -303,6 +329,7 @@ def _resolve_occurrences(  # noqa: PLR0913
                 ref.col,
             )
         if target_id is None:
+            metrics.external += 1
             fallback_qname = (
                 ref.full_name
                 if ref.full_name
@@ -311,6 +338,8 @@ def _resolve_occurrences(  # noqa: PLR0913
             target_id = _ensure_external_symbol(
                 graph, project_name, fallback_qname, ref.origin
             )
+        else:
+            metrics.internal += 1
         graph.add_relation(
             Relation(
                 source_id=occ.enclosing_id,
@@ -319,6 +348,7 @@ def _resolve_occurrences(  # noqa: PLR0913
                 metadata={"span": occ.span},
             )
         )
+    return metrics
 
 
 def _extract_boundaries(
