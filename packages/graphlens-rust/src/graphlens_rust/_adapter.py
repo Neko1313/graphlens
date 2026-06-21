@@ -20,7 +20,7 @@ from graphlens import (
     ResolverStatus,
     make_boundary_id,
 )
-from graphlens.utils import make_node_id
+from graphlens.utils import SpanIndex, make_node_id
 from graphlens.utils.roots import filter_nested_root_files
 
 from graphlens_rust._boundary import (
@@ -43,6 +43,11 @@ from graphlens_rust._visitor import (
 if TYPE_CHECKING:
     from graphlens.contracts import DependencyFileParser, SymbolResolver
     from tree_sitter import Node as TSNode
+
+    from graphlens_rust._visitor import OccurrenceRef
+
+# Occurrence role -> the edge kind the resolution pass emits for it.
+_ROLE_TO_KIND = {"call": RelationKind.CALLS}
 
 logger = logging.getLogger("graphlens_rust")
 
@@ -98,9 +103,9 @@ class RustAdapter(LanguageAdapter):
                 project_root,
                 files,
                 self._dep_parsers,
+                self._resolver,
                 self._boundary_extractors,
             )
-            self._resolver.prepare(project_root, files)
             statuses.append(self._resolver.status())
         else:
             roots = find_rust_roots(project_root)
@@ -114,9 +119,9 @@ class RustAdapter(LanguageAdapter):
                     crate_root,
                     root_files,
                     self._dep_parsers,
+                    self._resolver,
                     self._boundary_extractors,
                 )
-                self._resolver.prepare(crate_root, root_files)
                 statuses.append(self._resolver.status())
 
         status = ResolverStatus.combine(statuses)
@@ -150,6 +155,7 @@ def _analyze_root(  # noqa: PLR0913
     crate_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
+    resolver: SymbolResolver,
     boundary_extractors: list[RustBoundaryExtractor],
 ) -> None:
     """Analyse one Rust crate root and populate ``graph`` in place."""
@@ -178,6 +184,7 @@ def _analyze_root(  # noqa: PLR0913
 
     modules: dict[str, str] = {}
     parsed_files: list[tuple[str, str, TSNode]] = []
+    occurrences: list[tuple[str, OccurrenceRef]] = []
     for file in files:
         module_qname = _module_qname(file, crate_root, crate_name)
         module_id = _ensure_module(
@@ -199,10 +206,96 @@ def _analyze_root(  # noqa: PLR0913
             file_rel=file_rel,
         )
         root = parse_rust(source).root_node
-        RustStructureExtractor(graph, ctx, classify).extract(root)
+        extractor = RustStructureExtractor(graph, ctx, classify)
+        extractor.extract(root)
         parsed_files.append((file_rel, file_id, root))
+        occurrences.extend(
+            (str(file), occ) for occ in extractor.occurrences
+        )
+
+    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
+    span_index = SpanIndex.from_graph(graph)
+    resolver.prepare(crate_root, files)
+    _resolve_occurrences(
+        graph, crate_name, project_root, resolver, span_index, occurrences
+    )
 
     _extract_boundaries(graph, parsed_files, boundary_extractors)
+
+
+def _ensure_external_symbol(
+    graph: GraphLens, project_name: str, qname: str, origin: str
+) -> str:
+    """Return the id of an EXTERNAL_SYMBOL node, creating it if needed."""
+    sym_id = make_node_id(
+        project_name, qname, NodeKind.EXTERNAL_SYMBOL.value
+    )
+    if sym_id not in graph.nodes:
+        graph.add_node(
+            Node(
+                id=sym_id,
+                kind=NodeKind.EXTERNAL_SYMBOL,
+                qualified_name=qname,
+                name=qname.rsplit("::", maxsplit=1)[-1],
+                metadata={"origin": origin},
+            )
+        )
+    return sym_id
+
+
+def _relative_to(file_path: Path, project_root: Path) -> str:
+    """
+    Map an absolute resolver path to the graph's project-relative form.
+
+    rust-analyzer returns absolute paths, but graph nodes store file paths
+    relative to ``project_root``; reconcile them so SpanIndex lookups hit.
+    Falls back to the absolute string for paths outside the project (which
+    then resolve to an EXTERNAL_SYMBOL).
+    """
+    try:
+        return str(file_path.resolve().relative_to(project_root))
+    except (ValueError, OSError):
+        return str(file_path)
+
+
+def _resolve_occurrences(  # noqa: PLR0913
+    graph: GraphLens,
+    project_name: str,
+    project_root: Path,
+    resolver: SymbolResolver,
+    span_index: SpanIndex,
+    occurrences: list[tuple[str, OccurrenceRef]],
+) -> None:
+    """Resolve each occurrence to a definition node and emit its edge."""
+    for abs_path, occ in occurrences:
+        rel_kind = _ROLE_TO_KIND[occ.role]
+        ref = resolver.definition_at(Path(abs_path), occ.line, occ.col)
+        if ref is None:
+            continue
+        target_id: str | None = None
+        if ref.origin == "internal" and ref.file_path is not None:
+            target_id = span_index.at(
+                _relative_to(ref.file_path, project_root),
+                ref.line,
+                ref.col,
+            )
+        if target_id is None:
+            fallback_qname = (
+                ref.full_name
+                if ref.full_name
+                else f"{occ.role}@{occ.line}:{occ.col}"
+            )
+            target_id = _ensure_external_symbol(
+                graph, project_name, fallback_qname, ref.origin
+            )
+        graph.add_relation(
+            Relation(
+                source_id=occ.enclosing_id,
+                target_id=target_id,
+                kind=rel_kind,
+                metadata={"span": occ.span},
+            )
+        )
 
 
 def _extract_boundaries(

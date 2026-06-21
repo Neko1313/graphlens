@@ -148,3 +148,198 @@ def test_duplicate_module_deduped(tmp_path: Path):
         if n.kind == NodeKind.MODULE and n.qualified_name == "demo"
     ]
     assert len(demo_mods) == 1
+
+
+# ---------------------------------------------------------------------------
+# Resolution pass (TCK-12) — driven by a fake resolver for determinism
+# ---------------------------------------------------------------------------
+
+
+def _resolution_graph():
+    from graphlens import GraphLens, Node
+    from graphlens.utils.span import Span
+
+    g = GraphLens()
+    g.add_node(
+        Node(
+            id="caller",
+            kind=NodeKind.FUNCTION,
+            qualified_name="m::caller",
+            name="caller",
+            file_path="a.rs",
+            span=Span(1, 1, 3, 1),
+            metadata={"name_span": Span(1, 4, 1, 10)},
+        )
+    )
+    g.add_node(
+        Node(
+            id="callee",
+            kind=NodeKind.FUNCTION,
+            qualified_name="m::callee",
+            name="callee",
+            file_path="a.rs",
+            span=Span(5, 1, 7, 1),
+            metadata={"name_span": Span(5, 4, 5, 10)},
+        )
+    )
+    return g
+
+
+class _FakeResolver:
+    def __init__(self, ref):
+        self._ref = ref
+
+    def prepare(self, project_root, files):
+        pass
+
+    def definition_at(self, file, line, col):
+        return self._ref
+
+    def infer_type_at(self, file, line, col):
+        return None
+
+    def references_to(self, file, line, col):
+        return []
+
+    def status(self):
+        from graphlens import ResolverStatus
+
+        return ResolverStatus.OK
+
+
+def _occ(line=2, col=3, enclosing="caller"):
+    from graphlens.utils.span import Span
+
+    from graphlens_rust._visitor import OccurrenceRef
+
+    return (
+        "a.rs",
+        OccurrenceRef(
+            role="call",
+            line=line,
+            col=col,
+            enclosing_id=enclosing,
+            span=Span(line, col, line, col + 6),
+        ),
+    )
+
+
+def _resolve(graph, resolver, occs, project_root=Path("/nonexistent")):
+    from graphlens.utils import SpanIndex
+
+    from graphlens_rust._adapter import _resolve_occurrences
+
+    _resolve_occurrences(
+        graph,
+        "m",
+        project_root,
+        resolver,
+        SpanIndex.from_graph(graph),
+        occs,
+    )
+
+
+def _calls(graph):
+    from graphlens import RelationKind
+
+    return [r for r in graph.relations if r.kind == RelationKind.CALLS]
+
+
+def _ref(origin, *, file_path=None, line=0, col=0, full_name=""):
+    from graphlens.contracts import ResolvedRef
+
+    return ResolvedRef(
+        full_name=full_name,
+        file_path=file_path,
+        line=line,
+        col=col,
+        kind="",
+        origin=origin,
+    )
+
+
+def test_resolve_internal_hit_emits_call_edge():
+    g = _resolution_graph()
+    ref = _ref("internal", file_path=Path("a.rs"), line=5, col=4)
+    _resolve(g, _FakeResolver(ref), [_occ()])
+    calls = _calls(g)
+    assert len(calls) == 1
+    assert calls[0].source_id == "caller"
+    assert calls[0].target_id == "callee"
+
+
+def test_resolve_internal_hit_with_absolute_path(tmp_path):
+    g = _resolution_graph()
+    ref = _ref("internal", file_path=tmp_path / "a.rs", line=5, col=4)
+    _resolve(g, _FakeResolver(ref), [_occ()], project_root=tmp_path)
+    calls = _calls(g)
+    assert len(calls) == 1
+    assert calls[0].target_id == "callee"
+
+
+def test_resolve_external_creates_external_symbol():
+    g = _resolution_graph()
+    _resolve(g, _FakeResolver(_ref("stdlib")), [_occ()])
+    ext = [
+        n for n in g.nodes.values() if n.kind == NodeKind.EXTERNAL_SYMBOL
+    ]
+    assert len(ext) == 1
+    assert ext[0].metadata["origin"] == "stdlib"
+    assert _calls(g)[0].target_id == ext[0].id
+
+
+def test_resolve_none_ref_emits_no_edge():
+    g = _resolution_graph()
+    _resolve(g, _FakeResolver(None), [_occ()])
+    assert _calls(g) == []
+
+
+def test_resolve_internal_span_miss_falls_back():
+    g = _resolution_graph()
+    ref = _ref("internal", file_path=Path("a.rs"), line=99, col=1)
+    _resolve(g, _FakeResolver(ref), [_occ()])
+    ext = [
+        n for n in g.nodes.values() if n.kind == NodeKind.EXTERNAL_SYMBOL
+    ]
+    assert len(ext) == 1
+    assert ext[0].metadata["origin"] == "internal"
+
+
+def test_resolve_full_name_symbol_is_reused():
+    g = _resolution_graph()
+    ref = _ref("third_party", full_name="ext::Thing")
+    _resolve(g, _FakeResolver(ref), [_occ(line=2), _occ(line=3)])
+    ext = [
+        n for n in g.nodes.values() if n.kind == NodeKind.EXTERNAL_SYMBOL
+    ]
+    assert len(ext) == 1
+    assert ext[0].qualified_name == "ext::Thing"
+    assert len(_calls(g)) == 2
+
+
+@pytest.mark.skipif(
+    not __import__("shutil").which("rust-analyzer"),
+    reason="rust-analyzer not installed",
+)
+def test_rust_analyzer_integration_runs_pipeline(tmp_path: Path):
+    """End-to-end: RustAnalyzerResolver drives the resolution pass.
+
+    Validates that rust-analyzer starts and the resolution pass runs to
+    completion (status OK). Real cross-file resolution depends on
+    rust-analyzer's crate indexing, which is not guaranteed in a CI sandbox,
+    so the precise edge binding is covered by the fake-resolver and
+    LocationLink unit tests rather than asserted against the live engine.
+    """
+    from graphlens_rust import RustAnalyzerResolver
+
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "m"\nversion = "0.1.0"\nedition = "2021"\n'
+    )
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "util.rs").write_text("pub fn helper() -> i32 { 1 }\n")
+    (src / "main.rs").write_text(
+        "mod util;\nfn main() {\n    let _ = util::helper();\n}\n"
+    )
+    graph = RustAdapter(resolver=RustAnalyzerResolver()).analyze(tmp_path)
+    assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"

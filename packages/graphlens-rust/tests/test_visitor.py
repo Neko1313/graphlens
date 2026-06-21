@@ -88,3 +88,90 @@ def test_text_none_is_empty():
 def test_walk_type_no_match():
     tree = parse_rust(b"fn x(){}\n")
     assert _walk_type(tree.root_node, "nonexistent_node_type") == []
+
+
+# ---------------------------------------------------------------------------
+# Call occurrence collection (TCK-12)
+# ---------------------------------------------------------------------------
+
+
+def _extractor(source: str):
+    g = GraphLens()
+    ctx = RustFileContext(
+        project_name="p",
+        module_qname="crate::m",
+        file_id="f1",
+        file_rel="src/m.rs",
+    )
+    ex = RustStructureExtractor(g, ctx, lambda _path: "stdlib")
+    ex.extract(parse_rust(source.encode()).root_node)
+    return g, ex
+
+
+def test_collects_call_occurrences():
+    src = (
+        "fn f() {\n"
+        "  foo();\n"
+        "  util::helper();\n"
+        "  obj.method();\n"
+        "  Type::assoc();\n"
+        "  outer(inner());\n"
+        "}\n"
+    )
+    g, ex = _extractor(src)
+    # foo, helper, method, assoc, outer, inner
+    assert len(ex.occurrences) == 6
+    assert all(o.role == "call" for o in ex.occurrences)
+    fn = next(n for n in g.nodes.values() if n.kind == NodeKind.FUNCTION)
+    assert {o.enclosing_id for o in ex.occurrences} == {fn.id}
+
+
+def test_scoped_call_points_at_name():
+    src = "fn f() {\n  util::helper();\n}\n"
+    _g, ex = _extractor(src)
+    occ = ex.occurrences[0]
+    line = src.splitlines()[occ.line - 1]
+    assert line[occ.col - 1 :].startswith("helper")
+
+
+def test_field_call_points_at_field():
+    src = "fn f() {\n  obj.method();\n}\n"
+    _g, ex = _extractor(src)
+    occ = ex.occurrences[0]
+    line = src.splitlines()[occ.line - 1]
+    assert line[occ.col - 1 :].startswith("method")
+
+
+def test_call_in_impl_method_attributed_to_method():
+    g, ex = _extractor("struct S{} impl S { fn run(&self){ helper(); } }\n")
+    assert len(ex.occurrences) == 1
+    method = next(n for n in g.nodes.values() if n.kind == NodeKind.METHOD)
+    assert ex.occurrences[0].enclosing_id == method.id
+
+
+def test_call_on_expression_result_is_skipped():
+    _g, ex = _extractor("fn f() {\n  funcs[0]();\n}\n")
+    assert ex.occurrences == []
+
+
+def test_function_without_calls_has_no_occurrences():
+    _g, ex = _extractor("fn f() { let x = 1; }\n")
+    assert ex.occurrences == []
+
+
+def test_shared_external_symbol_reused_across_files():
+    g = GraphLens()
+    for fid, rel in (("f1", "a.rs"), ("f2", "b.rs")):
+        ctx = RustFileContext(
+            project_name="p",
+            module_qname="crate::m",
+            file_id=fid,
+            file_rel=rel,
+        )
+        RustStructureExtractor(g, ctx, lambda _path: "stdlib").extract(
+            parse_rust(b"use std::fmt;\n").root_node
+        )
+    syms = [
+        n for n in g.nodes.values() if n.kind == NodeKind.EXTERNAL_SYMBOL
+    ]
+    assert len(syms) == 1  # the "std::fmt" symbol is reused, not duplicated

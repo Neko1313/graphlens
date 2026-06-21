@@ -12,7 +12,7 @@ from graphlens.utils.span import Span
 from tree_sitter import Language, Parser
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from graphlens import GraphLens
     from tree_sitter import Node as TSNode
@@ -55,6 +55,42 @@ def _walk_type(node: TSNode, type_name: str) -> list[TSNode]:
     return out
 
 
+def _descendants(node: TSNode) -> Iterator[TSNode]:
+    """Yield ``node`` and every descendant (full recursion, no pruning)."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        stack.extend(current.children)
+
+
+def _called_name(fn: TSNode) -> TSNode | None:
+    """Return the identifier/field token naming a call's callee, or None."""
+    if fn.type == "identifier":
+        return fn  # foo()
+    if fn.type == "scoped_identifier":
+        return fn.child_by_field_name("name")  # util::helper() / Type::assoc()
+    if fn.type == "field_expression":
+        return fn.child_by_field_name("field")  # obj.method()
+    return None  # calling an expression result, e.g. funcs[0]()
+
+
+@dataclass(frozen=True)
+class OccurrenceRef:
+    """
+    A use-site for the resolution pass to bind to a definition.
+
+    Coordinates are 1-based (matching :class:`Span`). The only role emitted
+    so far is ``call`` (CALLS); type/trait roles are staged separately.
+    """
+
+    role: str
+    line: int
+    col: int
+    enclosing_id: str
+    span: Span
+
+
 @dataclass
 class RustFileContext:
     """Per-file context for structural extraction."""
@@ -78,6 +114,7 @@ class RustStructureExtractor:
         self._graph = graph
         self._ctx = ctx
         self._classify = classify
+        self.occurrences: list[OccurrenceRef] = []
 
     def extract(self, root: TSNode) -> None:
         """Dispatch each top-level item to its ``_on_<type>`` handler."""
@@ -93,10 +130,10 @@ class RustStructureExtractor:
         kind: NodeKind,
         full_node: TSNode,
         name_node: TSNode,
-    ) -> None:
+    ) -> str:
         node_id = make_node_id(self._ctx.project_name, qname, kind.value)
         if node_id in self._graph.nodes:
-            return
+            return node_id
         self._graph.add_node(
             Node(
                 id=node_id,
@@ -111,16 +148,49 @@ class RustStructureExtractor:
         self._graph.add_relation(
             Relation(self._ctx.file_id, node_id, RelationKind.DECLARES)
         )
+        return node_id
 
-    def _declare_named(self, node: TSNode, kind: NodeKind) -> None:
+    def _declare_named(self, node: TSNode, kind: NodeKind) -> str | None:
         name_node = node.child_by_field_name("name")
         if name_node is None:
-            return  # pragma: no cover
+            return None  # pragma: no cover
         qname = f"{self._ctx.module_qname}::{_text(name_node)}"
-        self._declare(qname, _text(name_node), kind, node, name_node)
+        return self._declare(qname, _text(name_node), kind, node, name_node)
+
+    def _add_occurrence(
+        self, role: str, name_node: TSNode, enclosing_id: str
+    ) -> None:
+        self.occurrences.append(
+            OccurrenceRef(
+                role=role,
+                line=name_node.start_point[0] + 1,
+                col=name_node.start_point[1] + 1,
+                enclosing_id=enclosing_id,
+                span=_span(name_node),
+            )
+        )
+
+    def _collect_calls(self, scope: TSNode, enclosing_id: str) -> None:
+        """Record a ``call`` occurrence for every call under ``scope``."""
+        for node in _descendants(scope):
+            if node.type != "call_expression":
+                continue
+            fn = node.child_by_field_name("function")
+            if fn is None:  # pragma: no cover - grammar guarantees a function
+                continue
+            name_node = _called_name(fn)
+            if name_node is not None:
+                self._add_occurrence("call", name_node, enclosing_id)
 
     def _on_function_item(self, node: TSNode) -> None:
-        self._declare_named(node, NodeKind.FUNCTION)
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return  # pragma: no cover - a function item always has a name
+        qname = f"{self._ctx.module_qname}::{_text(name_node)}"
+        node_id = self._declare(
+            qname, _text(name_node), NodeKind.FUNCTION, node, name_node
+        )
+        self._collect_calls(node, node_id)
 
     def _on_struct_item(self, node: TSNode) -> None:
         self._declare_named(node, NodeKind.CLASS)
@@ -158,9 +228,10 @@ class RustStructureExtractor:
             qname = (
                 f"{self._ctx.module_qname}::{prefix}{_text(name_node)}"
             )
-            self._declare(
+            node_id = self._declare(
                 qname, _text(name_node), NodeKind.METHOD, item, name_node
             )
+            self._collect_calls(item, node_id)
 
     def _on_use_declaration(self, node: TSNode) -> None:
         arg = node.child_by_field_name("argument")
