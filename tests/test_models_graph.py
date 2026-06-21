@@ -81,6 +81,30 @@ def test_merge_duplicate_node_raises() -> None:
         g1.merge(g2)
 
 
+def test_merge_allow_shared_skips_identical_nodes() -> None:
+    g1 = GraphLens()
+    g2 = GraphLens()
+    shared = make_node(
+        kind=NodeKind.BOUNDARY, qname="http:GET /x", name="GET /x"
+    )
+    other = make_node(
+        kind=NodeKind.BOUNDARY, qname="http:GET /x", name="GET /x"
+    )
+    g1.add_node(shared)
+    g2.add_node(other)
+    g1.merge(g2, allow_shared=True)
+    assert len(g1.nodes) == 1
+
+
+def test_merge_allow_shared_still_raises_on_real_conflict() -> None:
+    g1 = GraphLens()
+    g2 = GraphLens()
+    g1.add_node(make_node(name="a"))
+    g2.add_node(make_node(name="b"))  # same id, different content
+    with pytest.raises(DuplicateNodeError):
+        g1.merge(g2, allow_shared=True)
+
+
 def test_merge_empty_into_non_empty() -> None:
     g1 = GraphLens()
     g2 = GraphLens()

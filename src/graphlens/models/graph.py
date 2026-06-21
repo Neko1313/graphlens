@@ -57,10 +57,25 @@ class GraphLens:
         self.relations.append(relation)
         self._out_index = None
 
-    def merge(self, other: GraphLens) -> None:
-        """Merge another graph into this one (raises on node ID collision)."""
+    def merge(self, other: GraphLens, *, allow_shared: bool = False) -> None:
+        """
+        Merge another graph into this one.
+
+        Raises ``DuplicateNodeError`` on a node-ID collision.  Set
+        ``allow_shared=True`` to permit *identical* nodes to coincide — this
+        is how cross-language graphs combine, since adapters in different
+        languages intentionally emit the same ``BOUNDARY`` node (its id is
+        derived from mechanism + key).  A collision between two *different*
+        nodes still raises even in shared mode.
+        """
         for node in other.nodes.values():
-            self.add_node(node)
+            existing = self.nodes.get(node.id)
+            if existing is not None:
+                if allow_shared and existing == node:
+                    continue
+                msg = f"Node with id '{node.id}' already exists"
+                raise DuplicateNodeError(msg)
+            self.nodes[node.id] = node
         self.relations.extend(other.relations)
         self.metadata.update(other.metadata)
         self._out_index = None

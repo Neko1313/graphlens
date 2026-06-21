@@ -28,7 +28,11 @@ from graphlens.models import (
 )
 from graphlens.registry import AdapterRegistry, adapter_registry
 from graphlens.status import RESOLVER_STATUS_KEY, ResolverStatus
-from graphlens.utils import make_boundary_id, make_node_id
+from graphlens.utils import (
+    make_boundary_id,
+    make_node_id,
+    normalize_http_path,
+)
 
 __all__ = [
     "RESOLVER_STATUS_KEY",
@@ -63,5 +67,6 @@ __all__ = [
     # utils
     "make_boundary_id",
     "make_node_id",
+    "normalize_http_path",
     "normalize_pkg_name",
 ]

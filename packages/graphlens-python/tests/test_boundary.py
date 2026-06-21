@@ -17,7 +17,6 @@ from graphlens_python._boundary import (
     HttpClientExtractor,
     HttpServerExtractor,
     TemporalExtractor,
-    _normalize_http_path,
     _string_template,
     _text,
 )
@@ -238,39 +237,6 @@ class TestHelpers:
     def test_string_template_empty(self):
         node = _find(_root('x = ""'), "string")
         assert _string_template(node) == ""
-
-    def test_normalize_strips_scheme_and_host(self):
-        assert _normalize_http_path("http://h/api/x") == "/api/x"
-
-    def test_normalize_scheme_without_path(self):
-        assert _normalize_http_path("http://host") == "/"
-
-    def test_normalize_adds_leading_slash(self):
-        assert _normalize_http_path("api/x") == "/api/x"
-
-    def test_normalize_brace_param(self):
-        assert _normalize_http_path("/u/{id}") == "/u/{}"
-
-    def test_normalize_flask_converter(self):
-        assert _normalize_http_path("/u/<int:id>") == "/u/{}"
-
-    def test_normalize_colon_param(self):
-        assert _normalize_http_path("/u/:id") == "/u/{}"
-
-    def test_normalize_numeric_segment(self):
-        assert _normalize_http_path("/users/42/posts") == "/users/{}/posts"
-
-    def test_normalize_strips_query(self):
-        assert _normalize_http_path("/x?a=1#z") == "/x"
-
-    def test_normalize_trailing_slash(self):
-        assert _normalize_http_path("/users/") == "/users"
-
-    def test_normalize_root_kept(self):
-        assert _normalize_http_path("/") == "/"
-
-    def test_normalize_all_slashes(self):
-        assert _normalize_http_path("//") == "/"
 
 
 # --------------------------------------------------------------------------

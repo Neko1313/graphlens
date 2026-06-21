@@ -13,11 +13,10 @@ Patterns are expressed as declarative tree-sitter queries (see
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from graphlens import BoundaryRef
+from graphlens import BoundaryRef, normalize_http_path
 
 from graphlens_python._queries import run_query
 
@@ -86,28 +85,6 @@ def _string_template(node: TSNode) -> str:
     if parts:
         return "".join(parts)
     return _text(node).strip("'\"")
-
-
-def _normalize_http_path(raw: str) -> str:
-    """Normalize a route/URL to a host-independent, param-agnostic key."""
-    path = raw.strip()
-    if "://" in path:
-        after = path.split("://", 1)[1]
-        slash = after.find("/")
-        path = after[slash:] if slash != -1 else "/"
-    path = path.split("?", 1)[0].split("#", 1)[0]
-    if not path.startswith("/"):
-        path = "/" + path
-    path = re.sub(r"\{[^}]*\}", "{}", path)
-    path = re.sub(r"<[^>]*>", "{}", path)
-    path = re.sub(r":[^/]+", "{}", path)
-    # Concrete numeric ids -> {} so a client "/users/1" matches "/users/{}".
-    path = "/".join(
-        "{}" if seg.isdigit() else seg for seg in path.split("/")
-    )
-    if len(path) > 1:
-        path = path.rstrip("/") or "/"
-    return path
 
 
 def _first_positional(args: TSNode) -> TSNode | None:
@@ -188,7 +165,7 @@ class HttpServerExtractor(PyBoundaryExtractor):
     def _ref(
         self, verb: str, path: str, line: int, col: int
     ) -> BoundaryRef:
-        norm = _normalize_http_path(path)
+        norm = normalize_http_path(path)
         return BoundaryRef(
             mechanism="http",
             role="server",
@@ -222,7 +199,7 @@ class HttpClientExtractor(PyBoundaryExtractor):
             if not url.startswith("/") and "://" not in url:
                 continue  # not a URL/path (e.g. dict.get("key"))
             confidence = 0.9 if url.startswith("/") else 0.8
-            norm = _normalize_http_path(url)
+            norm = normalize_http_path(url)
             line, col = _pos(caps["method"][0])
             refs.append(
                 BoundaryRef(

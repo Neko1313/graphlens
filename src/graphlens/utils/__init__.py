@@ -1,5 +1,6 @@
 """Shared utility helpers: deterministic IDs, source spans, and roots."""
 
+from graphlens.utils.boundaries import normalize_http_path
 from graphlens.utils.ids import make_boundary_id, make_node_id
 from graphlens.utils.roots import (
     collect_marker_roots,
@@ -15,4 +16,5 @@ __all__ = [
     "filter_nested_root_files",
     "make_boundary_id",
     "make_node_id",
+    "normalize_http_path",
 ]
