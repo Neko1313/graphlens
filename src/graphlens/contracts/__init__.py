@@ -10,6 +10,7 @@ from graphlens.contracts.deps import (
 from graphlens.contracts.reader import DiscoveredProject, ProjectReader
 from graphlens.contracts.resolver import (
     Occurrence,
+    Query,
     ResolvedRef,
     SymbolResolver,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "LanguageAdapter",
     "Occurrence",
     "ProjectReader",
+    "Query",
     "ResolvedRef",
     "SymbolResolver",
     "normalize_pkg_name",

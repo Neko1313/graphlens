@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from graphlens.status import ResolverStatus
 
-if TYPE_CHECKING:
-    from pathlib import Path
+#: A position to resolve: (absolute file, 1-based line, 1-based column).
+Query = tuple[Path, int, int]
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,20 @@ class SymbolResolver(ABC):
     ) -> ResolvedRef | None:
         """Resolve the symbol at a position to its definition (cross-file)."""
         ...
+
+    def resolve_all(
+        self, queries: list[Query]
+    ) -> list[ResolvedRef | None]:
+        """
+        Resolve a batch of positions to definitions, preserving order.
+
+        Returns one entry per query (``None`` where nothing resolved). The
+        default loops :meth:`definition_at`; subprocess-backed resolvers
+        override this to issue the whole batch at once (pipelined LSP
+        requests, a single bridge call) so N positions cost roughly one
+        round-trip instead of N. Never raises — degrade to ``None`` entries.
+        """
+        return [self.definition_at(f, line, col) for (f, line, col) in queries]
 
     @abstractmethod
     def infer_type_at(

@@ -19,6 +19,7 @@ from graphlens.exceptions import (
     GraphLensError,
     SerializationError,
 )
+from graphlens.metrics import RESOLVER_METRICS_KEY, ResolverMetrics
 from graphlens.models import (
     GraphLens,
     Node,
@@ -35,6 +36,7 @@ from graphlens.utils import (
 )
 
 __all__ = [
+    "RESOLVER_METRICS_KEY",
     "RESOLVER_STATUS_KEY",
     "AdapterError",
     "AdapterNotFoundError",
@@ -60,6 +62,8 @@ __all__ = [
     "ProjectReader",
     "Relation",
     "RelationKind",
+    # metrics
+    "ResolverMetrics",
     # status
     "ResolverStatus",
     "SerializationError",

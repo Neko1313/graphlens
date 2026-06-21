@@ -282,6 +282,9 @@ class _FakeResolver:
     def definition_at(self, file, line, col):
         return self._ref
 
+    def resolve_all(self, queries):
+        return [self.definition_at(f, line, col) for (f, line, col) in queries]
+
     def infer_type_at(self, file, line, col):
         return None
 
@@ -316,7 +319,7 @@ def _resolve(graph, resolver, occs, project_root=Path("/nonexistent")):
 
     from graphlens_rust._adapter import _resolve_occurrences
 
-    _resolve_occurrences(
+    return _resolve_occurrences(
         graph,
         "m",
         project_root,
@@ -379,6 +382,29 @@ def test_resolve_none_ref_emits_no_edge():
     g = _resolution_graph()
     _resolve(g, _FakeResolver(None), [_occ()])
     assert _calls(g) == []
+
+
+def test_resolve_occurrences_reports_metrics():
+    g = _resolution_graph()
+    ref = _ref("internal", file_path=Path("a.rs"), line=5, col=4)
+    metrics = _resolve(g, _FakeResolver(ref), [_occ(), _occ(line=3)])
+    assert metrics.queries == 2
+    assert metrics.resolved == 2
+    assert metrics.internal == 2
+    assert metrics.external == 0
+    assert metrics.unresolved == 0
+
+
+def test_resolve_occurrences_counts_external_and_unresolved():
+    g = _resolution_graph()
+    metrics = _resolve(g, _FakeResolver(_ref("stdlib")), [_occ()])
+    assert metrics.external == 1
+    assert metrics.internal == 0
+    g2 = _resolution_graph()
+    metrics2 = _resolve(g2, _FakeResolver(None), [_occ(), _occ(line=3)])
+    assert metrics2.queries == 2
+    assert metrics2.resolved == 0
+    assert metrics2.unresolved == 2
 
 
 def test_resolve_internal_span_miss_falls_back():

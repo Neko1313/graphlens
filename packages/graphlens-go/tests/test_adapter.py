@@ -221,6 +221,9 @@ class _FakeResolver:
     def definition_at(self, file, line, col):
         return self._ref
 
+    def resolve_all(self, queries):
+        return [self.definition_at(f, line, col) for (f, line, col) in queries]
+
     def infer_type_at(self, file, line, col):
         return None
 

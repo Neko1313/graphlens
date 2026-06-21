@@ -9,11 +9,12 @@ import os
 import select
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from urllib.parse import unquote
 
-from graphlens.contracts import Occurrence, ResolvedRef, SymbolResolver
+from graphlens.contracts import Occurrence, Query, ResolvedRef, SymbolResolver
 from graphlens.status import ResolverStatus
 
 logger = logging.getLogger("graphlens_rust")
@@ -90,6 +91,10 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         )
         self._next_id = 0
         self._opened_uris: set[str] = set()
+        # Serialize stdin writes: the pipelined batch runs a writer thread
+        # while the main thread may still write MethodNotFound replies, so
+        # two threads can race on stdin and interleave a frame's bytes.
+        self._write_lock = threading.Lock()
         self._initialize(project_root)
 
     def _write(self, msg: dict) -> None:  # type: ignore[type-arg]
@@ -98,8 +103,9 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         body = json.dumps(msg, separators=(",", ":")).encode()
         header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         try:
-            self._proc.stdin.write(header + body)
-            self._proc.stdin.flush()
+            with self._write_lock:
+                self._proc.stdin.write(header + body)
+                self._proc.stdin.flush()
         except OSError:
             pass
 
@@ -243,6 +249,80 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
             ):
                 return
 
+    def open_files(self, files: list[Path]) -> None:
+        """
+        Open many files at once: send every ``didOpen`` first, then drain.
+
+        Batching the opens lets rust-analyzer index the whole set in parallel
+        and collapses N serial per-file diagnostic waits into one — the bulk
+        of the win on file-heavy crates.
+        """
+        pending: set[str] = set()
+        for file in files:
+            uri = file.as_uri()
+            if uri in self._opened_uris:
+                continue
+            self._opened_uris.add(uri)
+            try:
+                text = file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            self._notify(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": text,
+                    },
+                },
+            )
+            pending.add(uri)
+        if pending:
+            self._drain_for_diagnostics_multi(pending)
+
+    def _drain_for_diagnostics_multi(
+        self, uris: set[str], timeout: float = 60.0
+    ) -> None:
+        """Wait for ``publishDiagnostics`` from every uri (or until time)."""
+        deadline = time.monotonic() + timeout
+        remaining = set(uris)
+        while remaining and time.monotonic() < deadline:
+            if self._proc.poll() is not None:
+                return
+            msg = self._read_one(timeout=min(deadline - time.monotonic(), 2.0))
+            if msg is None:
+                # A quiet slice during workspace load is expected; keep
+                # waiting until the deadline instead of bailing on the first
+                # gap (the per-file drain bailed here and fired queries
+                # before indexing finished, silently yielding no edges).
+                continue
+            method = msg.get("method", "")
+            msg_id = msg.get("id")
+            if method and msg_id is not None:
+                self._write(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {
+                            "code": -32601,
+                            "message": "Method not found",
+                        },
+                    }
+                )
+            elif method == "textDocument/publishDiagnostics":
+                remaining.discard(msg.get("params", {}).get("uri"))
+
+    @staticmethod
+    def _normalize_result(result: object) -> dict | None:  # type: ignore[type-arg]
+        """Reduce an LSP definition result to a single Location or None."""
+        if not result:
+            return None
+        if isinstance(result, list):
+            return result[0] if result else None
+        return result  # type: ignore[return-value]
+
     def definition(
         self, file: Path, line: int, col: int
     ) -> dict | None:  # type: ignore[type-arg]
@@ -257,10 +337,74 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
         )
         if resp is None:
             return None
-        result = resp.get("result")
-        if not result:
-            return None
-        return result[0] if isinstance(result, list) else result
+        return self._normalize_result(resp.get("result"))
+
+    def definition_batch(
+        self, queries: list[Query]
+    ) -> list[dict | None]:  # type: ignore[type-arg]
+        """
+        Resolve many positions in one pipelined exchange.
+
+        Writes every ``textDocument/definition`` request up front (from a
+        writer thread so a full stdin/stdout pipe can't deadlock against our
+        reads), then collects responses by JSON-RPC id. Order is preserved;
+        unanswered positions stay ``None``.
+        """
+        if not queries:
+            return []
+        self.open_files([f for (f, _l, _c) in queries])
+        results: list[dict | None] = [None] * len(queries)
+        if self._proc.poll() is not None:
+            return results
+        id2idx: dict[int, int] = {}
+        reqs: list[dict] = []  # type: ignore[type-arg]
+        for k, (file, line, col) in enumerate(queries):
+            self._next_id += 1
+            mid = self._next_id
+            id2idx[mid] = k
+            reqs.append(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": file.as_uri()},
+                        "position": {"line": line - 1, "character": col - 1},
+                    },
+                }
+            )
+
+        def _writer() -> None:
+            for req in reqs:
+                self._write(req)
+
+        writer = threading.Thread(target=_writer, daemon=True)
+        writer.start()
+        got = 0
+        while got < len(queries):
+            msg = self._read_one(timeout=90.0)
+            if msg is None:
+                break
+            mid = msg.get("id")
+            if "method" in msg:
+                if mid is not None:
+                    self._write(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": mid,
+                            "error": {
+                                "code": -32601,
+                                "message": "Method not found",
+                            },
+                        }
+                    )
+                continue
+            idx = id2idx.get(mid) if mid is not None else None
+            if idx is not None:
+                results[idx] = self._normalize_result(msg.get("result"))
+                got += 1
+        writer.join(timeout=5)
+        return results
 
     def references(
         self, file: Path, line: int, col: int
@@ -340,6 +484,17 @@ class RustAnalyzerResolver(SymbolResolver):
         if loc is None:
             return None
         return self._loc_to_ref(loc)
+
+    def resolve_all(
+        self, queries: list[Query]
+    ) -> list[ResolvedRef | None]:
+        if self._client is None or not queries:
+            return [None] * len(queries)
+        try:
+            locs = self._client.definition_batch(list(queries))
+        except Exception:
+            return [None] * len(queries)
+        return [self._loc_to_ref(loc) if loc else None for loc in locs]
 
     def infer_type_at(
         self, file: Path, line: int, col: int  # noqa: ARG002

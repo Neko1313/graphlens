@@ -105,6 +105,38 @@ def test_definition_at_miss(resolver, tmp_path):
     assert resolver.definition_at(tmp_path / "main.go", 1, 1) is None
 
 
+def test_resolve_all_returns_none_list_when_client_none(tmp_path):
+    r = GoplsResolver()
+    queries = [(tmp_path / "a.go", 1, 1), (tmp_path / "b.go", 2, 2)]
+    assert r.resolve_all(queries) == [None, None]
+
+
+def test_resolve_all_batches_and_maps_results(resolver, tmp_path):
+    target = tmp_path / "lib.go"
+    resolver._client.definition_batch.return_value = [
+        {"uri": target.as_uri(), "range": {"start": {"line": 2, "character": 3}}},
+        None,
+    ]
+    queries = [(tmp_path / "main.go", 4, 1), (tmp_path / "main.go", 5, 1)]
+    refs = resolver.resolve_all(queries)
+
+    resolver._client.definition_batch.assert_called_once_with(queries)
+    assert refs[0] is not None
+    assert refs[0].file_path == target
+    assert refs[0].line == 3
+    assert refs[0].col == 4
+    assert refs[1] is None
+
+
+def test_resolve_all_swallows_exception(resolver, tmp_path):
+    resolver._client.definition_batch.side_effect = RuntimeError("boom")
+    assert resolver.resolve_all([(tmp_path / "main.go", 1, 1)]) == [None]
+
+
+def test_resolve_all_empty_is_empty(resolver):
+    assert resolver.resolve_all([]) == []
+
+
 def test_loc_uri_and_start_location():
     uri, start = _loc_uri_and_start(
         {"uri": "file:///a.go", "range": {"start": {"line": 1}}}
