@@ -42,39 +42,60 @@ _RA_INIT_OPTIONS: dict = {  # type: ignore[type-arg]
 }
 
 
-def _resolve_ra_binary() -> str:
+def _rustup_which(rustup: str, cwd: str) -> str | None:
     """
-    Resolve the real rust-analyzer binary, bypassing the rustup proxy.
+    Return the concrete rust-analyzer path rustup resolves from *cwd*.
+
+    None if rustup errors or the resolved binary does not exist (e.g. a pinned
+    toolchain that lacks the component).
+    """
+    with contextlib.suppress(Exception):
+        env = {
+            k: v for k, v in os.environ.items() if k != "RUSTUP_TOOLCHAIN"
+        }
+        out = subprocess.run(
+            [rustup, "which", "rust-analyzer"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env=env,
+        )
+        path = out.stdout.strip()
+        if out.returncode == 0 and path and Path(path).is_file():
+            return path
+    return None
+
+
+def _resolve_ra_binary(project_root: Path) -> str:
+    """
+    Resolve the concrete rust-analyzer binary to spawn for *project_root*.
 
     ``rust-analyzer`` on PATH is usually a rustup *proxy* that honours a
-    project's ``rust-toolchain.toml``. When the pinned toolchain lacks the
-    rust-analyzer component (e.g. ruff pins ``1.96`` without it), the proxy
-    exits with ``Unknown binary 'rust-analyzer'`` and resolution silently
-    yields nothing. Resolving the concrete binary for a toolchain that *does*
-    have the component — via ``rustup which`` from a neutral directory (no
-    ``rust-toolchain.toml``) — and spawning it directly sidesteps that switch.
+    project's ``rust-toolchain.toml``. Two failure modes follow:
+
+    1. The pinned toolchain *has* the component — we want that exact binary,
+       because a build matching the project's toolchain analyses it correctly.
+       So we first ask ``rustup which`` from ``project_root`` (honouring the
+       pin) and spawn the concrete path it reports.
+    2. The pinned toolchain *lacks* the component (e.g. ruff pins ``1.96``
+       without rust-analyzer) — the proxy would exit with ``Unknown binary
+       'rust-analyzer'`` and resolution would silently yield nothing. The
+       project-rooted lookup returns None (no such file), so we fall back to
+       the default toolchain's binary resolved from a neutral directory.
+
     Falls back to the PATH entry when rustup is absent (a standalone install).
     """
-    direct = shutil.which("rust-analyzer")
     rustup = shutil.which("rustup")
     if rustup is not None:
-        with contextlib.suppress(Exception):
-            env = {
-                k: v for k, v in os.environ.items() if k != "RUSTUP_TOOLCHAIN"
-            }
-            out = subprocess.run(
-                [rustup, "which", "rust-analyzer"],
-                cwd=tempfile.gettempdir(),
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-                env=env,
-            )
-            path = out.stdout.strip()
-            if out.returncode == 0 and path and Path(path).is_file():
-                return path
-    return direct or "rust-analyzer"
+        return (
+            _rustup_which(rustup, str(project_root))
+            or _rustup_which(rustup, tempfile.gettempdir())
+            or shutil.which("rust-analyzer")
+            or "rust-analyzer"
+        )
+    return shutil.which("rust-analyzer") or "rust-analyzer"
 
 
 def _uri_to_path(uri: str) -> Path | None:
@@ -135,7 +156,7 @@ class _RustAnalyzerClient:  # pragma: no cover - subprocess transport
     """Minimal synchronous LSP JSON-RPC client for ``rust-analyzer``."""
 
     def __init__(self, project_root: Path) -> None:
-        ra_bin = _resolve_ra_binary()
+        ra_bin = _resolve_ra_binary(project_root)
         # Capture stderr to a temp file (not DEVNULL) so a workspace that fails
         # to load — rust-analyzer exiting/panicking, e.g. on ruff — leaves a
         # diagnosable trail. A real file never blocks the child the way an

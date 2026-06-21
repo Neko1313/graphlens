@@ -47,9 +47,19 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && rm -rf /root/.cache/go-build
 
 # --- Rust toolchain + rust-analyzer (Rust semantic resolver) ----------------
+# A project's rust-toolchain.toml can pin a non-default toolchain; the
+# rust-analyzer component is per-toolchain, so the pinned toolchain needs its
+# own copy or the resolver falls back to the (possibly mismatched) default.
+# RUST_PINNED_TOOLCHAINS lists toolchains pinned by benchmarked projects
+# (e.g. astral-sh/ruff pins 1.96); extend it when adding such a project.
+ARG RUST_PINNED_TOOLCHAINS="1.96"
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable \
-    && rustup component add rust-analyzer rust-src
+    && rustup component add rust-analyzer rust-src \
+    && for tc in ${RUST_PINNED_TOOLCHAINS}; do \
+           rustup toolchain install "$tc" --profile minimal \
+           && rustup component add rust-analyzer rust-src --toolchain "$tc"; \
+       done
 
 # --- uv (installer) ---------------------------------------------------------
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv

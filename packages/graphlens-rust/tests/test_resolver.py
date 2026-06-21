@@ -24,34 +24,53 @@ from graphlens_rust._resolver import (
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_ra_binary_prefers_rustup_which(tmp_path):
-    # rustup resolves to the real toolchain binary; that path is returned so a
-    # project's rust-toolchain.toml can't redirect the proxy to a toolchain
-    # without the rust-analyzer component (the ruff failure).
-    real = tmp_path / "rust-analyzer"
-    real.write_text("#!/bin/sh\n")
+def test_resolve_ra_binary_prefers_project_toolchain(tmp_path):
+    # When the project's pinned toolchain has the component, rustup resolved
+    # from the project dir returns that exact binary — we spawn it so the
+    # analysis matches the project's toolchain version.
+    proj_ra = tmp_path / "proj-ra"
+    proj_ra.write_text("#!/bin/sh\n")
     with patch.object(
         shutil, "which",
-        side_effect={
-            "rust-analyzer": "/root/.cargo/bin/rust-analyzer",
-            "rustup": "/root/.cargo/bin/rustup",
-        }.get,
+        side_effect={"rustup": "/root/.cargo/bin/rustup"}.get,
     ), patch("graphlens_rust._resolver.subprocess.run") as run:
-        run.return_value = MagicMock(returncode=0, stdout=f"{real}\n")
-        assert _resolve_ra_binary() == str(real)
+        run.return_value = MagicMock(returncode=0, stdout=f"{proj_ra}\n")
+        assert _resolve_ra_binary(tmp_path) == str(proj_ra)
+        # first lookup is from the project root (honours rust-toolchain.toml)
+        assert run.call_args_list[0].kwargs["cwd"] == str(tmp_path)
 
 
-def test_resolve_ra_binary_falls_back_without_rustup():
+def test_resolve_ra_binary_falls_back_to_default_toolchain(tmp_path):
+    # The pinned toolchain lacks the component (its path does not exist), so
+    # the project lookup yields nothing and we fall back to the default
+    # toolchain's binary resolved from a neutral directory.
+    default_ra = tmp_path / "default-ra"
+    default_ra.write_text("#!/bin/sh\n")
+    missing = tmp_path / "missing-ra"  # never created
+
+    def fake_run(cmd, **kwargs):
+        if kwargs.get("cwd") == str(tmp_path):
+            return MagicMock(returncode=0, stdout=f"{missing}\n")
+        return MagicMock(returncode=0, stdout=f"{default_ra}\n")
+
+    with patch.object(
+        shutil, "which",
+        side_effect={"rustup": "/root/.cargo/bin/rustup"}.get,
+    ), patch("graphlens_rust._resolver.subprocess.run", side_effect=fake_run):
+        assert _resolve_ra_binary(tmp_path) == str(default_ra)
+
+
+def test_resolve_ra_binary_falls_back_without_rustup(tmp_path):
     with patch.object(
         shutil, "which",
         side_effect=lambda name: (
             "/usr/bin/rust-analyzer" if name == "rust-analyzer" else None
         ),
     ):
-        assert _resolve_ra_binary() == "/usr/bin/rust-analyzer"
+        assert _resolve_ra_binary(tmp_path) == "/usr/bin/rust-analyzer"
 
 
-def test_resolve_ra_binary_falls_back_when_rustup_which_fails():
+def test_resolve_ra_binary_falls_back_when_rustup_which_fails(tmp_path):
     with patch.object(
         shutil, "which",
         side_effect={
@@ -60,7 +79,7 @@ def test_resolve_ra_binary_falls_back_when_rustup_which_fails():
         }.get,
     ), patch("graphlens_rust._resolver.subprocess.run") as run:
         run.return_value = MagicMock(returncode=1, stdout="")
-        assert _resolve_ra_binary() == "/root/.cargo/bin/rust-analyzer"
+        assert _resolve_ra_binary(tmp_path) == "/root/.cargo/bin/rust-analyzer"
 
 
 def test_uri_to_path_file_scheme():
