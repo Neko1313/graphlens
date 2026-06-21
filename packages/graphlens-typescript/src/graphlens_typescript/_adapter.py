@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from graphlens import (
+    RESOLVER_METRICS_KEY,
     RESOLVER_STATUS_KEY,
     AdapterError,
     BoundaryRef,
@@ -16,6 +18,7 @@ from graphlens import (
     NodeKind,
     Relation,
     RelationKind,
+    ResolverMetrics,
     ResolverStatus,
     make_boundary_id,
 )
@@ -165,16 +168,19 @@ class TypescriptAdapter(LanguageAdapter):
         project_root = Path(project_root).resolve()
         graph = GraphLens()
         statuses: list[ResolverStatus] = []
+        metrics = ResolverMetrics()
 
         if files is not None:
-            _analyze_root(
-                graph,
-                project_root,
-                project_root,
-                files,
-                self._dep_parsers,
-                self._resolver,
-                self._boundary_extractors,
+            metrics.merge(
+                _analyze_root(
+                    graph,
+                    project_root,
+                    project_root,
+                    files,
+                    self._dep_parsers,
+                    self._resolver,
+                    self._boundary_extractors,
+                )
             )
             statuses.append(self._resolver.status())
         else:
@@ -186,19 +192,22 @@ class TypescriptAdapter(LanguageAdapter):
                     lang_root,
                     lang_roots,
                 )
-                _analyze_root(
-                    graph,
-                    project_root,
-                    lang_root,
-                    root_files,
-                    self._dep_parsers,
-                    self._resolver,
-                    self._boundary_extractors,
+                metrics.merge(
+                    _analyze_root(
+                        graph,
+                        project_root,
+                        lang_root,
+                        root_files,
+                        self._dep_parsers,
+                        self._resolver,
+                        self._boundary_extractors,
+                    )
                 )
                 statuses.append(self._resolver.status())
 
         status = ResolverStatus.combine(statuses)
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
+        graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
             msg = (
                 f"TypeScript resolver status is '{status.value}'; refusing "
@@ -249,7 +258,7 @@ def _resolve_occurrences(
     resolver: SymbolResolver,
     span_index: SpanIndex,
     occurrences: list[tuple[str, OccurrenceRef]],
-) -> None:
+) -> ResolverMetrics:
     """
     Resolve all accumulated occurrences and emit edges (batched).
 
@@ -276,20 +285,31 @@ def _resolve_occurrences(
         occurrences: list of ``(absolute_file_path, OccurrenceRef)`` pairs
             collected during the file-visit loop.
 
+    Returns:
+        The pass's :class:`ResolverMetrics`.
+
     """
+    metrics = ResolverMetrics(queries=len(occurrences))
+    if not occurrences:
+        return metrics
     queries: list[tuple[Path, int, int]] = [
         (Path(p), o.line, o.col) for (p, o) in occurrences
     ]
+    start = time.perf_counter()
     refs = cast("TsResolver", resolver).resolve_all(queries)
+    metrics.seconds = time.perf_counter() - start
     for (_p, occ), ref in zip(occurrences, refs, strict=True):
         if ref is None:
+            metrics.unresolved += 1
             continue
+        metrics.resolved += 1
         target_id: str | None = None
         if ref.origin == "internal" and ref.file_path is not None:
             target_id = span_index.at(
                 str(ref.file_path), ref.line, ref.col
             )
         if target_id is None:
+            metrics.external += 1
             fallback_qname = (
                 ref.full_name
                 if ref.full_name
@@ -301,6 +321,8 @@ def _resolve_occurrences(
                 fallback_qname,
                 ref.origin,
             )
+        else:
+            metrics.internal += 1
         metadata: dict[str, object] = {"span": occ.span}
         if occ.role in ("read", "write"):
             metadata["access"] = occ.role
@@ -312,6 +334,7 @@ def _resolve_occurrences(
                 metadata=metadata,
             )
         )
+    return metrics
 
 
 def _analyze_root(  # noqa: PLR0913, PLR0915
@@ -322,7 +345,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
     dep_parsers: list[DependencyFileParser],
     resolver: SymbolResolver,
     boundary_extractors: list[TsBoundaryExtractor],
-) -> None:
+) -> ResolverMetrics:
     """Analyze one TypeScript project root and populate graph in-place."""
     project_name = detect_project_name(lang_root)
     source_roots = find_source_roots(lang_root, files)
@@ -453,7 +476,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
     # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL
     span_index = SpanIndex.from_graph(graph)
     resolver.prepare(lang_root, files)
-    _resolve_occurrences(
+    metrics = _resolve_occurrences(
         graph, project_name, resolver, span_index, all_occurrences
     )
 
@@ -470,6 +493,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
                 kind=RelationKind.CONTAINS,
             )
         )
+    return metrics
 
 
 def _extract_boundaries(
