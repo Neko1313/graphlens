@@ -48,8 +48,8 @@ RUN ARCH="$(dpkg --print-architecture)" \
 
 # --- Rust toolchain + rust-analyzer (Rust semantic resolver) ----------------
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
-        | sh -s -- -y --profile minimal \
-            --component rust-analyzer --component rust-src
+        | sh -s -- -y --profile minimal --default-toolchain stable \
+    && rustup component add rust-analyzer rust-src
 
 # --- uv (installer) ---------------------------------------------------------
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
