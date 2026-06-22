@@ -48,6 +48,16 @@ models, contracts (ABCs), registry, exceptions, utils.
 No pipeline, no orchestration, no I/O. Orchestration belongs in a separate
 package or in user code.
 
+**Non-goals (explicit scope boundary).** graphlens produces a graph IR and
+stops there. It does NOT: persist state or own a database (backends are a
+separate consuming layer); watch the filesystem or re-index incrementally on
+its own (scans are pure; deterministic IDs enable, but the caller drives,
+incremental updates); compute embeddings, semantic search, or relevance
+ranking; provide a UI or an agent runtime (`visualize` emits static HTML,
+`mcp` exposes query tools — neither hosts a long-running service). These belong
+to tools built on top of graphlens. See `website/docs/intro.md` → "Scope &
+Non-goals".
+
 ### 3. SQLAlchemy dialect pattern for adapters
 Adapters register themselves via `importlib.metadata` entry points:
 

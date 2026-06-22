@@ -24,6 +24,27 @@ Adapters are **pure data producers** — they never write to any backend. The
 graph is the only output, which makes the whole pipeline easy to test, cache,
 serialize, and reason about.
 
+## Scope & Non-goals
+
+graphlens produces a graph IR — and stops there. To keep the boundary explicit,
+it deliberately does **not**:
+
+- **persist state or own a database** — backends (Neo4j, JSON on disk, your own)
+  are a separate layer that consumes the graph; adapters never write to them.
+- **watch the filesystem or re-index incrementally on its own** — a scan is a
+  pure function of the source tree; incremental updates are enabled by
+  deterministic node IDs but driven by the caller.
+- **compute embeddings, semantic search, or relevance ranking** — the graph is
+  structural and type-aware, not a vector index.
+- **provide a UI or an agent runtime** — `visualize` emits a static HTML file and
+  `mcp` exposes query tools, but graphlens hosts no long-running service or app.
+- **orchestrate a pipeline** — the core has no orchestration or I/O;
+  composing adapters, backends, and policies belongs in user code or a
+  separate package (the [CLI](./guides/cli.md) is the reference example).
+
+These responsibilities belong to tools built *on top of* graphlens, not to the
+framework itself.
+
 ## Why a graph IR?
 
 - **Language-agnostic** — one shared model for Python, TypeScript, Go, and Rust.
