@@ -788,13 +788,20 @@ class RustScipResolver(SymbolResolver):
         self._local_defs = {}
         self._status = ResolverStatus.UNAVAILABLE
         try:
-            data = self._run_scip(project_root)
+            data, returncode = self._run_scip(project_root)
             if data is None:
                 return
             self._ingest(data)
-            self._status = (
-                ResolverStatus.OK if self._by_doc else ResolverStatus.DEGRADED
-            )
+            if not self._by_doc:
+                self._status = ResolverStatus.DEGRADED
+            elif returncode != 0:
+                # rust-analyzer errored mid-run (e.g. a crate failed to load)
+                # but left a partial index. Report DEGRADED rather than OK so
+                # strict mode won't trust a silently incomplete graph — the
+                # LSP resolver signals the analogous case the same way.
+                self._status = ResolverStatus.DEGRADED
+            else:
+                self._status = ResolverStatus.OK
         except Exception:
             logger.warning(
                 "rust-analyzer scip failed for %s", project_root
@@ -803,13 +810,13 @@ class RustScipResolver(SymbolResolver):
 
     def _run_scip(  # pragma: no cover - subprocess
         self, project_root: Path
-    ) -> bytes | None:
-        """Run ``rust-analyzer scip``; return the index bytes or None."""
+    ) -> tuple[bytes | None, int | None]:
+        """Run ``rust-analyzer scip``; return ``(index bytes, exit code)``."""
         ra_bin = _resolve_ra_binary(project_root)
         stderr = tempfile.TemporaryFile()  # noqa: SIM115
-        out_path = Path(
-            tempfile.mkstemp(suffix=".scip")[1]
-        )
+        fd, out_name = tempfile.mkstemp(suffix=".scip")
+        os.close(fd)  # we only need the path; rust-analyzer writes the file
+        out_path = Path(out_name)
         try:
             proc = subprocess.run(
                 [ra_bin, "scip", str(project_root), "--output", str(out_path)],
@@ -820,12 +827,12 @@ class RustScipResolver(SymbolResolver):
                 check=False,
             )
             if out_path.is_file() and out_path.stat().st_size > 0:
-                return out_path.read_bytes()
+                return out_path.read_bytes(), proc.returncode
             self._log_scip_failure(proc.returncode, stderr)
-            return None
+            return None, proc.returncode
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("rust-analyzer scip did not complete: %s", exc)
-            return None
+            return None, None
         finally:
             with contextlib.suppress(Exception):
                 stderr.close()
@@ -872,20 +879,29 @@ class RustScipResolver(SymbolResolver):
                 self._by_doc[rel] = doc_map
 
     def _rel(self, file: Path) -> str:
-        """Map an absolute file to its index-relative form (root-relative)."""
+        """
+        Map an absolute file to its index-relative form (root-relative).
+
+        SCIP ``relative_path`` always uses forward slashes, so normalise with
+        ``as_posix()`` — otherwise ``_by_doc`` lookups would miss on Windows.
+        """
         if self._root is None:  # pragma: no cover - guarded by callers
             return str(file)
         try:
-            return str(file.resolve().relative_to(self._root))
+            return file.resolve().relative_to(self._root).as_posix()
         except (ValueError, OSError):
             return str(file)
 
-    def _symbol_at(self, file: Path, line: int, col: int) -> str | None:
-        """Return the SCIP symbol whose occurrence starts at (line, col)."""
-        doc_map = self._by_doc.get(self._rel(file))
+    def _symbol_at_rel(self, rel: str, line: int, col: int) -> str | None:
+        """Return the SCIP symbol at (line, col) in the document *rel*."""
+        doc_map = self._by_doc.get(rel)
         if doc_map is None:
             return None
         return doc_map.get((line - 1, col - 1))
+
+    def _symbol_at(self, file: Path, line: int, col: int) -> str | None:
+        """Return the SCIP symbol whose occurrence starts at (line, col)."""
+        return self._symbol_at_rel(self._rel(file), line, col)
 
     def definition_at(
         self, file: Path, line: int, col: int
@@ -893,10 +909,11 @@ class RustScipResolver(SymbolResolver):
         root = self._root
         if root is None:
             return None
-        symbol = self._symbol_at(file, line, col)
+        rel = self._rel(file)  # one resolve() per query, reused below
+        symbol = self._symbol_at_rel(rel, line, col)
         if symbol is None:
             return None
-        return self._symbol_to_ref(symbol, self._rel(file), root)
+        return self._symbol_to_ref(symbol, rel, root)
 
     def _symbol_to_ref(
         self, symbol: str, doc_rel: str, root: Path

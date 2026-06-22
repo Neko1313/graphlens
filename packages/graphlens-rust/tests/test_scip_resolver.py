@@ -40,9 +40,9 @@ def _docs():
     ]
 
 
-def _prepared(monkeypatch, root: Path, docs, *, run=b"scip"):
+def _prepared(monkeypatch, root: Path, docs, *, run=b"scip", rc=0):
     r = RustScipResolver()
-    monkeypatch.setattr(r, "_run_scip", lambda _root: run)
+    monkeypatch.setattr(r, "_run_scip", lambda _root: (run, rc))
     monkeypatch.setattr(
         resolver_mod, "iter_documents", lambda _data: iter(docs)
     )
@@ -93,6 +93,13 @@ def test_prepare_degraded_when_index_empty(monkeypatch, tmp_path):
 def test_prepare_unavailable_when_no_index(monkeypatch, tmp_path):
     r = _prepared(monkeypatch, tmp_path, _docs(), run=None)
     assert r.status() is ResolverStatus.UNAVAILABLE
+
+
+def test_prepare_degraded_when_scip_exits_nonzero(monkeypatch, tmp_path):
+    # rust-analyzer left a (partial) index but exited non-zero — report
+    # DEGRADED so strict mode rejects the silently incomplete graph.
+    r = _prepared(monkeypatch, tmp_path, _docs(), rc=1)
+    assert r.status() is ResolverStatus.DEGRADED
 
 
 def test_prepare_unavailable_when_run_raises(monkeypatch, tmp_path):
