@@ -10,6 +10,7 @@ graphlens/                      ← uv workspace root (also the core library)
     graphlens-typescript/       ← TypeScript language adapter
     graphlens-go/               ← Go language adapter (structure + go.mod)
     graphlens-rust/             ← Rust language adapter (structure + Cargo.toml)
+    graphlens-php/              ← PHP language adapter (tree-sitter + phpactor)
     graphlens-cli/              ← CLI: analyze / query / visualize / neo4j
   tests/                         ← core library tests
   examples/                      ← standalone usage examples (no CLI dep)

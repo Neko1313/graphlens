@@ -32,4 +32,7 @@ flag_management:
     - name: typescript
       paths:
         - packages/graphlens-typescript/src/
+    - name: php
+      paths:
+        - packages/graphlens-php/src/
 

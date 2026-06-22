@@ -37,6 +37,7 @@ upstream tag for reproducibility:
 | TypeScript | colinhacks/zod |
 | Go | gin-gonic/gin · casdoor/casdoor · gohugoio/hugo |
 | Rust | BurntSushi/ripgrep · tokio-rs/axum · astral-sh/ruff |
+| PHP | laravel/framework |
 
 Edit the file to add or swap projects; the workflow loops over every entry and
 the README table follows the manifest order. If a pinned `ref` has gone missing
