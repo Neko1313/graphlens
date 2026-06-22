@@ -222,6 +222,76 @@ def test_unreadable_file_skipped(tmp_path: Path):
     assert any(n.name == "lib.rs" for n in graph.nodes.values())
 
 
+def test_build_crate_structure_reuses_existing_project_node(tmp_path: Path):
+    # When the PROJECT node already exists (shared graph across crate roots),
+    # structure extraction reuses it instead of adding a duplicate.
+    from graphlens import GraphLens, Node
+    from graphlens.utils import make_node_id
+
+    from graphlens_rust._adapter import _build_crate_structure
+    from graphlens_rust._deps import RUST_DEFAULT_DEP_PARSERS
+
+    (tmp_path / "Cargo.toml").write_text('[package]\nname="demo"\n')
+    src = tmp_path / "src"
+    src.mkdir()
+    f = src / "lib.rs"
+    f.write_text("pub fn a() {}\n")
+    g = GraphLens()
+    project_id = make_node_id("demo", "demo", NodeKind.PROJECT.value)
+    g.add_node(
+        Node(
+            id=project_id,
+            kind=NodeKind.PROJECT,
+            qualified_name="demo",
+            name="demo",
+        )
+    )
+    _build_crate_structure(g, tmp_path, tmp_path, [f], RUST_DEFAULT_DEP_PARSERS)
+    projects = [n for n in g.nodes.values() if n.kind == NodeKind.PROJECT]
+    assert len(projects) == 1
+
+
+def test_ensure_file_reuses_existing_node(tmp_path: Path):
+    # A second call for the same file returns the existing id without adding a
+    # duplicate FILE node.
+    from graphlens import GraphLens
+
+    from graphlens_rust._adapter import _ensure_file
+
+    f = tmp_path / "x.rs"
+    f.write_text("fn x() {}\n")
+    g = GraphLens()
+    id1 = _ensure_file(g, "p", tmp_path, tmp_path, f, "mod1")
+    id2 = _ensure_file(g, "p", tmp_path, tmp_path, f, "mod1")
+    assert id1 == id2
+    assert len([n for n in g.nodes.values() if n.kind == NodeKind.FILE]) == 1
+
+
+def test_build_crate_structure_skips_non_matching_dep_parser(tmp_path: Path):
+    # A dependency parser that cannot parse the crate root is skipped.
+    from graphlens import GraphLens
+
+    from graphlens_rust._adapter import _build_crate_structure
+
+    class _NoMatch:
+        def can_parse(self, root):
+            return False
+
+        def parse(self, root):
+            return frozenset()
+
+    (tmp_path / "Cargo.toml").write_text('[package]\nname="demo"\n')
+    src = tmp_path / "src"
+    src.mkdir()
+    f = src / "lib.rs"
+    f.write_text("pub fn a() {}\n")
+    g = GraphLens()
+    name, _occs, _parsed = _build_crate_structure(
+        g, tmp_path, tmp_path, [f], [_NoMatch()]
+    )
+    assert name == "demo"
+
+
 def test_duplicate_module_deduped(tmp_path: Path):
     (tmp_path / "Cargo.toml").write_text('[package]\nname="demo"\n')
     src = tmp_path / "src"
