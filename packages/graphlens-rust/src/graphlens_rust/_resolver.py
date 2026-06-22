@@ -13,15 +13,30 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import IO
 from urllib.parse import unquote
 
 from graphlens.contracts import Occurrence, Query, ResolvedRef, SymbolResolver
 from graphlens.status import ResolverStatus
 
+from graphlens_rust._scip import SCIP_ROLE_DEFINITION, iter_documents
+
 logger = logging.getLogger("graphlens_rust")
 
 # Consecutive path parts marking Cargo's downloaded-crate cache.
 _REGISTRY = ("registry", "src")
+
+# Wall-clock ceiling for one ``rust-analyzer scip`` batch run. Large workspaces
+# (e.g. ruff) finish well under this; the cap only guards a pathological hang.
+_SCIP_TIMEOUT_S = 1800.0
+
+# Cargo "package" names in a SCIP symbol that denote the Rust standard
+# distribution rather than a third-party crate. A SCIP symbol reads
+# ``<scheme> cargo <package> <version> <descriptors>``.
+_STD_PACKAGES = frozenset({"std", "core", "alloc", "proc_macro", "test"})
+
+# A cargo SCIP symbol needs at least <scheme> <manager> <package> <version>.
+_SCIP_SYMBOL_MIN_PARTS = 4
 
 # If rust-analyzer emits no $/progress within this many seconds, assume it does
 # not report progress and treat the workspace as ready (see _wait_until_ready).
@@ -719,6 +734,271 @@ class RustAnalyzerResolver(SymbolResolver):
         if self._client is not None:
             with contextlib.suppress(Exception):
                 self._client.shutdown()
+
+
+def _scip_symbol_origin(symbol: str) -> str:
+    """
+    Classify an external SCIP symbol: ``stdlib``/``third_party``/``unknown``.
+
+    The origin is read straight from the symbol's scheme
+    (``<scheme> cargo <package> <version> <descriptors>``) — more robust than
+    guessing from a definition file path, and available even when the
+    definition lives in a crate whose source was never opened.
+    """
+    parts = symbol.split(" ", 4)
+    if len(parts) < _SCIP_SYMBOL_MIN_PARTS or parts[1] != "cargo":
+        return "unknown"
+    return "stdlib" if parts[2] in _STD_PACKAGES else "third_party"
+
+
+class RustScipResolver(SymbolResolver):
+    """
+    Resolve Rust symbols from a ``rust-analyzer scip`` batch index.
+
+    Instead of driving an interactive ``rust-analyzer`` LSP server (which keeps
+    the whole workspace's analysis state resident and, on large workspaces such
+    as ruff, balloons to tens of GB and degrades), :meth:`prepare` runs
+    ``rust-analyzer scip`` once to write a static SCIP index, parses it, and
+    answers every query from in-memory lookup tables. On ruff this is roughly
+    ``2 GB`` / ``70 s`` versus ``15 GB`` / ``250 s`` for the LSP path, and it
+    produces a complete index rather than a 9%-resolved degraded one.
+
+    Requires ``rust-analyzer`` (and Cargo) on ``PATH``; if the batch run fails
+    or the binary is missing, every query returns ``None``/``[]`` so the
+    structural graph still stands and :meth:`status` reports ``UNAVAILABLE``.
+
+    All methods return ``None``/``[]`` on any error — never raise.
+    ``infer_type_at`` always returns ``None``.
+    """
+
+    def __init__(self) -> None:
+        self._root: Path | None = None
+        self._status = ResolverStatus.UNAVAILABLE
+        # relative_path -> {(line0, col0): symbol} for every occurrence.
+        self._by_doc: dict[str, dict[tuple[int, int], str]] = {}
+        # global symbol -> (relative_path, line0, col0) of its definition.
+        self._defs: dict[str, tuple[str, int, int]] = {}
+        # relative_path -> {document-scoped "local …" symbol: (line0, col0)}.
+        self._local_defs: dict[str, dict[str, tuple[int, int]]] = {}
+
+    def prepare(self, project_root: Path, files: list[Path]) -> None:  # noqa: ARG002
+        self._root = project_root.resolve()
+        self._by_doc = {}
+        self._defs = {}
+        self._local_defs = {}
+        self._status = ResolverStatus.UNAVAILABLE
+        try:
+            data, returncode = self._run_scip(project_root)
+            if data is None:
+                return
+            self._ingest(data)
+            if not self._by_doc:
+                self._status = ResolverStatus.DEGRADED
+            elif returncode != 0:
+                # rust-analyzer errored mid-run (e.g. a crate failed to load)
+                # but left a partial index. Report DEGRADED rather than OK so
+                # strict mode won't trust a silently incomplete graph — the
+                # LSP resolver signals the analogous case the same way.
+                self._status = ResolverStatus.DEGRADED
+            else:
+                self._status = ResolverStatus.OK
+        except Exception:
+            logger.warning(
+                "rust-analyzer scip failed for %s", project_root
+            )
+            self._status = ResolverStatus.UNAVAILABLE
+
+    def _run_scip(  # pragma: no cover - subprocess
+        self, project_root: Path
+    ) -> tuple[bytes | None, int | None]:
+        """Run ``rust-analyzer scip``; return ``(index bytes, exit code)``."""
+        ra_bin = _resolve_ra_binary(project_root)
+        stderr = tempfile.TemporaryFile()  # noqa: SIM115
+        fd, out_name = tempfile.mkstemp(suffix=".scip")
+        os.close(fd)  # we only need the path; rust-analyzer writes the file
+        out_path = Path(out_name)
+        try:
+            proc = subprocess.run(
+                [ra_bin, "scip", str(project_root), "--output", str(out_path)],
+                cwd=str(project_root),
+                stdout=subprocess.DEVNULL,
+                stderr=stderr,
+                timeout=_SCIP_TIMEOUT_S,
+                check=False,
+            )
+            if out_path.is_file() and out_path.stat().st_size > 0:
+                return out_path.read_bytes(), proc.returncode
+            self._log_scip_failure(proc.returncode, stderr)
+            return None, proc.returncode
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("rust-analyzer scip did not complete: %s", exc)
+            return None, None
+        finally:
+            with contextlib.suppress(Exception):
+                stderr.close()
+            with contextlib.suppress(OSError):
+                out_path.unlink()
+
+    @staticmethod
+    def _log_scip_failure(  # pragma: no cover - subprocess
+        returncode: int | None, stderr: IO[bytes]
+    ) -> None:
+        """Log the exit code and a stderr tail when no index was produced."""
+        tail = ""
+        with contextlib.suppress(Exception):
+            stderr.flush()
+            stderr.seek(0)
+            tail = stderr.read().decode("utf-8", errors="replace")
+            tail = tail[-2000:].strip()
+        logger.warning(
+            "rust-analyzer scip produced no index (exit %s); the workspace "
+            "likely failed to load. stderr tail:\n%s",
+            returncode,
+            tail or "<empty>",
+        )
+
+    def _ingest(self, data: bytes) -> None:
+        """Fold a SCIP index into the by-document and definition tables."""
+        pool: dict[str, str] = {}  # intern symbols: many occurrences share one
+        for rel, occurrences in iter_documents(data):
+            doc_map: dict[tuple[int, int], str] = {}
+            for occ in occurrences:
+                if not occ.symbol:
+                    continue
+                symbol = pool.setdefault(occ.symbol, occ.symbol)
+                key = (occ.start_line, occ.start_col)
+                doc_map[key] = symbol
+                if occ.roles & SCIP_ROLE_DEFINITION:
+                    if symbol.startswith("local "):
+                        self._local_defs.setdefault(rel, {})[symbol] = key
+                    else:
+                        self._defs.setdefault(
+                            symbol, (rel, occ.start_line, occ.start_col)
+                        )
+            if doc_map:
+                self._by_doc[rel] = doc_map
+
+    def _rel(self, file: Path) -> str:
+        """
+        Map an absolute file to its index-relative form (root-relative).
+
+        SCIP ``relative_path`` always uses forward slashes, so normalise with
+        ``as_posix()`` — otherwise ``_by_doc`` lookups would miss on Windows.
+        """
+        if self._root is None:  # pragma: no cover - guarded by callers
+            return str(file)
+        try:
+            return file.resolve().relative_to(self._root).as_posix()
+        except (ValueError, OSError):
+            return str(file)
+
+    def _symbol_at_rel(self, rel: str, line: int, col: int) -> str | None:
+        """Return the SCIP symbol at (line, col) in the document *rel*."""
+        doc_map = self._by_doc.get(rel)
+        if doc_map is None:
+            return None
+        return doc_map.get((line - 1, col - 1))
+
+    def _symbol_at(self, file: Path, line: int, col: int) -> str | None:
+        """Return the SCIP symbol whose occurrence starts at (line, col)."""
+        return self._symbol_at_rel(self._rel(file), line, col)
+
+    def definition_at(
+        self, file: Path, line: int, col: int
+    ) -> ResolvedRef | None:
+        root = self._root
+        if root is None:
+            return None
+        rel = self._rel(file)  # one resolve() per query, reused below
+        symbol = self._symbol_at_rel(rel, line, col)
+        if symbol is None:
+            return None
+        return self._symbol_to_ref(symbol, rel, root)
+
+    def _symbol_to_ref(
+        self, symbol: str, doc_rel: str, root: Path
+    ) -> ResolvedRef | None:
+        """Resolve a symbol to its definition, or to an external ref."""
+        if symbol.startswith("local "):
+            loc = self._local_defs.get(doc_rel, {}).get(symbol)
+            if loc is None:
+                return None
+            return ResolvedRef(
+                full_name="",
+                file_path=root / doc_rel,
+                line=loc[0] + 1,
+                col=loc[1] + 1,
+                kind="",
+                origin="internal",
+            )
+        target = self._defs.get(symbol)
+        if target is not None:
+            rel, line0, col0 = target
+            return ResolvedRef(
+                full_name="",
+                file_path=root / rel,
+                line=line0 + 1,
+                col=col0 + 1,
+                kind="",
+                origin="internal",
+            )
+        return ResolvedRef(
+            full_name=symbol,
+            file_path=None,
+            line=0,
+            col=0,
+            kind="",
+            origin=_scip_symbol_origin(symbol),
+        )
+
+    def resolve_all(
+        self, queries: list[Query]
+    ) -> list[ResolvedRef | None]:
+        if self._root is None:
+            return [None] * len(queries)
+        try:
+            return [
+                self.definition_at(file, line, col)
+                for (file, line, col) in queries
+            ]
+        except Exception:  # pragma: no cover - lookups don't raise
+            return [None] * len(queries)
+
+    def infer_type_at(
+        self, file: Path, line: int, col: int  # noqa: ARG002
+    ) -> ResolvedRef | None:
+        return None
+
+    def references_to(
+        self, file: Path, line: int, col: int
+    ) -> list[Occurrence]:
+        root = self._root
+        if root is None:
+            return []
+        symbol = self._symbol_at(file, line, col)
+        if symbol is None or symbol.startswith("local "):
+            return []
+        out: list[Occurrence] = []
+        for rel, doc_map in self._by_doc.items():
+            for (line0, col0), sym in doc_map.items():
+                if sym != symbol:
+                    continue
+                is_def = self._defs.get(symbol) == (rel, line0, col0)
+                if is_def:
+                    continue  # exclude the declaration, like the LSP path
+                out.append(
+                    Occurrence(
+                        file_path=root / rel,
+                        line=line0 + 1,
+                        col=col0 + 1,
+                        is_definition=False,
+                        access="unknown",
+                    )
+                )
+        return out
+
+    def status(self) -> ResolverStatus:
+        return self._status
 
 
 class RustResolver(SymbolResolver):

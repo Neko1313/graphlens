@@ -36,7 +36,7 @@ from graphlens_rust._deps import (
     read_crate_name,
 )
 from graphlens_rust._project_detector import find_rust_roots, is_rust_project
-from graphlens_rust._resolver import RustAnalyzerResolver
+from graphlens_rust._resolver import RustScipResolver
 from graphlens_rust._visitor import (
     RustFileContext,
     RustStructureExtractor,
@@ -71,7 +71,7 @@ class RustAdapter(LanguageAdapter):
             else RUST_DEFAULT_DEP_PARSERS
         )
         self._resolver = (
-            resolver if resolver is not None else RustAnalyzerResolver()
+            resolver if resolver is not None else RustScipResolver()
         )
         self._boundary_extractors = (
             boundary_extractors
