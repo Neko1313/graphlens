@@ -61,27 +61,25 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
            && rustup component add rust-analyzer rust-src --toolchain "$tc"; \
        done
 
-# --- PHP runtime + phpactor (PHP semantic resolver) -------------------------
-# phpactor is an open-source PHP language server; the PhpactorResolver drives
-# it over stdio for goto-definition. It runs on PHP, so the CLI php runtime
-# and the extensions phpactor needs are installed alongside it. Composer is
-# included so a project's `vendor/` tree can be populated, letting phpactor
-# resolve third-party symbols precisely.
+# --- PHP semantic resolver (PHPantom) ---------------------------------------
+# PHPantom (phpantom_lsp) is the PhpantomResolver engine: a self-contained Rust
+# language server — no PHP runtime needed — built here with the cargo from the
+# rustup install above and dropped on the PATH. Composer (with the minimal php
+# runtime it needs) is included only so a project's `vendor/` tree can be
+# populated, letting PHPantom resolve third-party symbols precisely.
+RUN . "$HOME/.cargo/env" \
+    && cargo install phpantom_lsp --root /usr/local --locked \
+    && phpantom_lsp --version
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         php-cli \
         php-mbstring \
         php-xml \
-        php-tokenizer \
         unzip \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://getcomposer.org/installer | php -- \
         --install-dir=/usr/local/bin --filename=composer \
-    && curl -fsSL \
-        https://github.com/phpactor/phpactor/releases/latest/download/phpactor.phar \
-        -o /usr/local/bin/phpactor \
-    && chmod +x /usr/local/bin/phpactor \
-    && phpactor --version
+    && composer --version
 
 # --- uv (installer) ---------------------------------------------------------
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv

@@ -34,7 +34,7 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 
 - **Language-agnostic** — one shared model for Python, TypeScript, Go, Rust, PHP, …
 - **Plugin-based adapters** — each language is a separate package, registered via Python entry points
-- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript, gopls for Go, rust-analyzer for Rust, phpactor for PHP)
+- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript, gopls for Go, rust-analyzer for Rust, PHPantom for PHP)
 - **Cross-language aware** — adapters emit language-agnostic `BOUNDARY` ports (HTTP, queues, gRPC, Temporal); `graphlens-link` connects a consumer in one language to a provider in another
 - **Monorepo aware** — `can_handle()` and `find_*_roots()` handle multi-language repos correctly
 - **Deterministic node IDs** — SHA-256 hash of `project::kind::qualified_name` → stable across re-scans
@@ -115,7 +115,7 @@ uv add "graphlens-cli[all]"
 
 For CI, the published image bundles the CLI with every adapter **and** the
 toolchains their resolvers drive (ty, Node, Go + gopls, Rust + rust-analyzer,
-PHP + phpactor) — no local setup required, and the supported way to get the
+PHP + PHPantom) — no local setup required, and the supported way to get the
 Go, Rust and PHP adapters (which are not published to PyPI). Mount your project
 at `/workspace`:
 
@@ -359,7 +359,7 @@ graphlens/                      ← uv workspace root (core library)
     graphlens-typescript/       ← TypeScript adapter (tree-sitter + Compiler API)
     graphlens-go/               ← Go adapter (tree-sitter + gopls)
     graphlens-rust/             ← Rust adapter (tree-sitter + rust-analyzer)
-    graphlens-php/              ← PHP adapter (tree-sitter + phpactor)
+    graphlens-php/              ← PHP adapter (tree-sitter + PHPantom)
     graphlens-link/             ← cross-language linker (COMMUNICATES_WITH)
     graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j, mcp
   tests/                         ← core tests (100% coverage)

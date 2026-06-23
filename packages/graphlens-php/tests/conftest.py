@@ -38,7 +38,7 @@ class FakeResolver(SymbolResolver):
     """Resolver stub whose answers are scripted per (file_name, line, col).
 
     Maps a query position to a pre-built :class:`ResolvedRef` so the
-    adapter's resolution pass can be exercised without phpactor.
+    adapter's resolution pass can be exercised without a PHP language server.
     """
 
     def __init__(

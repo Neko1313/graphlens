@@ -15,7 +15,7 @@ directly.
 | [TypeScript](./typescript.md) | `graphlens-typescript` | `TypescriptAdapter` | TypeScript Compiler API |
 | [Go](./go.md) | `graphlens-go` | `GoAdapter` | [`gopls`](https://pkg.go.dev/golang.org/x/tools/gopls) |
 | [Rust](./rust.md) | `graphlens-rust` | `RustAdapter` | [`rust-analyzer`](https://rust-analyzer.github.io/) |
-| [PHP](./php.md) | `graphlens-php` | `PhpAdapter` | [`phpactor`](https://phpactor.readthedocs.io/) |
+| [PHP](./php.md) | `graphlens-php` | `PhpAdapter` | [PHPantom](https://crates.io/crates/phpantom_lsp) |
 
 ## The plugin system
 

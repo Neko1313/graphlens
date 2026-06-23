@@ -14,7 +14,7 @@ from graphlens import (
 from graphlens.contracts import ResolvedRef, SymbolResolver
 from graphlens.utils import make_node_id
 
-from graphlens_php import PhpAdapter, PhpResolver
+from graphlens_php import PhpAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -101,20 +101,43 @@ class _ExternalResolver(SymbolResolver):
         return ResolverStatus.OK
 
 
+class _StructureResolver(SymbolResolver):
+    """Structure-only resolver: emits no edges, reports UNAVAILABLE.
+
+    Lets adapter tests build a deterministic structural graph without
+    spawning a PHPantom subprocess (which may be on PATH in CI).
+    """
+
+    def prepare(self, project_root: Path, files: list[Path]) -> None:
+        pass
+
+    def definition_at(self, file, line, col):
+        return None
+
+    def infer_type_at(self, file, line, col):
+        return None
+
+    def references_to(self, file, line, col):
+        return []
+
+    def status(self) -> ResolverStatus:
+        return ResolverStatus.UNAVAILABLE
+
+
 # ---------------------------------------------------------------------------
 # Adapter metadata
 # ---------------------------------------------------------------------------
 
 
 def test_language_and_extensions():
-    adapter = PhpAdapter(resolver=PhpResolver())
+    adapter = PhpAdapter(resolver=_StructureResolver())
     assert adapter.language() == "php"
     assert ".php" in adapter.file_extensions()
     assert ".phtml" in adapter.file_extensions()
 
 
 def test_can_handle(tmp_path: Path):
-    adapter = PhpAdapter(resolver=PhpResolver())
+    adapter = PhpAdapter(resolver=_StructureResolver())
     assert adapter.can_handle(tmp_path) is False
     (tmp_path / "composer.json").write_text("{}")
     assert adapter.can_handle(tmp_path) is True
@@ -131,7 +154,7 @@ def test_collect_files_excludes_vendor(tmp_path: Path):
     (tmp_path / "build").mkdir()
     (tmp_path / "build" / "Generated.php").write_text("<?php\n")
 
-    files = PhpAdapter(resolver=PhpResolver()).collect_files(tmp_path)
+    files = PhpAdapter(resolver=_StructureResolver()).collect_files(tmp_path)
     names = {f.name for f in files}
     assert names == {"App.php"}
 
@@ -146,7 +169,7 @@ def test_analyze_structure(make_project):
         {"src/User.php": USER_PHP, "src/Service.php": SERVICE_PHP},
         composer=COMPOSER,
     )
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(root)
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(root)
     assert graph.metadata["resolver_status"] == "unavailable"
     # PROJECT, MODULE(App), FILE x2, CLASS x2, METHOD x2 ...
     project_id = make_node_id("acme/demo", "acme/demo", NodeKind.PROJECT.value)
@@ -167,7 +190,7 @@ def test_analyze_with_explicit_files(make_project):
         {"src/User.php": USER_PHP}, composer=COMPOSER
     )
     files = [root / "src" / "User.php"]
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(root, files=files)
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(root, files=files)
     assert make_node_id("acme/demo", "App\\User", NodeKind.CLASS.value) in (
         graph.nodes
     )
@@ -177,7 +200,7 @@ def test_global_namespace_file_contained_by_project(make_project):
     root = make_project(
         {"index.php": "<?php\nclass Bootstrap {}\n"}, composer={"name": "a/b"}
     )
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(root)
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(root)
     project_id = make_node_id("a/b", "a/b", NodeKind.PROJECT.value)
     file_id = make_node_id("a/b", "index.php", NodeKind.FILE.value)
     assert any(
@@ -193,7 +216,7 @@ def test_nested_module_chain(make_project):
         {"src/Sub/Deep.php": "<?php\nnamespace App\\Sub;\nclass Deep {}\n"},
         composer=COMPOSER,
     )
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(root)
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(root)
     app = make_node_id("acme/demo", "App", NodeKind.MODULE.value)
     sub = make_node_id("acme/demo", "App\\Sub", NodeKind.MODULE.value)
     assert app in graph.nodes
@@ -269,7 +292,7 @@ def test_parse_error_file_continues(make_project):
         {"src/Bad.php": "<?php\nnamespace App;\nclass {\n"},
         composer=COMPOSER,
     )
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(root)
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(root)
     assert make_node_id("acme/demo", "acme/demo", NodeKind.PROJECT.value) in (
         graph.nodes
     )
@@ -278,7 +301,7 @@ def test_parse_error_file_continues(make_project):
 def test_unreadable_file_is_skipped(make_project):
     root = make_project({"src/User.php": USER_PHP}, composer=COMPOSER)
     missing = root / "src" / "ghost.php"
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(
         root, files=[missing, root / "src" / "User.php"]
     )
     assert make_node_id("acme/demo", "App\\User", NodeKind.CLASS.value) in (
@@ -289,7 +312,7 @@ def test_unreadable_file_is_skipped(make_project):
 def test_strict_mode_raises_on_degraded(make_project):
     root = make_project({"src/User.php": USER_PHP}, composer=COMPOSER)
     with pytest.raises(AdapterError):
-        PhpAdapter(resolver=PhpResolver()).analyze(root, strict=True)
+        PhpAdapter(resolver=_StructureResolver()).analyze(root, strict=True)
 
 
 def test_monorepo_shared_project_name(make_project, tmp_path):
@@ -306,7 +329,7 @@ def test_monorepo_shared_project_name(make_project, tmp_path):
     )
     (sub / "src").mkdir()
     (sub / "src" / "B.php").write_text("<?php\nnamespace Sub;\nclass B {}\n")
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(tmp_path)
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(tmp_path)
     project_id = make_node_id("shared", "shared", NodeKind.PROJECT.value)
     assert project_id in graph.nodes
 
@@ -314,17 +337,17 @@ def test_monorepo_shared_project_name(make_project, tmp_path):
 def test_duplicate_file_in_files_list(make_project):
     root = make_project({"src/User.php": USER_PHP}, composer=COMPOSER)
     f = root / "src" / "User.php"
-    graph = PhpAdapter(resolver=PhpResolver()).analyze(root, files=[f, f])
+    graph = PhpAdapter(resolver=_StructureResolver()).analyze(root, files=[f, f])
     assert make_node_id("acme/demo", "App\\User", NodeKind.CLASS.value) in (
         graph.nodes
     )
 
 
-def test_default_resolver_is_phpactor():
-    from graphlens_php._resolver import PhpactorResolver
+def test_default_resolver_is_phpantom():
+    from graphlens_php._resolver import PhpantomResolver
 
     adapter = PhpAdapter()
-    assert isinstance(adapter._resolver, PhpactorResolver)
+    assert isinstance(adapter._resolver, PhpantomResolver)
 
 
 def test_default_dep_parsers():

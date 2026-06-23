@@ -4,9 +4,8 @@ from unittest.mock import MagicMock, patch
 from graphlens import ResolverStatus
 
 from graphlens_php._resolver import (
-    PhpactorResolver,
-    PhpResolver,
-    _PhpactorLspClient,
+    PhpantomResolver,
+    _PhpLspClient,
     _uri_to_path,
 )
 
@@ -31,29 +30,47 @@ def test_uri_to_path_non_file():
 
 
 # ---------------------------------------------------------------------------
-# PhpactorResolver (mocked client)
+# Spawn command
 # ---------------------------------------------------------------------------
 
 
-def _resolver(tmp_path: Path) -> PhpactorResolver:
-    r = PhpactorResolver()
+def test_phpantom_spawn_argv_env_override(monkeypatch):
+    monkeypatch.setenv("GRAPHLENS_PHPANTOM", "/opt/phpantom_lsp")
+    assert PhpantomResolver()._spawn_argv() == ["/opt/phpantom_lsp", "--stdio"]
+
+
+def test_phpantom_spawn_argv_default(monkeypatch):
+    monkeypatch.delenv("GRAPHLENS_PHPANTOM", raising=False)
+    monkeypatch.setattr(
+        "graphlens_php._resolver.shutil.which", lambda _name: None
+    )
+    assert PhpantomResolver()._spawn_argv() == ["phpantom_lsp", "--stdio"]
+
+
+# ---------------------------------------------------------------------------
+# PhpantomResolver (mocked client)
+# ---------------------------------------------------------------------------
+
+
+def _resolver(tmp_path: Path):
+    r = PhpantomResolver()
     r._root = tmp_path
-    r._client = MagicMock(spec=_PhpactorLspClient)
+    r._client = MagicMock(spec=_PhpLspClient)
     return r
 
 
 def test_definition_at_none_when_no_client(tmp_path: Path):
-    r = PhpactorResolver()
-    assert r.definition_at(tmp_path / "A.php", 1, 1) is None
+    assert PhpantomResolver().definition_at(tmp_path / "A.php", 1, 1) is None
 
 
 def test_infer_type_at_always_none(tmp_path: Path):
-    assert _resolver(tmp_path).infer_type_at(tmp_path / "A.php", 1, 1) is None
+    assert (
+        _resolver(tmp_path).infer_type_at(tmp_path / "A.php", 1, 1) is None
+    )
 
 
 def test_references_to_empty_when_no_client(tmp_path: Path):
-    r = PhpactorResolver()
-    assert r.references_to(tmp_path / "A.php", 1, 1) == []
+    assert PhpantomResolver().references_to(tmp_path / "A.php", 1, 1) == []
 
 
 def test_definition_at_hit(tmp_path: Path):
@@ -84,6 +101,42 @@ def test_definition_at_swallows_exception(tmp_path: Path):
     r = _resolver(tmp_path)
     r._client.definition.side_effect = RuntimeError("boom")
     assert r.definition_at(tmp_path / "Main.php", 1, 1) is None
+
+
+def test_resolve_all_none_when_no_client(tmp_path: Path):
+    out = PhpantomResolver().resolve_all(
+        [(tmp_path / "A.php", 1, 1), (tmp_path / "B.php", 2, 2)]
+    )
+    assert out == [None, None]
+
+
+def test_resolve_all_batches_and_maps(tmp_path: Path):
+    r = _resolver(tmp_path)
+    target = tmp_path / "src" / "User.php"
+    loc = {
+        "uri": target.as_uri(),
+        "range": {
+            "start": {"line": 4, "character": 6},
+            "end": {"line": 4, "character": 10},
+        },
+    }
+    # One hit, one miss — order preserved, miss stays None.
+    r._client.definition_batch.return_value = [loc, None]
+    queries = [(tmp_path / "Main.php", 2, 3), (tmp_path / "Main.php", 9, 1)]
+    out = r.resolve_all(queries)
+    r._client.definition_batch.assert_called_once_with(queries)
+    assert out[0] is not None
+    assert out[0].file_path == target
+    assert out[0].line == 5
+    assert out[0].col == 7
+    assert out[0].origin == "internal"
+    assert out[1] is None
+
+
+def test_resolve_all_swallows_exception(tmp_path: Path):
+    r = _resolver(tmp_path)
+    r._client.definition_batch.side_effect = RuntimeError("boom")
+    assert r.resolve_all([(tmp_path / "A.php", 1, 1)]) == [None]
 
 
 def test_references_to_occurrences(tmp_path: Path):
@@ -132,47 +185,47 @@ def test_classify_none_is_stdlib(tmp_path: Path):
 
 
 def test_classify_unknown_when_outside_root(tmp_path: Path):
-    r = PhpactorResolver()
-    r._client = MagicMock(spec=_PhpactorLspClient)
+    r = PhpantomResolver()
+    r._client = MagicMock(spec=_PhpLspClient)
     r._root = None
     assert r._classify(Path("/elsewhere/X.php")) == "unknown"
 
 
 def test_prepare_starts_client(tmp_path: Path):
-    r = PhpactorResolver()
-    with patch("graphlens_php._resolver._PhpactorLspClient") as Mock:
-        Mock.return_value = MagicMock(spec=_PhpactorLspClient)
+    r = PhpantomResolver()
+    with patch("graphlens_php._resolver._PhpLspClient") as Mock:
+        Mock.return_value = MagicMock(spec=_PhpLspClient)
         r.prepare(tmp_path, [])
-    Mock.assert_called_once_with(tmp_path)
+    Mock.assert_called_once_with(tmp_path, r._spawn_argv(), name=r._engine)
     assert r._root == tmp_path
 
 
 def test_prepare_shuts_down_previous_client(tmp_path: Path):
-    r = PhpactorResolver()
-    old = MagicMock(spec=_PhpactorLspClient)
+    r = PhpantomResolver()
+    old = MagicMock(spec=_PhpLspClient)
     r._client = old
     with patch(
-        "graphlens_php._resolver._PhpactorLspClient",
-        return_value=MagicMock(spec=_PhpactorLspClient),
+        "graphlens_php._resolver._PhpLspClient",
+        return_value=MagicMock(spec=_PhpLspClient),
     ):
         r.prepare(tmp_path, [])
     old.shutdown.assert_called_once()
 
 
 def test_prepare_swallows_start_failure(tmp_path: Path):
-    r = PhpactorResolver()
+    r = PhpantomResolver()
     with patch(
-        "graphlens_php._resolver._PhpactorLspClient",
-        side_effect=FileNotFoundError("phpactor missing"),
+        "graphlens_php._resolver._PhpLspClient",
+        side_effect=FileNotFoundError("server missing"),
     ):
         r.prepare(tmp_path, [])
     assert r._client is None
 
 
 def test_status_reflects_client_presence():
-    r = PhpactorResolver()
+    r = PhpantomResolver()
     assert r.status() is ResolverStatus.UNAVAILABLE
-    r._client = MagicMock(spec=_PhpactorLspClient)
+    r._client = MagicMock(spec=_PhpLspClient)
     assert r.status() is ResolverStatus.OK
 
 
@@ -181,17 +234,3 @@ def test_del_with_client_shuts_down(tmp_path: Path):
     client = r._client
     r.__del__()
     client.shutdown.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# PhpResolver (structure-only fallback)
-# ---------------------------------------------------------------------------
-
-
-def test_php_resolver_is_unavailable(tmp_path: Path):
-    r = PhpResolver()
-    r.prepare(tmp_path, [])
-    assert r.status() is ResolverStatus.UNAVAILABLE
-    assert r.definition_at(tmp_path / "A.php", 1, 1) is None
-    assert r.infer_type_at(tmp_path / "A.php", 1, 1) is None
-    assert r.references_to(tmp_path / "A.php", 1, 1) == []
