@@ -47,14 +47,14 @@ framework itself.
 
 ## Why a graph IR?
 
-- **Language-agnostic** — one shared model for Python, TypeScript, Go, and Rust.
+- **Language-agnostic** — one shared model for Python, TypeScript, Go, Rust, and PHP.
 - **Plugin-based adapters** — each language is a separate package, discovered at
   runtime through Python entry points. The core never imports an adapter.
 - **Tree-sitter powered** — every adapter uses Tree-sitter for structure and
   exact span positions, combined with a type-aware resolver
   (`ty` for Python, the TypeScript Compiler API, `gopls` for Go,
-  `rust-analyzer` for Rust) that emits real `CALLS` / `REFERENCES` /
-  `HAS_TYPE` / `INHERITS_FROM` edges.
+  `rust-analyzer` for Rust, PHPantom for PHP) that emits real `CALLS` /
+  `REFERENCES` / `HAS_TYPE` / `INHERITS_FROM` edges.
 - **Cross-language aware** — adapters emit language-agnostic `BOUNDARY` ports
   (HTTP, queues, gRPC, Temporal), and [`graphlens-link`](./guides/cross-language.md)
   connects a consumer in one language to a provider in another.
@@ -133,9 +133,10 @@ print("called by:", [n.name for n in graph.callers(fn.id)])
 - **Python 3.13+**
 - [uv](https://docs.astral.sh/uv/) is recommended for installation and development.
 - Language resolvers drive external toolchains. The Python (`ty`) and TypeScript
-  (Node) toolchains are installed on demand; Go (`gopls`) and Rust
-  (`rust-analyzer`) are most easily obtained through the
-  [Docker image](./ci-integration/docker.md).
+  (Node) toolchains are installed on demand; Go (`gopls`), Rust
+  (`rust-analyzer`), and PHP (`phpantom_lsp`) are most easily obtained through the
+  [Docker image](./ci-integration/docker.md). The PHP adapter is Docker-only —
+  it is not published to PyPI.
 
 ## Next steps
 

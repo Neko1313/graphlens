@@ -11,8 +11,9 @@ toolchains.
 ## Recommended: the Docker image
 
 The published image bundles the CLI with every adapter **and** every toolchain
-(`ty`, Node, `gopls`, `rust-analyzer`), so the job needs no language setup. This
-is the only supported way to use the Go and Rust adapters.
+(`ty`, Node, `gopls`, `rust-analyzer`, `phpantom_lsp`), so the job needs no
+language setup. This is the only supported way to use the Go, Rust, and PHP
+adapters.
 
 ```yaml title=".github/workflows/code-graph.yml"
 name: Code graph

@@ -101,6 +101,7 @@ tell you *which* `foo` a call refers to. That job belongs to a **resolver** — 
 | TypeScript | `TsResolver` | the TypeScript Compiler API (Node subprocess) |
 | Go | `GoplsResolver` | [`gopls`](https://pkg.go.dev/golang.org/x/tools/gopls) |
 | Rust | `RustAnalyzerResolver` | [`rust-analyzer`](https://rust-analyzer.github.io/) |
+| PHP | `PhpantomResolver` | [PHPantom](https://crates.io/crates/phpantom_lsp) (`phpantom_lsp --stdio`, Rust-based) via LSP |
 
 During analysis the adapter collects every use-site as an *occurrence*, then
 asks the resolver `definition_at(file, line, col)` for each one. The resolved
