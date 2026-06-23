@@ -1,6 +1,6 @@
 [project]
 name = "graphlens-python"
-version = "0.6.1"
+version = "0.7.0"
 description = "Python language adapter for graphlens"
 requires-python = ">=3.13"
 dependencies = [

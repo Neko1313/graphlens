@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-06-23
+### Bug Fixes
+
+- **php**: fix(php): stream didOpen from a writer thread to avoid pipe deadlock by @Neko1313 in [#34](https://github.com/Neko1313/graphlens/pull/34)
+
+### Documentation
+
+- docs: add explicit Scope &amp; Non-goals boundary by @Neko1313 in [#24](https://github.com/Neko1313/graphlens/pull/24)
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **php**: docs(php): surface PHP across the docs alongside Python/TypeScript/Go/Rust by @Neko1313 in [#35](https://github.com/Neko1313/graphlens/pull/35)
+
+### Features
+
+- **php**: feat(php): add PHP language adapter by @Neko1313 in [#31](https://github.com/Neko1313/graphlens/pull/31)
+- **php**: feat(php): PHPantom as the sole PHP resolver with pipelined LSP batch by @Neko1313 in [#33](https://github.com/Neko1313/graphlens/pull/33)
+
+### Performance
+
+- **rust**: perf(rust): default to a rust-analyzer SCIP batch resolver by @Neko1313 in [#26](https://github.com/Neko1313/graphlens/pull/26)
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.6.1...v0.7.0
 ## [0.6.1] - 2026-06-21
 ### Bug Fixes
 
