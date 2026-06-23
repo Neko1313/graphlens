@@ -117,7 +117,10 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         return self._read_frame()
 
     def _drain_until_quiet(
-        self, quiet: float = 1.0, budget: float = 120.0
+        self,
+        quiet: float = 1.0,
+        budget: float = 120.0,
+        writer: threading.Thread | None = None,
     ) -> None:
         """
         Drain server notifications until the stream goes quiet.
@@ -129,6 +132,12 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         notifications while it works, with no explicit "index ready" signal.
         Definition queries issued before that burst settles resolve to null,
         so the batch path drains the burst first.
+
+        ``writer`` is an optional thread still feeding stdin (the ``didOpen``
+        sender). While it is alive a lull does **not** end the drain: we must
+        keep reading so phpantom's stdout never fills and blocks it — which
+        would deadlock the writer against our own pending write. Quiet only
+        counts once the writer has finished.
         """
         if self._proc.stdout is None or self._proc.poll() is not None:
             return
@@ -136,6 +145,8 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         while time.monotonic() < deadline:
             ready, _, _ = select.select([self._proc.stdout], [], [], quiet)
             if not ready:
+                if writer is not None and writer.is_alive():
+                    continue  # opener still sending — keep draining its output
                 return  # silence → index settled
             msg = self._read_frame()
             if msg is None:
@@ -245,17 +256,47 @@ class _PhpLspClient:  # pragma: no cover - integration transport
             )
         return uri
 
-    def open_files(self, files: list[Path]) -> None:
+    def _build_open_messages(self, files: list[Path]) -> list[dict]:  # type: ignore[type-arg]
         """
-        Send ``didOpen`` for every not-yet-opened file in one pass.
+        Build (don't send) a ``didOpen`` for every not-yet-opened file.
 
-        Mirrors the per-file :meth:`open_file` (no diagnostics drain — the
-        server processes ``didOpen`` before the ``definition`` requests that
-        follow it on the same in-order stream), but batched so a whole project
-        is opened up front instead of lazily one query at a time.
+        Marks each opened. Kept separate from sending so the batch path can
+        write these from a
+        writer thread: a ``didOpen`` carries the file's full text, so a whole
+        project is megabytes — writing it inline would block on a full stdin
+        pipe while phpantom blocks on a full stdout pipe (its diagnostics),
+        deadlocking both. The caller writes these concurrently with a reader.
         """
+        msgs: list[dict] = []  # type: ignore[type-arg]
         for file in files:
-            self.open_file(file)
+            uri = file.as_uri()
+            if uri in self._opened_uris:
+                continue
+            self._opened_uris.add(uri)
+            try:
+                text = file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            msgs.append(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": "php",
+                            "version": 1,
+                            "text": text,
+                        },
+                    },
+                }
+            )
+        return msgs
+
+    def _write_all(self, msgs: list[dict]) -> None:  # type: ignore[type-arg]
+        """Write every message in order (run on a writer thread)."""
+        for msg in msgs:
+            self._write(msg)
 
     # ------------------------------------------------------------------
     # Queries
@@ -288,22 +329,38 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         """
         Resolve many positions in one pipelined exchange.
 
-        Writes every ``textDocument/definition`` request up front (from a
-        writer thread so a full stdin/stdout pipe can't deadlock against our
-        reads), then collects responses by JSON-RPC id. Order is preserved;
+        Two phases, each writing from a writer thread while the main thread
+        reads concurrently so a full stdin/stdout pipe can never deadlock:
+        (1) send ``didOpen`` for every file and drain the indexer until it
+        settles, then (2) send every ``textDocument/definition`` request up
+        front and collect responses by JSON-RPC id. Order is preserved;
         unanswered positions stay ``None``. This turns N blocking round-trips
         into one pipelined stream — the entire point of the batch path, and
         what lets PHPantom resolve a whole project's occurrences per second.
         """
         if not queries:
             return []
-        self.open_files([f for (f, _l, _c) in queries])
-        # Let an async indexer (PHPantom) finish before we query, or every
-        # definition comes back null.
-        self._drain_until_quiet()
         results: list[dict | None] = [None] * len(queries)
         if self._proc.poll() is not None:
             return results
+        # Phase 1 — open every file, then let the async indexer settle.
+        # didOpen carries full file text (megabytes for a big project), so it
+        # is written from a writer thread while we drain phpantom's stdout
+        # concurrently; otherwise both pipes fill and deadlock. The drain does
+        # not treat a lull as "settled" until the opener has finished.
+        open_msgs = self._build_open_messages([f for (f, _l, _c) in queries])
+        if open_msgs:
+            opener = threading.Thread(
+                target=self._write_all, args=(open_msgs,), daemon=True
+            )
+            opener.start()
+            self._drain_until_quiet(writer=opener)
+            opener.join(timeout=5)
+            if self._proc.poll() is not None:
+                return results
+        # Phase 2 — pipelined definition batch: write requests from a writer
+        # thread while we collect responses by id, so a full pipe can't
+        # deadlock against our reads.
         id2idx: dict[int, int] = {}
         reqs: list[dict] = []  # type: ignore[type-arg]
         for k, (file, line, col) in enumerate(queries):
@@ -325,11 +382,9 @@ class _PhpLspClient:  # pragma: no cover - integration transport
                 }
             )
 
-        def _writer() -> None:
-            for req in reqs:
-                self._write(req)
-
-        writer = threading.Thread(target=_writer, daemon=True)
+        writer = threading.Thread(
+            target=self._write_all, args=(reqs,), daemon=True
+        )
         writer.start()
         got = 0
         while got < len(queries):
