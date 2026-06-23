@@ -45,9 +45,10 @@ class _PhpLspClient:  # pragma: no cover - integration transport
     """
     Minimal synchronous LSP JSON-RPC client over stdio.
 
-    The spawn ``argv`` (``phpantom_lsp --stdio``) is passed in rather than
-    hard-coded, so the transport stays independent of the server it drives.
-    ``name`` is used only for log messages.
+    Holds only the JSON-RPC framing, lifecycle, and pipelined batch — no
+    PHPantom-specific logic — so the resolver stays separate from the wire
+    protocol. The spawn ``argv`` (``phpantom_lsp --stdio``) and ``name`` (used
+    only for log messages) are passed in by :class:`PhpantomResolver`.
     """
 
     def __init__(
@@ -455,12 +456,12 @@ class PhpantomResolver(SymbolResolver):
         """
         Resolve every occurrence in one pipelined LSP exchange.
 
-        Overrides the base per-query loop: on a large project the resolution
-        pass issues one query per occurrence (hundreds of thousands on a big
-        monorepo), and a blocking round-trip each would dominate analysis.
-        Batching writes them all up front and reads responses by id, so the
-        cost collapses to the server's throughput instead of the sum of
-        per-request latencies.
+        Overrides the ``SymbolResolver`` contract's default per-query loop: on
+        a large project the resolution pass issues one query per occurrence
+        (hundreds of thousands on a big monorepo), and a blocking round-trip
+        each would dominate analysis. Batching writes them all up front and
+        reads responses by id, so the cost collapses to the server's
+        throughput instead of the sum of per-request latencies.
         """
         if self._client is None:
             return [None] * len(queries)
