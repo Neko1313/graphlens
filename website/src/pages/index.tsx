@@ -45,13 +45,13 @@ const features: FeatureItem[] = [
     title: 'Polyglot by design',
     badge: '🌐',
     description:
-      'Python, TypeScript, Go, and Rust all normalize into one shared graph IR. Each language is a separate plugin registered through Python entry points.',
+      'Python, TypeScript, Go, Rust, and PHP all normalize into one shared graph IR. Each language is a separate plugin registered through Python entry points.',
   },
   {
     title: 'Type-aware resolution',
     badge: '🎯',
     description:
-      'Tree-sitter extracts structure and exact spans; a per-language resolver (ty, the TypeScript Compiler API, gopls, rust-analyzer) resolves real CALLS, REFERENCES, and HAS_TYPE edges.',
+      'Tree-sitter extracts structure and exact spans; a per-language resolver (ty, the TypeScript Compiler API, gopls, rust-analyzer, PHPantom) resolves real CALLS, REFERENCES, and HAS_TYPE edges.',
   },
   {
     title: 'Built for pipelines',

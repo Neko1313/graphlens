@@ -12,9 +12,10 @@ graphlens — especially in CI. It bundles the CLI with **every** adapter and
 - Node for the TypeScript resolver
 - Go + `gopls` for the Go resolver
 - Rust + `rust-analyzer` for the Rust resolver
+- PHP + `phpantom_lsp` for the PHP resolver
 
-It is also the only supported way to get the Go and Rust adapters, which are not
-published to PyPI.
+It is also the only supported way to get the Go, Rust, and PHP adapters, which
+are not published to PyPI.
 
 ## Pull
 

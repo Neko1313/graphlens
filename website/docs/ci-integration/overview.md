@@ -51,12 +51,12 @@ assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"
 
 ## Two ways to get the toolchains
 
-Each resolver drives an external engine (`ty`, Node, `gopls`, `rust-analyzer`).
-You have two options in CI:
+Each resolver drives an external engine (`ty`, Node, `gopls`, `rust-analyzer`,
+`phpantom_lsp`). You have two options in CI:
 
 - **The Docker image** — `ghcr.io/neko1313/graphlens` bundles the CLI with every
   adapter **and** every toolchain pre-installed. Nothing to set up, and the only
-  supported way to get the Go and Rust adapters. **Recommended for CI.** See the
+  supported way to get the Go, Rust, and PHP adapters. **Recommended for CI.** See the
   [Docker guide](./docker.md).
 - **pip/uv install** — install `graphlens-cli` with the extras you need. Good
   for Python/TypeScript-only repos where you already have Node available.
