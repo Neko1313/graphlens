@@ -20,10 +20,11 @@ import os
 import select
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from urllib.parse import unquote
 
-from graphlens.contracts import Occurrence, ResolvedRef, SymbolResolver
+from graphlens.contracts import Occurrence, Query, ResolvedRef, SymbolResolver
 from graphlens.status import ResolverStatus
 
 logger = logging.getLogger("graphlens_php")
@@ -54,6 +55,10 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
         )
         self._next_id = 0
         self._opened_uris: set[str] = set()
+        # Serialize stdin writes: the pipelined batch runs a writer thread
+        # while the main thread may still write MethodNotFound replies, so
+        # two threads can race on stdin and interleave a frame's bytes.
+        self._write_lock = threading.Lock()
         self._initialize(project_root)
 
     # ------------------------------------------------------------------
@@ -66,8 +71,9 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
         body = json.dumps(msg, separators=(",", ":")).encode()
         header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         try:
-            self._proc.stdin.write(header + body)
-            self._proc.stdin.flush()
+            with self._write_lock:
+                self._proc.stdin.write(header + body)
+                self._proc.stdin.flush()
         except OSError:
             pass
 
@@ -186,6 +192,18 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
             )
         return uri
 
+    def open_files(self, files: list[Path]) -> None:
+        """
+        Send ``didOpen`` for every not-yet-opened file in one pass.
+
+        Mirrors the per-file :meth:`open_file` (no diagnostics drain — the
+        server processes ``didOpen`` before the ``definition`` requests that
+        follow it on the same in-order stream), but batched so a whole project
+        is opened up front instead of lazily one query at a time.
+        """
+        for file in files:
+            self.open_file(file)
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
@@ -208,6 +226,86 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
         if not result:
             return None
         return result[0] if isinstance(result, list) else result
+
+    @staticmethod
+    def _first_location(result: object) -> dict | None:  # type: ignore[type-arg]
+        """Reduce an LSP definition result to a single Location or None."""
+        if not result:
+            return None
+        if isinstance(result, list):
+            return result[0] if result else None
+        return result  # type: ignore[return-value]
+
+    def definition_batch(
+        self, queries: list[Query]
+    ) -> list[dict | None]:  # type: ignore[type-arg]
+        """
+        Resolve many positions in one pipelined exchange.
+
+        Writes every ``textDocument/definition`` request up front (from a
+        writer thread so a full stdin/stdout pipe can't deadlock against our
+        reads), then collects responses by JSON-RPC id. Order is preserved;
+        unanswered positions stay ``None``. This turns N blocking round-trips
+        into one pipelined stream — the entire point of the batch path.
+        """
+        if not queries:
+            return []
+        self.open_files([f for (f, _l, _c) in queries])
+        results: list[dict | None] = [None] * len(queries)
+        if self._proc.poll() is not None:
+            return results
+        id2idx: dict[int, int] = {}
+        reqs: list[dict] = []  # type: ignore[type-arg]
+        for k, (file, line, col) in enumerate(queries):
+            self._next_id += 1
+            mid = self._next_id
+            id2idx[mid] = k
+            reqs.append(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": file.as_uri()},
+                        "position": {
+                            "line": line - 1,
+                            "character": col - 1,
+                        },
+                    },
+                }
+            )
+
+        def _writer() -> None:
+            for req in reqs:
+                self._write(req)
+
+        writer = threading.Thread(target=_writer, daemon=True)
+        writer.start()
+        got = 0
+        while got < len(queries):
+            msg = self._read_one(timeout=60.0)
+            if msg is None:
+                break
+            mid = msg.get("id")
+            if "method" in msg:
+                if mid is not None:
+                    self._write(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": mid,
+                            "error": {
+                                "code": -32601,
+                                "message": "Method not found",
+                            },
+                        }
+                    )
+                continue
+            idx = id2idx.get(mid) if mid is not None else None
+            if idx is not None:
+                results[idx] = self._first_location(msg.get("result"))
+                got += 1
+        writer.join(timeout=5)
+        return results
 
     def references(
         self, file: Path, line: int, col: int
@@ -286,6 +384,28 @@ class PhpactorResolver(SymbolResolver):
         if loc is None:
             return None
         return self._loc_to_ref(loc)
+
+    def resolve_all(self, queries: list[Query]) -> list[ResolvedRef | None]:
+        """
+        Resolve every occurrence in one pipelined phpactor exchange.
+
+        Overrides the base per-query loop: on a large project the resolution
+        pass issues one query per occurrence (hundreds of thousands on a big
+        monorepo), and a blocking round-trip each would dominate analysis.
+        Batching writes them all up front and reads responses by id, so the
+        cost collapses to the server's throughput instead of the sum of
+        per-request latencies.
+        """
+        if self._client is None:
+            return [None] * len(queries)
+        try:
+            locs = self._client.definition_batch(queries)
+        except Exception:
+            return [None] * len(queries)
+        return [
+            self._loc_to_ref(loc) if loc is not None else None
+            for loc in locs
+        ]
 
     def infer_type_at(
         self, file: Path, line: int, col: int  # noqa: ARG002

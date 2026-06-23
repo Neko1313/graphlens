@@ -86,6 +86,41 @@ def test_definition_at_swallows_exception(tmp_path: Path):
     assert r.definition_at(tmp_path / "Main.php", 1, 1) is None
 
 
+def test_resolve_all_none_when_no_client(tmp_path: Path):
+    r = PhpactorResolver()
+    out = r.resolve_all([(tmp_path / "A.php", 1, 1), (tmp_path / "B.php", 2, 2)])
+    assert out == [None, None]
+
+
+def test_resolve_all_batches_and_maps(tmp_path: Path):
+    r = _resolver(tmp_path)
+    target = tmp_path / "src" / "User.php"
+    loc = {
+        "uri": target.as_uri(),
+        "range": {
+            "start": {"line": 4, "character": 6},
+            "end": {"line": 4, "character": 10},
+        },
+    }
+    # One hit, one miss — order preserved, miss stays None.
+    r._client.definition_batch.return_value = [loc, None]
+    queries = [(tmp_path / "Main.php", 2, 3), (tmp_path / "Main.php", 9, 1)]
+    out = r.resolve_all(queries)
+    r._client.definition_batch.assert_called_once_with(queries)
+    assert out[0] is not None
+    assert out[0].file_path == target
+    assert out[0].line == 5
+    assert out[0].col == 7
+    assert out[0].origin == "internal"
+    assert out[1] is None
+
+
+def test_resolve_all_swallows_exception(tmp_path: Path):
+    r = _resolver(tmp_path)
+    r._client.definition_batch.side_effect = RuntimeError("boom")
+    assert r.resolve_all([(tmp_path / "A.php", 1, 1)]) == [None]
+
+
 def test_references_to_occurrences(tmp_path: Path):
     r = _resolver(tmp_path)
     target = tmp_path / "Other.php"
