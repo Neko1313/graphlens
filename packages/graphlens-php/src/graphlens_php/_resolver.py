@@ -1,16 +1,16 @@
 """
-PHP symbol resolvers.
+PHP symbol resolver.
 
-``PhpantomResolver`` is the default: it drives a ``phpantom_lsp --stdio``
-subprocess (PHPantom, a Rust LSP server) over stdio. ``PhpactorResolver``
-drives a ``phpactor language-server`` subprocess instead — both speak the same
-LSP and share one transport (:class:`_PhpLspClient`); only the spawn command
-differs. PHPantom is the default because it is a self-contained Rust binary
-(no PHP runtime needed) and resolves the project's occurrences at thousands of
-``textDocument/definition`` per second. ``PhpResolver`` is a structure-only
-fallback that always reports :data:`ResolverStatus.UNAVAILABLE`.
+``PhpantomResolver`` is the only resolver: it drives a ``phpantom_lsp --stdio``
+subprocess (PHPantom, a self-contained Rust LSP server — no PHP runtime needed)
+over stdio via :class:`_PhpLspClient`, resolving the project's occurrences at
+thousands of ``textDocument/definition`` per second through the pipelined batch
+path. When the ``phpantom_lsp`` binary is absent it degrades automatically:
+:meth:`PhpantomResolver.status` reports :data:`ResolverStatus.UNAVAILABLE` and
+every query returns ``None``/``[]``, so the structural graph is still produced
+with only the type-aware edges dropped.
 
-All resolvers never raise: every error returns ``None``/``[]`` so the
+The resolver never raises: every error returns ``None``/``[]`` so the
 structural graph is always produced, only the type-aware edges degrade.
 """
 
@@ -45,9 +45,9 @@ class _PhpLspClient:  # pragma: no cover - integration transport
     """
     Minimal synchronous LSP JSON-RPC client over stdio.
 
-    Engine-agnostic: the spawn ``argv`` (e.g. ``phpantom_lsp --stdio`` or
-    ``phpactor language-server``) is passed in, so one transport serves every
-    PHP LSP server. ``name`` is used only for log messages.
+    The spawn ``argv`` (``phpantom_lsp --stdio``) is passed in rather than
+    hard-coded, so the transport stays independent of the server it drives.
+    ``name`` is used only for log messages.
     """
 
     def __init__(
@@ -127,8 +127,7 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         and emits a burst of ``window/logMessage`` / ``publishDiagnostics``
         notifications while it works, with no explicit "index ready" signal.
         Definition queries issued before that burst settles resolve to null,
-        so the batch path drains the burst first. phpactor goes quiet almost
-        immediately, so this is a no-op cost for it.
+        so the batch path drains the burst first.
         """
         if self._proc.stdout is None or self._proc.poll() is not None:
             return
@@ -393,26 +392,35 @@ class _PhpLspClient:  # pragma: no cover - integration transport
             self.shutdown()
 
 
-class _LspResolver(SymbolResolver):
+class PhpantomResolver(SymbolResolver):
     """
-    Base for stdio-LSP PHP resolvers (PHPantom, phpactor).
+    Resolve PHP symbols via a ``phpantom_lsp --stdio`` subprocess.
 
-    Spawns one server per :meth:`prepare` call via :class:`_PhpLspClient`.
-    Subclasses provide the spawn command through :meth:`_spawn_argv` and a
-    human-readable :attr:`_engine` name. If the server cannot be started,
-    :meth:`prepare` logs a warning and all queries return ``None``/``[]`` — the
-    structural graph is still produced. ``infer_type_at`` always returns
-    ``None``.
+    PHPantom is a self-contained Rust LSP server — no PHP runtime required —
+    and resolves ``textDocument/definition`` at thousands of queries per
+    second through the pipelined batch path. Point ``$GRAPHLENS_PHPANTOM`` at
+    the binary, or have ``phpantom_lsp`` / ``phpantom`` on ``PATH``.
+
+    Spawns one server per :meth:`prepare` call via :class:`_PhpLspClient`. If
+    the server cannot be started, :meth:`prepare` logs a warning and all
+    queries return ``None``/``[]`` — the structural graph is still produced.
+    ``infer_type_at`` always returns ``None``.
     """
 
-    _engine = "php-lsp"
+    _engine = "phpantom"
 
     def __init__(self) -> None:
         self._client: _PhpLspClient | None = None
         self._root: Path | None = None
 
     def _spawn_argv(self) -> list[str]:
-        raise NotImplementedError
+        binary = (
+            os.environ.get("GRAPHLENS_PHPANTOM")
+            or shutil.which("phpantom_lsp")
+            or shutil.which("phpantom")
+            or "phpantom_lsp"
+        )
+        return [binary, "--stdio"]
 
     def prepare(self, project_root: Path, files: list[Path]) -> None:  # noqa: ARG002
         if self._client is not None:
@@ -530,77 +538,3 @@ class _LspResolver(SymbolResolver):
         if self._client is not None:
             with contextlib.suppress(Exception):
                 self._client.shutdown()
-
-
-class PhpantomResolver(_LspResolver):
-    """
-    Resolve PHP symbols via a ``phpantom_lsp --stdio`` subprocess (default).
-
-    PHPantom is a self-contained Rust LSP server — no PHP runtime required —
-    and resolves ``textDocument/definition`` at thousands of queries per
-    second through the pipelined batch path. Point ``$GRAPHLENS_PHPANTOM`` at
-    the binary, or have ``phpantom_lsp`` / ``phpantom`` on ``PATH``.
-    """
-
-    _engine = "phpantom"
-
-    def _spawn_argv(self) -> list[str]:
-        binary = (
-            os.environ.get("GRAPHLENS_PHPANTOM")
-            or shutil.which("phpantom_lsp")
-            or shutil.which("phpantom")
-            or "phpantom_lsp"
-        )
-        return [binary, "--stdio"]
-
-
-class PhpactorResolver(_LspResolver):
-    """
-    Resolve PHP symbols via a ``phpactor language-server`` subprocess.
-
-    Alternative to the default :class:`PhpantomResolver`. Requires ``phpactor``
-    in ``PATH`` (or pointed to by ``$GRAPHLENS_PHPACTOR``) and a working PHP
-    runtime. Inject it via ``PhpAdapter(resolver=PhpactorResolver())`` to use
-    phpactor instead of PHPantom.
-    """
-
-    _engine = "phpactor"
-
-    def _spawn_argv(self) -> list[str]:
-        binary = (
-            os.environ.get("GRAPHLENS_PHPACTOR")
-            or shutil.which("phpactor")
-            or "phpactor"
-        )
-        return [binary, "language-server", "--no-ansi"]
-
-
-class PhpResolver(SymbolResolver):
-    """
-    Structure-only fallback resolver.
-
-    Produces no type-aware edges and always reports
-    :data:`ResolverStatus.UNAVAILABLE`. Use it to build the structural graph
-    without a PHP LSP server (PHPantom / phpactor) available.
-    """
-
-    def prepare(self, project_root: Path, files: list[Path]) -> None:
-        pass
-
-    def definition_at(
-        self, file: Path, line: int, col: int  # noqa: ARG002
-    ) -> ResolvedRef | None:
-        return None
-
-    def infer_type_at(
-        self, file: Path, line: int, col: int  # noqa: ARG002
-    ) -> ResolvedRef | None:
-        return None
-
-    def references_to(
-        self, file: Path, line: int, col: int  # noqa: ARG002
-    ) -> list[Occurrence]:
-        return []
-
-    def status(self) -> ResolverStatus:
-        return ResolverStatus.UNAVAILABLE

@@ -82,10 +82,9 @@ class PhpAdapter(LanguageAdapter):
                 ``PHP_DEFAULT_DEP_PARSERS``.
             resolver: symbol resolver used for cross-file resolution of calls,
                 references, type uses, and base classes. Defaults to
-                ``PhpantomResolver`` (requires the ``phpantom_lsp`` Rust binary
-                in PATH). Pass ``PhpactorResolver()`` to use phpactor instead,
-                a ``PhpResolver`` instance to build a structure-only graph, or
-                inject a custom ``SymbolResolver`` subclass.
+                ``PhpantomResolver`` (drives the ``phpantom_lsp`` Rust binary;
+                degrades to a structure-only graph when it is absent). Inject a
+                custom ``SymbolResolver`` subclass to override.
 
         """
         self._dep_parsers = (
