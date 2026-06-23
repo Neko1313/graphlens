@@ -32,9 +32,9 @@ Adapters are **pure data producers** — they never write to any backend. The gr
 
 ## Why graph IR?
 
-- **Language-agnostic** — one shared model for Python, TypeScript, Rust, …
+- **Language-agnostic** — one shared model for Python, TypeScript, Go, Rust, PHP, …
 - **Plugin-based adapters** — each language is a separate package, registered via Python entry points
-- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript, gopls for Go, rust-analyzer for Rust)
+- **Tree-sitter powered** — all adapters use tree-sitter for CST parsing and exact span positions, combined with type-aware resolution (ty for Python, TypeScript Compiler API for TypeScript, gopls for Go, rust-analyzer for Rust, phpactor for PHP)
 - **Cross-language aware** — adapters emit language-agnostic `BOUNDARY` ports (HTTP, queues, gRPC, Temporal); `graphlens-link` connects a consumer in one language to a provider in another
 - **Monorepo aware** — `can_handle()` and `find_*_roots()` handle multi-language repos correctly
 - **Deterministic node IDs** — SHA-256 hash of `project::kind::qualified_name` → stable across re-scans
@@ -74,7 +74,7 @@ Full product documentation lives at **<https://Neko1313.github.io/graphlens/>**
 - [Getting Started](https://Neko1313.github.io/graphlens/docs/getting-started/installation) — install, quick start, core concepts
 - [Guides](https://Neko1313.github.io/graphlens/docs/guides/library-api) — library API, CLI, querying, visualization, Neo4j, cross-language, MCP
 - [CI Integration](https://Neko1313.github.io/graphlens/docs/ci-integration/overview) — strict mode, GitHub Actions, Docker, local hooks
-- [Adapters](https://Neko1313.github.io/graphlens/docs/adapters/overview) — Python, TypeScript, Go, Rust, and writing your own
+- [Adapters](https://Neko1313.github.io/graphlens/docs/adapters/overview) — Python, TypeScript, Go, Rust, PHP, and writing your own
 - [Graph Model](https://Neko1313.github.io/graphlens/docs/graph-model/nodes) — nodes, relations, boundaries, serialization
 - [API Reference](https://Neko1313.github.io/graphlens/docs/api-reference/graphlens) — exact signatures
 
@@ -92,13 +92,14 @@ pip install "graphlens[python]"
 # Core + TypeScript adapter
 pip install "graphlens[typescript]"
 
-# Core + Go / Rust adapters
+# Core + Go / Rust / PHP adapters
 pip install "graphlens[go]"
 pip install "graphlens[rust]"
+pip install "graphlens[php]"
 
 # CLI (graphlens analyze / visualize / query / neo4j)
 pip install "graphlens-cli[python]"          # with Python adapter
-pip install "graphlens-cli[all]"             # Python + TS + Go + Rust + Neo4j
+pip install "graphlens-cli[all]"             # Python + TS + Go + Rust + PHP + Neo4j
 ```
 
 With uv:
@@ -113,10 +114,10 @@ uv add "graphlens-cli[all]"
 ### Docker (all adapters + toolchains pre-installed)
 
 For CI, the published image bundles the CLI with every adapter **and** the
-toolchains their resolvers drive (ty, Node, Go + gopls, Rust + rust-analyzer)
-— no local setup required, and the supported way to get the Go and Rust
-adapters (which are not published to PyPI). Mount your project at
-`/workspace`:
+toolchains their resolvers drive (ty, Node, Go + gopls, Rust + rust-analyzer,
+PHP + phpactor) — no local setup required, and the supported way to get the
+Go, Rust and PHP adapters (which are not published to PyPI). Mount your project
+at `/workspace`:
 
 ```bash
 docker run --rm -v "$PWD:/workspace" ghcr.io/neko1313/graphlens \
@@ -358,6 +359,7 @@ graphlens/                      ← uv workspace root (core library)
     graphlens-typescript/       ← TypeScript adapter (tree-sitter + Compiler API)
     graphlens-go/               ← Go adapter (tree-sitter + gopls)
     graphlens-rust/             ← Rust adapter (tree-sitter + rust-analyzer)
+    graphlens-php/              ← PHP adapter (tree-sitter + phpactor)
     graphlens-link/             ← cross-language linker (COMMUNICATES_WITH)
     graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j, mcp
   tests/                         ← core tests (100% coverage)
