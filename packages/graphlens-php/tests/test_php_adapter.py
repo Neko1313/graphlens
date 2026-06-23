@@ -120,6 +120,22 @@ def test_can_handle(tmp_path: Path):
     assert adapter.can_handle(tmp_path) is True
 
 
+def test_collect_files_excludes_vendor(tmp_path: Path):
+    """vendor/ (and build/cache dirs) must not be indexed as project source."""
+    (tmp_path / "composer.json").write_text("{}")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.php").write_text("<?php\n")
+    vendor = tmp_path / "vendor" / "symfony" / "console"
+    vendor.mkdir(parents=True)
+    (vendor / "Application.php").write_text("<?php\n")
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "Generated.php").write_text("<?php\n")
+
+    files = PhpAdapter(resolver=PhpResolver()).collect_files(tmp_path)
+    names = {f.name for f in files}
+    assert names == {"App.php"}
+
+
 # ---------------------------------------------------------------------------
 # Structure
 # ---------------------------------------------------------------------------

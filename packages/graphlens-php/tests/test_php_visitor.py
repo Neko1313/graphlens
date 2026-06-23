@@ -247,7 +247,14 @@ def test_internal_import_resolves_to_module():
         Node(id=file_id, kind=NodeKind.FILE, qualified_name="f.php", name="f")
     )
     ctx = VisitorContext(PROJECT, Path("f.php"), "App")
-    visitor = PhpASTVisitor(ctx, graph, file_id, src, _classifier())
+    visitor = PhpASTVisitor(
+        ctx,
+        graph,
+        file_id,
+        src,
+        _classifier(),
+        modules={"App\\Model": mod_id},
+    )
     visitor.visit(parse_php(src).root_node)
     # RESOLVES_TO points to the existing MODULE, not an EXTERNAL_SYMBOL
     targets = [

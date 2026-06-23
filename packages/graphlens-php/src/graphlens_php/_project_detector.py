@@ -14,7 +14,7 @@ PHP_MARKERS: tuple[str, ...] = (
     "composer.json",
 )
 
-_EXCLUDED_DIRS: frozenset[str] = frozenset({
+EXCLUDED_DIRS: frozenset[str] = frozenset({
     "vendor", "node_modules", ".git", "var", "cache",
     "build", "dist", ".phpunit.cache",
 })
@@ -51,7 +51,7 @@ def find_php_roots(search_root: Path) -> list[Path]:
     return collect_marker_roots(
         search_root,
         PHP_MARKERS,
-        excluded_dirs=_EXCLUDED_DIRS,
+        excluded_dirs=EXCLUDED_DIRS,
     )
 
 

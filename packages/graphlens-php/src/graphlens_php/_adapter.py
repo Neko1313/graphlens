@@ -32,6 +32,7 @@ from graphlens_php._module_resolver import (
     path_to_namespace,
 )
 from graphlens_php._project_detector import (
+    EXCLUDED_DIRS,
     detect_project_name,
     find_php_roots,
     is_php_project,
@@ -103,6 +104,26 @@ class PhpAdapter(LanguageAdapter):
 
     def can_handle(self, project_root: str | Path) -> bool:
         return is_php_project(Path(project_root))
+
+    def collect_files(self, project_root: str | Path) -> list[Path]:
+        """
+        Return all PHP source files under ``project_root``.
+
+        Overrides the core default to also skip PHP-specific non-source
+        directories — most importantly ``vendor/`` (Composer's installed
+        third-party tree, PHP's equivalent of ``node_modules``), plus build
+        and cache dirs. Without this a real app with dependencies installed
+        would index thousands of third-party files as project source.
+        """
+        root = Path(project_root)
+        extensions = self.file_extensions()
+        return sorted(
+            p
+            for p in root.rglob("*")
+            if p.is_file()
+            and p.suffix in extensions
+            and not (EXCLUDED_DIRS & set(p.relative_to(root).parts))
+        )
 
     def analyze(
         self,
@@ -250,7 +271,7 @@ def _analyze_root(  # noqa: PLR0913
             namespace=namespace,
         )
         visitor = PhpASTVisitor(
-            ctx, graph, file_id, source_bytes, classifier
+            ctx, graph, file_id, source_bytes, classifier, modules
         )
         visitor.visit(tree.root_node)
         all_occurrences.extend(

@@ -144,19 +144,24 @@ class PhpASTVisitor:
         "function_definition",
     )
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         ctx: VisitorContext,
         graph: GraphLens,
         file_node_id: str,
         source: bytes,
         classifier: ImportClassifier | None = None,
+        modules: dict[str, str] | None = None,
     ) -> None:
         self._ctx = ctx
         self._graph = graph
         self._file_node_id = file_node_id
         self._source = source
         self._classifier = classifier or ImportClassifier()
+        # Shared namespace-qualified-name → MODULE node id index, populated by
+        # the adapter as files are processed. Used to resolve internal imports
+        # to their MODULE node by longest-prefix without scanning the graph.
+        self._modules = modules if modules is not None else {}
         # Stack of qualified-name prefixes (current scope); "" = global ns
         self._scope_stack: list[str] = [ctx.namespace]
         # Stack of node IDs for emitting DECLARES relations
@@ -464,7 +469,7 @@ class PhpASTVisitor:
 
         target_id: str | None = None
         if origin == "internal":
-            target_id = _find_module_node_id(self._graph, ext_qname)
+            target_id = self._lookup_module(ext_qname)
         if target_id is None:
             target_id = self._get_or_create_external_symbol(
                 ext_qname, origin=origin
@@ -682,6 +687,22 @@ class PhpASTVisitor:
             metadata=md,
         )
 
+    def _lookup_module(self, qname: str) -> str | None:
+        r"""
+        Return the MODULE id for ``qname`` or its longest namespace prefix.
+
+        ``App\\Model\\User`` resolves to the ``App\\Model`` namespace MODULE
+        even when the ``User`` class is not yet its own node. Uses the shared
+        ``modules`` index (O(depth) lookups) rather than scanning the graph.
+        """
+        parts = qname.split("\\")
+        for length in range(len(parts), 0, -1):
+            candidate = "\\".join(parts[:length])
+            module_id = self._modules.get(candidate)
+            if module_id is not None:
+                return module_id
+        return None
+
     def _push(self, qname: str, node_id: str, kind: NodeKind) -> None:
         self._scope_stack.append(qname)
         self._container_stack.append(node_id)
@@ -769,25 +790,6 @@ def _visibility(node: TSNode) -> str:
         if child.type == "visibility_modifier":
             return _node_text(child)
     return "public"
-
-
-def _find_module_node_id(graph: GraphLens, qname: str) -> str | None:
-    r"""
-    Return the ID of the MODULE node matching ``qname`` or its longest prefix.
-
-    ``App\\Model\\User`` resolves to the ``App\\Model`` namespace MODULE even
-    when the ``User`` class is not yet its own node.
-    """
-    parts = qname.split("\\")
-    for length in range(len(parts), 0, -1):
-        candidate = "\\".join(parts[:length])
-        for node in graph.nodes.values():
-            if (
-                node.kind == NodeKind.MODULE
-                and node.qualified_name == candidate
-            ):
-                return node.id
-    return None
 
 
 def _make_span(node: TSNode | None) -> Span | None:
