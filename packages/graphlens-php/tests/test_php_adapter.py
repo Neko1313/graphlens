@@ -320,11 +320,11 @@ def test_duplicate_file_in_files_list(make_project):
     )
 
 
-def test_default_resolver_is_phpactor():
-    from graphlens_php._resolver import PhpactorResolver
+def test_default_resolver_is_phpantom():
+    from graphlens_php._resolver import PhpantomResolver
 
     adapter = PhpAdapter()
-    assert isinstance(adapter._resolver, PhpactorResolver)
+    assert isinstance(adapter._resolver, PhpantomResolver)
 
 
 def test_default_dep_parsers():

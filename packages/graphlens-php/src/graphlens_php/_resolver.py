@@ -1,13 +1,16 @@
 """
 PHP symbol resolvers.
 
-``PhpactorResolver`` drives a ``phpactor language-server`` subprocess over
-stdio (the same LSP pattern the Python adapter uses for ``ty``). phpactor is
-open-source (MIT) and implements ``textDocument/definition`` — the one query
-the resolution pass needs. ``PhpResolver`` is a structure-only fallback that
-always reports :data:`ResolverStatus.UNAVAILABLE`.
+``PhpantomResolver`` is the default: it drives a ``phpantom_lsp --stdio``
+subprocess (PHPantom, a Rust LSP server) over stdio. ``PhpactorResolver``
+drives a ``phpactor language-server`` subprocess instead — both speak the same
+LSP and share one transport (:class:`_PhpLspClient`); only the spawn command
+differs. PHPantom is the default because it is a self-contained Rust binary
+(no PHP runtime needed) and resolves the project's occurrences at thousands of
+``textDocument/definition`` per second. ``PhpResolver`` is a structure-only
+fallback that always reports :data:`ResolverStatus.UNAVAILABLE`.
 
-Both resolvers never raise: every error returns ``None``/``[]`` so the
+All resolvers never raise: every error returns ``None``/``[]`` so the
 structural graph is always produced, only the type-aware edges degrade.
 """
 
@@ -20,10 +23,12 @@ import os
 import select
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 from urllib.parse import unquote
 
-from graphlens.contracts import Occurrence, ResolvedRef, SymbolResolver
+from graphlens.contracts import Occurrence, Query, ResolvedRef, SymbolResolver
 from graphlens.status import ResolverStatus
 
 logger = logging.getLogger("graphlens_php")
@@ -36,17 +41,21 @@ def _uri_to_path(uri: str) -> Path | None:
     return Path(unquote(uri[7:]))
 
 
-class _PhpactorLspClient:  # pragma: no cover - integration transport
-    """Minimal synchronous LSP JSON-RPC client for ``phpactor`` (stdio)."""
+class _PhpLspClient:  # pragma: no cover - integration transport
+    """
+    Minimal synchronous LSP JSON-RPC client over stdio.
 
-    def __init__(self, project_root: Path) -> None:
-        php_bin = (
-            os.environ.get("GRAPHLENS_PHPACTOR")
-            or shutil.which("phpactor")
-            or "phpactor"
-        )
+    Engine-agnostic: the spawn ``argv`` (e.g. ``phpantom_lsp --stdio`` or
+    ``phpactor language-server``) is passed in, so one transport serves every
+    PHP LSP server. ``name`` is used only for log messages.
+    """
+
+    def __init__(
+        self, project_root: Path, argv: list[str], name: str = "php-lsp"
+    ) -> None:
+        self._name = name
         self._proc: subprocess.Popen = subprocess.Popen(  # type: ignore[type-arg]
-            [php_bin, "language-server", "--no-ansi"],
+            argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -54,6 +63,10 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
         )
         self._next_id = 0
         self._opened_uris: set[str] = set()
+        # Serialize stdin writes: the pipelined batch runs a writer thread
+        # while the main thread may still write MethodNotFound replies, so
+        # two threads can race on stdin and interleave a frame's bytes.
+        self._write_lock = threading.Lock()
         self._initialize(project_root)
 
     # ------------------------------------------------------------------
@@ -66,22 +79,18 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
         body = json.dumps(msg, separators=(",", ":")).encode()
         header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         try:
-            self._proc.stdin.write(header + body)
-            self._proc.stdin.flush()
+            with self._write_lock:
+                self._proc.stdin.write(header + body)
+                self._proc.stdin.flush()
         except OSError:
             pass
 
-    def _read_one(self, timeout: float = 30.0) -> dict | None:  # type: ignore[type-arg]
-        if self._proc.stdout is None or self._proc.poll() is not None:
-            return None
-        ready, _, _ = select.select([self._proc.stdout], [], [], timeout)
-        if not ready:
-            logger.warning("phpactor timed out after %.0fs", timeout)
-            return None
+    def _read_frame(self) -> dict | None:  # type: ignore[type-arg]
+        """Read one LSP frame from stdout (caller guarantees data is ready)."""
         content_length = 0
         try:
             while True:
-                raw = self._proc.stdout.readline()
+                raw = self._proc.stdout.readline()  # type: ignore[union-attr]
                 if not raw:
                     return None  # EOF — server exited
                 stripped = raw.strip()
@@ -91,11 +100,59 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
                     content_length = int(stripped.split(b":", 1)[1].strip())
             if not content_length:
                 return {}
-            body = self._proc.stdout.read(content_length)
+            body = self._proc.stdout.read(content_length)  # type: ignore[union-attr]
             return json.loads(body) if body else {}
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            logger.debug("phpactor read error: %s", exc)
+            logger.debug("%s read error: %s", self._name, exc)
             return None
+
+    def _read_one(self, timeout: float = 30.0) -> dict | None:  # type: ignore[type-arg]
+        if self._proc.stdout is None or self._proc.poll() is not None:
+            return None
+        ready, _, _ = select.select([self._proc.stdout], [], [], timeout)
+        if not ready:
+            logger.warning("%s timed out after %.0fs", self._name, timeout)
+            return None
+        return self._read_frame()
+
+    def _drain_until_quiet(
+        self, quiet: float = 1.0, budget: float = 120.0
+    ) -> None:
+        """
+        Drain server notifications until the stream goes quiet.
+
+        Reads and discards server-initiated messages until none arrives for
+        ``quiet`` seconds (or ``budget`` elapses). PHPantom builds its
+        cross-file index asynchronously after ``didOpen``
+        and emits a burst of ``window/logMessage`` / ``publishDiagnostics``
+        notifications while it works, with no explicit "index ready" signal.
+        Definition queries issued before that burst settles resolve to null,
+        so the batch path drains the burst first. phpactor goes quiet almost
+        immediately, so this is a no-op cost for it.
+        """
+        if self._proc.stdout is None or self._proc.poll() is not None:
+            return
+        deadline = time.monotonic() + budget
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([self._proc.stdout], [], [], quiet)
+            if not ready:
+                return  # silence → index settled
+            msg = self._read_frame()
+            if msg is None:
+                return  # EOF
+            # Answer any server→client request so it is not left pending.
+            mid = msg.get("id")
+            if "method" in msg and mid is not None:
+                self._write(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {
+                            "code": -32601,
+                            "message": "Method not found",
+                        },
+                    }
+                )
 
     def _recv_response(
         self, expected_id: int, timeout: float = 30.0
@@ -120,7 +177,9 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
                 continue
             if msg_id == expected_id:
                 return msg
-        logger.warning("phpactor did not respond to request %d", expected_id)
+        logger.warning(
+            "%s did not respond to request %d", self._name, expected_id
+        )
         return None
 
     def _request(
@@ -186,13 +245,23 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
             )
         return uri
 
+    def open_files(self, files: list[Path]) -> None:
+        """
+        Send ``didOpen`` for every not-yet-opened file in one pass.
+
+        Mirrors the per-file :meth:`open_file` (no diagnostics drain — the
+        server processes ``didOpen`` before the ``definition`` requests that
+        follow it on the same in-order stream), but batched so a whole project
+        is opened up front instead of lazily one query at a time.
+        """
+        for file in files:
+            self.open_file(file)
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
 
-    def definition(
-        self, file: Path, line: int, col: int
-    ) -> dict | None:  # type: ignore[type-arg]
+    def definition(self, file: Path, line: int, col: int) -> dict | None:  # type: ignore[type-arg]
         uri = self.open_file(file)
         resp = self._request(
             "textDocument/definition",
@@ -204,14 +273,91 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
         )
         if resp is None:
             return None
-        result = resp.get("result")
+        return self._first_location(resp.get("result"))
+
+    @staticmethod
+    def _first_location(result: object) -> dict | None:  # type: ignore[type-arg]
+        """Reduce an LSP definition result to a single Location or None."""
         if not result:
             return None
-        return result[0] if isinstance(result, list) else result
+        if isinstance(result, list):
+            return result[0] if result else None
+        return result  # type: ignore[return-value]
 
-    def references(
-        self, file: Path, line: int, col: int
-    ) -> list[dict]:  # type: ignore[type-arg]
+    def definition_batch(self, queries: list[Query]) -> list[dict | None]:  # type: ignore[type-arg]
+        """
+        Resolve many positions in one pipelined exchange.
+
+        Writes every ``textDocument/definition`` request up front (from a
+        writer thread so a full stdin/stdout pipe can't deadlock against our
+        reads), then collects responses by JSON-RPC id. Order is preserved;
+        unanswered positions stay ``None``. This turns N blocking round-trips
+        into one pipelined stream — the entire point of the batch path, and
+        what lets PHPantom resolve a whole project's occurrences per second.
+        """
+        if not queries:
+            return []
+        self.open_files([f for (f, _l, _c) in queries])
+        # Let an async indexer (PHPantom) finish before we query, or every
+        # definition comes back null.
+        self._drain_until_quiet()
+        results: list[dict | None] = [None] * len(queries)
+        if self._proc.poll() is not None:
+            return results
+        id2idx: dict[int, int] = {}
+        reqs: list[dict] = []  # type: ignore[type-arg]
+        for k, (file, line, col) in enumerate(queries):
+            self._next_id += 1
+            mid = self._next_id
+            id2idx[mid] = k
+            reqs.append(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "method": "textDocument/definition",
+                    "params": {
+                        "textDocument": {"uri": file.as_uri()},
+                        "position": {
+                            "line": line - 1,
+                            "character": col - 1,
+                        },
+                    },
+                }
+            )
+
+        def _writer() -> None:
+            for req in reqs:
+                self._write(req)
+
+        writer = threading.Thread(target=_writer, daemon=True)
+        writer.start()
+        got = 0
+        while got < len(queries):
+            msg = self._read_one(timeout=60.0)
+            if msg is None:
+                break
+            mid = msg.get("id")
+            if "method" in msg:
+                if mid is not None:
+                    self._write(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": mid,
+                            "error": {
+                                "code": -32601,
+                                "message": "Method not found",
+                            },
+                        }
+                    )
+                continue
+            idx = id2idx.get(mid) if mid is not None else None
+            if idx is not None:
+                results[idx] = self._first_location(msg.get("result"))
+                got += 1
+        writer.join(timeout=5)
+        return results
+
+    def references(self, file: Path, line: int, col: int) -> list[dict]:  # type: ignore[type-arg]
         uri = self.open_file(file)
         resp = self._request(
             "textDocument/references",
@@ -247,20 +393,26 @@ class _PhpactorLspClient:  # pragma: no cover - integration transport
             self.shutdown()
 
 
-class PhpactorResolver(SymbolResolver):
+class _LspResolver(SymbolResolver):
     """
-    Resolve PHP symbols via a ``phpactor language-server`` subprocess.
+    Base for stdio-LSP PHP resolvers (PHPantom, phpactor).
 
-    Spawns one server per :meth:`prepare` call. Requires ``phpactor`` in
-    ``PATH`` (or pointed to by ``$GRAPHLENS_PHPACTOR``) and a working PHP
-    runtime. If phpactor cannot be started, :meth:`prepare` logs a warning
-    and all queries return ``None``/``[]`` — the structural graph is still
-    produced. ``infer_type_at`` always returns ``None``.
+    Spawns one server per :meth:`prepare` call via :class:`_PhpLspClient`.
+    Subclasses provide the spawn command through :meth:`_spawn_argv` and a
+    human-readable :attr:`_engine` name. If the server cannot be started,
+    :meth:`prepare` logs a warning and all queries return ``None``/``[]`` — the
+    structural graph is still produced. ``infer_type_at`` always returns
+    ``None``.
     """
+
+    _engine = "php-lsp"
 
     def __init__(self) -> None:
-        self._client: _PhpactorLspClient | None = None
+        self._client: _PhpLspClient | None = None
         self._root: Path | None = None
+
+    def _spawn_argv(self) -> list[str]:
+        raise NotImplementedError
 
     def prepare(self, project_root: Path, files: list[Path]) -> None:  # noqa: ARG002
         if self._client is not None:
@@ -269,9 +421,13 @@ class PhpactorResolver(SymbolResolver):
             self._client = None
         self._root = project_root
         try:
-            self._client = _PhpactorLspClient(project_root)
+            self._client = _PhpLspClient(
+                project_root, self._spawn_argv(), name=self._engine
+            )
         except Exception:
-            logger.warning("Failed to start phpactor for %s", project_root)
+            logger.warning(
+                "Failed to start %s for %s", self._engine, project_root
+            )
             self._client = None
 
     def definition_at(
@@ -286,6 +442,27 @@ class PhpactorResolver(SymbolResolver):
         if loc is None:
             return None
         return self._loc_to_ref(loc)
+
+    def resolve_all(self, queries: list[Query]) -> list[ResolvedRef | None]:
+        """
+        Resolve every occurrence in one pipelined LSP exchange.
+
+        Overrides the base per-query loop: on a large project the resolution
+        pass issues one query per occurrence (hundreds of thousands on a big
+        monorepo), and a blocking round-trip each would dominate analysis.
+        Batching writes them all up front and reads responses by id, so the
+        cost collapses to the server's throughput instead of the sum of
+        per-request latencies.
+        """
+        if self._client is None:
+            return [None] * len(queries)
+        try:
+            locs = self._client.definition_batch(queries)
+        except Exception:
+            return [None] * len(queries)
+        return [
+            self._loc_to_ref(loc) if loc is not None else None for loc in locs
+        ]
 
     def infer_type_at(
         self, file: Path, line: int, col: int  # noqa: ARG002
@@ -355,13 +532,56 @@ class PhpactorResolver(SymbolResolver):
                 self._client.shutdown()
 
 
+class PhpantomResolver(_LspResolver):
+    """
+    Resolve PHP symbols via a ``phpantom_lsp --stdio`` subprocess (default).
+
+    PHPantom is a self-contained Rust LSP server — no PHP runtime required —
+    and resolves ``textDocument/definition`` at thousands of queries per
+    second through the pipelined batch path. Point ``$GRAPHLENS_PHPANTOM`` at
+    the binary, or have ``phpantom_lsp`` / ``phpantom`` on ``PATH``.
+    """
+
+    _engine = "phpantom"
+
+    def _spawn_argv(self) -> list[str]:
+        binary = (
+            os.environ.get("GRAPHLENS_PHPANTOM")
+            or shutil.which("phpantom_lsp")
+            or shutil.which("phpantom")
+            or "phpantom_lsp"
+        )
+        return [binary, "--stdio"]
+
+
+class PhpactorResolver(_LspResolver):
+    """
+    Resolve PHP symbols via a ``phpactor language-server`` subprocess.
+
+    Alternative to the default :class:`PhpantomResolver`. Requires ``phpactor``
+    in ``PATH`` (or pointed to by ``$GRAPHLENS_PHPACTOR``) and a working PHP
+    runtime. Inject it via ``PhpAdapter(resolver=PhpactorResolver())`` to use
+    phpactor instead of PHPantom.
+    """
+
+    _engine = "phpactor"
+
+    def _spawn_argv(self) -> list[str]:
+        binary = (
+            os.environ.get("GRAPHLENS_PHPACTOR")
+            or shutil.which("phpactor")
+            or "phpactor"
+        )
+        return [binary, "language-server", "--no-ansi"]
+
+
 class PhpResolver(SymbolResolver):
     """
     Structure-only fallback resolver.
 
     Produces no type-aware edges and always reports
     :data:`ResolverStatus.UNAVAILABLE`. Use it to build the structural graph
-    without a phpactor / PHP toolchain available.
+    without a PHP LSP server (PHPantom / phpactor) available.
     """
 
     def prepare(self, project_root: Path, files: list[Path]) -> None:

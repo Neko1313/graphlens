@@ -37,7 +37,7 @@ from graphlens_php._project_detector import (
     find_php_roots,
     is_php_project,
 )
-from graphlens_php._resolver import PhpactorResolver
+from graphlens_php._resolver import PhpantomResolver
 from graphlens_php._visitor import (
     ImportClassifier,
     OccurrenceRef,
@@ -82,9 +82,10 @@ class PhpAdapter(LanguageAdapter):
                 ``PHP_DEFAULT_DEP_PARSERS``.
             resolver: symbol resolver used for cross-file resolution of calls,
                 references, type uses, and base classes. Defaults to
-                ``PhpactorResolver`` (requires ``phpactor`` + PHP in PATH).
-                Pass a ``PhpResolver`` instance to build a structure-only
-                graph, or inject a custom ``SymbolResolver`` subclass.
+                ``PhpantomResolver`` (requires the ``phpantom_lsp`` Rust binary
+                in PATH). Pass ``PhpactorResolver()`` to use phpactor instead,
+                a ``PhpResolver`` instance to build a structure-only graph, or
+                inject a custom ``SymbolResolver`` subclass.
 
         """
         self._dep_parsers = (
@@ -93,7 +94,7 @@ class PhpAdapter(LanguageAdapter):
             else PHP_DEFAULT_DEP_PARSERS
         )
         self._resolver = (
-            resolver if resolver is not None else PhpactorResolver()
+            resolver if resolver is not None else PhpantomResolver()
         )
 
     def language(self) -> str:
