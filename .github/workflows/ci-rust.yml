@@ -64,7 +64,7 @@ jobs:
         run: task rust:test CI=true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/graphlens-rust/reports/coverage.xml
@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload test analytics to Codecov
         if: always()
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: packages/graphlens-rust/reports/junit.xml
