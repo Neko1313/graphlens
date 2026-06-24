@@ -63,7 +63,7 @@ jobs:
       # Dockerfile is caught without publishing anything. On a tag push it
       # builds and publishes to GHCR.
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
