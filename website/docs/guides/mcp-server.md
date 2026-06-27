@@ -15,7 +15,7 @@ project built on top of this engine:
 
 > **[graphlens-mcp](https://github.com/Neko1313/graphlens-mcp)** — a free,
 > MIT-licensed MCP server.
-> Docs: <https://neko1313.github.io/graphlens-mcp/>
+> Docs: [neko1313.github.io/graphlens-mcp](https://neko1313.github.io/graphlens-mcp/)
 
 It is a thin runtime layer over `graphlens`: the engine provides the mechanisms
 (parsing, stable node identity, resolvers); `graphlens-mcp` owns the storage,
