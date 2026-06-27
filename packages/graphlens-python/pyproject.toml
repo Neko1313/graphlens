@@ -9,7 +9,7 @@ dependencies = [
     "tree-sitter-python>=0.23",
     # Pinned: ty is pre-1.0; 0.0.x releases can change LSP/diagnostic
     # behaviour, so float-pinning makes analysis non-reproducible.
-    "ty==0.0.26",
+    "ty==0.0.55",
 ]
 
 [build-system]
