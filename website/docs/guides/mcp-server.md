@@ -2,73 +2,59 @@
 sidebar_position: 7
 ---
 
-# MCP server
+# MCP server (graphlens-mcp)
 
-The `mcp` command exposes a saved graph to LLM agents over the
-[Model Context Protocol](https://modelcontextprotocol.io/) as a set of query
-tools. Instead of dumping an entire codebase into a prompt, an agent can ask
-graphlens precise questions — "who calls this?", "what does this talk to?" — and
-get structured answers.
+graphlens is **only an analysis engine** — it parses code into a graph IR and
+stops there (see [Scope & non-goals](../intro.md)). It deliberately ships no
+long-running server and no agent runtime.
 
-## Install and run
+If you want to serve a graph to coding agents (Claude Code, Cursor, and
+compatible clients) over the
+[Model Context Protocol](https://modelcontextprotocol.io/), use the dedicated
+project built on top of this engine:
+
+> **[graphlens-mcp](https://github.com/Neko1313/graphlens-mcp)** — a free,
+> MIT-licensed MCP server.
+> Docs: <https://neko1313.github.io/graphlens-mcp/>
+
+It is a thin runtime layer over `graphlens`: the engine provides the mechanisms
+(parsing, stable node identity, resolvers); `graphlens-mcp` owns the storage,
+the freshness model (a filesystem watcher that re-indexes the connected set on
+every edit) and the agent-facing tool surface — everything graphlens itself is
+intentionally not.
+
+## Quickstart
 
 ```bash
-pip install "graphlens-cli[mcp]"
-
-# First produce a graph
-graphlens analyze ./my-project --output graph.json
-
-# Then serve it (stdio transport)
-graphlens mcp --graph graph.json
+uv tool install graphlens-mcp          # or: pipx install graphlens-mcp
+cd your-project && graphlens-mcp init  # index + configure your agent
 ```
 
-| Option | Default | Description |
-|---|---|---|
-| `--graph`, `-g` | — | Path to a graph JSON file from `analyze --output` (required) |
+`init` detects the project's languages, indexes the code into a local graph,
+writes the MCP server entry into your agent's config and installs a navigation
+skill. Your agent then launches the server itself; restart it and ask things
+like *"what breaks if I change the signature of `create_order`?"*.
 
-The server speaks MCP over stdio, which is what desktop agent clients expect.
+## Agent tools
 
-## Exposed tools
-
-| Tool | Returns |
+| Tool | Purpose |
 |---|---|
-| `stats` | node/relation counts by kind and the resolver status |
-| `find` | nodes whose name matches a query |
-| `callers` | functions/methods that call a node |
-| `callees` | functions/methods a node calls |
-| `references` | nodes that reference a node |
-| `neighbors` | nodes within `depth` hops of a node |
-| `boundaries` | every cross-language boundary with its exposers and consumers |
-| `communicates_with` | consumer → provider edges across languages |
+| `search_symbols` | Full-text search over symbol names — **start here** |
+| `get_node_info` | Source snippet + signature + location for a node |
+| `get_file_structure` | Symbol outline of a file |
+| `get_callees` | What a function calls (outgoing, up to `max_depth`) |
+| `get_callers` | Who calls a function — primary impact-analysis tool |
+| `get_neighbors` | Nodes within N hops in any direction |
+| `find_references` | Non-call usages (type annotations, assignments) |
+| `get_cross_language_calls` | Connections across service boundaries (HTTP/gRPC/queues) |
 
-Node results are returned as compact dicts (`id`, `kind`, `qualified_name`,
-`name`, `file_path`), which keeps responses small enough to fit comfortably in
-an agent's context.
+See the [graphlens-mcp documentation](https://neko1313.github.io/graphlens-mcp/)
+for the full command set, the freshness model, supported languages and the agent
+configuration flags.
 
-## Wiring it into a client
+## Using the engine yourself
 
-Most MCP clients are configured with a command to launch. Point the client at
-the `graphlens mcp` invocation, for example:
-
-```json
-{
-  "mcpServers": {
-    "graphlens": {
-      "command": "graphlens",
-      "args": ["mcp", "--graph", "/absolute/path/to/graph.json"]
-    }
-  }
-}
-```
-
-Regenerate `graph.json` (with `graphlens analyze --output`) whenever the code
-changes so the agent is querying a current graph — for example as a step in the
-same [CI job](../ci-integration/overview.md) that indexes the repository.
-
-## Why serve a graph instead of files?
-
-- **Precision** — the agent gets resolved `CALLS`/`REFERENCES` edges, not a
-  best-effort text search.
-- **Token efficiency** — answers are small structured lists, not file dumps.
-- **Cross-language awareness** — `communicates_with` and `boundaries` surface
-  relationships no single-language tool can see.
+`graphlens-mcp` is also a worked **example of how to build on the engine**: how
+to drive the adapter registry, persist and refresh the graph, and expose it to a
+consumer. If you are building your own tool on top of graphlens, it is a good
+reference. Start from the [Library API guide](./library-api.md).

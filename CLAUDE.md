@@ -54,9 +54,11 @@ stops there. It does NOT: persist state or own a database (backends are a
 separate consuming layer); watch the filesystem or re-index incrementally on
 its own (scans are pure; deterministic IDs enable, but the caller drives,
 incremental updates); compute embeddings, semantic search, or relevance
-ranking; provide a UI or an agent runtime (`visualize` emits static HTML,
-`mcp` exposes query tools — neither hosts a long-running service). These belong
-to tools built on top of graphlens. See `website/docs/intro.md` → "Scope &
+ranking; provide a UI or an agent runtime (`visualize` emits static HTML, but
+graphlens hosts no long-running service — serving the graph to agents over MCP
+is the separate `graphlens-mcp` project, https://github.com/Neko1313/graphlens-mcp,
+which is also the reference example of consuming this engine). These belong to
+tools built on top of graphlens. See `website/docs/intro.md` → "Scope &
 Non-goals".
 
 ### 3. SQLAlchemy dialect pattern for adapters

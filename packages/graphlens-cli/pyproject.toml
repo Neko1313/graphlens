@@ -12,8 +12,7 @@ dependencies = [
 python = ["graphlens-python"]
 typescript = ["graphlens-typescript"]
 neo4j = ["neo4j"]
-mcp = ["mcp>=1.2"]
-all = ["graphlens-python", "graphlens-typescript", "neo4j", "mcp>=1.2"]
+all = ["graphlens-python", "graphlens-typescript", "neo4j"]
 
 [project.scripts]
 graphlens = "graphlens_cli:app"

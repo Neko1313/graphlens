@@ -54,16 +54,19 @@ uv add "graphlens[typescript]"
 ## The CLI
 
 `graphlens-cli` provides the `graphlens` command (`analyze`, `query`,
-`visualize`, `neo4j`, `mcp`). It declares its own extras so you can pick the
+`visualize`, `neo4j`). It declares its own extras so you can pick the
 adapters and exporters you need:
 
 ```bash
 pip install "graphlens-cli[python]"        # CLI + Python adapter
 pip install "graphlens-cli[typescript]"    # CLI + TypeScript adapter
 pip install "graphlens-cli[neo4j]"         # CLI + Neo4j exporter dependency
-pip install "graphlens-cli[mcp]"           # CLI + MCP server dependency
-pip install "graphlens-cli[all]"           # CLI + Python + TypeScript + Neo4j + MCP
+pip install "graphlens-cli[all]"           # CLI + Python + TypeScript + Neo4j
 ```
+
+To serve a graph to coding agents over MCP, install the dedicated
+[graphlens-mcp](https://github.com/Neko1313/graphlens-mcp) server instead —
+it is built on top of this engine.
 
 ```bash
 uv add "graphlens-cli[all]"

@@ -5,7 +5,7 @@ sidebar_position: 2
 # The graphlens CLI
 
 `graphlens-cli` installs the `graphlens` command — a [Typer](https://typer.tiangolo.com/)
-app with five subcommands. This page is a practical tour; the
+app with four subcommands. This page is a practical tour; the
 [CLI API reference](../api-reference/cli.md) lists every flag and default.
 
 ```bash
@@ -19,7 +19,6 @@ graphlens --help
 | [`query`](#query) | Run callers/callees/references/neighbors on a saved graph |
 | [`visualize`](#visualize) | Build an interactive HTML graph viewer |
 | [`neo4j`](#neo4j) | Export the graph to a Neo4j database |
-| [`mcp`](#mcp) | Serve a saved graph to agents over the Model Context Protocol |
 
 ## Selecting languages
 
@@ -125,22 +124,12 @@ graphlens neo4j . --wipe --batch-size 200
 
 See the [Neo4j guide](./neo4j.md) for the resulting schema and example queries.
 
-## mcp
+## Serving a graph to agents (MCP)
 
-Serve a saved graph to LLM agents over the Model Context Protocol. Install the
-MCP dependency first:
-
-```bash
-pip install "graphlens-cli[mcp]"
-graphlens mcp --graph graph.json
-```
-
-| Option | Default | Description |
-|---|---|---|
-| `--graph`, `-g` | — | Path to a graph JSON file (required) |
-
-See the [MCP server guide](./mcp-server.md) for the exposed tools and how to
-wire it into an agent client.
+The CLI does not serve graphs to agents — graphlens is only an analysis engine.
+For a Model Context Protocol server, use the dedicated
+[graphlens-mcp](https://github.com/Neko1313/graphlens-mcp) project, which is
+built on top of this engine. See the [MCP server guide](./mcp-server.md).
 
 ## Exit codes
 

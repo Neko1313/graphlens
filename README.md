@@ -73,7 +73,7 @@ Full product documentation lives at **<https://Neko1313.github.io/graphlens/>**
 (built with Docusaurus from [`website/`](website/)):
 
 - [Getting Started](https://Neko1313.github.io/graphlens/docs/getting-started/installation) — install, quick start, core concepts
-- [Guides](https://Neko1313.github.io/graphlens/docs/guides/library-api) — library API, CLI, querying, visualization, Neo4j, cross-language, MCP
+- [Guides](https://Neko1313.github.io/graphlens/docs/guides/library-api) — library API, CLI, querying, visualization, Neo4j, cross-language
 - [CI Integration](https://Neko1313.github.io/graphlens/docs/ci-integration/overview) — strict mode, GitHub Actions, Docker, local hooks
 - [Adapters](https://Neko1313.github.io/graphlens/docs/adapters/overview) — Python, TypeScript, Go, Rust, PHP, and writing your own
 - [Graph Model](https://Neko1313.github.io/graphlens/docs/graph-model/nodes) — nodes, relations, boundaries, serialization
@@ -195,18 +195,24 @@ graphlens visualize . --output graph.html --no-open
 # Export to Neo4j
 graphlens neo4j <project_root> --uri bolt://localhost:7687 --user neo4j --password secret
 graphlens neo4j . --wipe --batch-size 200
-
-# Serve the graph to agents over the Model Context Protocol (needs the
-# optional `mcp` extra: pip install "graphlens-cli[mcp]")
-graphlens mcp --graph graph.json
 ```
 
-### `mcp` — Model Context Protocol server
+### Serving a graph to agents (MCP)
 
-Exposes a saved graph to LLM agents as MCP tools: `graph_stats`,
-`find_nodes`, `callers`, `callees`, `references`, `neighbors`,
-`boundaries`, and `communicates_with`. Install with the `mcp` extra and
-point it at a JSON graph produced by `graphlens analyze --output`.
+graphlens is only an analysis engine and ships no MCP server of its own. To
+serve the graph to coding agents (Claude Code, Cursor, …) over the
+[Model Context Protocol](https://modelcontextprotocol.io), use
+**[graphlens-mcp](https://github.com/Neko1313/graphlens-mcp)** — a separate,
+MIT-licensed server built on top of this engine
+([docs](https://neko1313.github.io/graphlens-mcp/)):
+
+```bash
+uv tool install graphlens-mcp
+cd your-project && graphlens-mcp init
+```
+
+It is also a worked example of how to consume the engine: driving the adapter
+registry, persisting and refreshing the graph, and exposing it to a client.
 
 ### `visualize` — interactive HTML graph viewer
 
@@ -362,7 +368,7 @@ graphlens/                      ← uv workspace root (core library)
     graphlens-rust/             ← Rust adapter (tree-sitter + rust-analyzer)
     graphlens-php/              ← PHP adapter (tree-sitter + PHPantom)
     graphlens-link/             ← cross-language linker (COMMUNICATES_WITH)
-    graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j, mcp
+    graphlens-cli/              ← CLI (typer): analyze, query, visualize, neo4j
   tests/                         ← core tests (100% coverage)
   examples/                      ← standalone usage examples
 ```

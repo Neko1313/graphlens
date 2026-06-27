@@ -36,8 +36,10 @@ it deliberately does **not**:
   deterministic node IDs but driven by the caller.
 - **compute embeddings, semantic search, or relevance ranking** — the graph is
   structural and type-aware, not a vector index.
-- **provide a UI or an agent runtime** — `visualize` emits a static HTML file and
-  `mcp` exposes query tools, but graphlens hosts no long-running service or app.
+- **provide a UI or an agent runtime** — `visualize` emits a static HTML file,
+  but graphlens hosts no long-running service or app. Serving the graph to
+  agents over MCP is the job of the separate
+  [graphlens-mcp](https://github.com/Neko1313/graphlens-mcp) project.
 - **orchestrate a pipeline** — the core has no orchestration or I/O;
   composing adapters, backends, and policies belongs in user code or a
   separate package (the [CLI](./guides/cli.md) is the reference example).
@@ -81,7 +83,7 @@ from several languages.
 
 **Use it from the CLI**
 
-`graphlens analyze`, `query`, `visualize`, `neo4j`, and `mcp` cover the common
+`graphlens analyze`, `query`, `visualize`, and `neo4j` cover the common
 workflows without writing any code.
 
 [→ CLI guide](./guides/cli.md)
@@ -105,7 +107,8 @@ graph.
 
 **Serve it to agents**
 
-The `mcp` command exposes a saved graph to LLM agents over the Model Context
+The separate [graphlens-mcp](https://github.com/Neko1313/graphlens-mcp) server,
+built on this engine, exposes the graph to LLM agents over the Model Context
 Protocol as a set of query tools.
 
 [→ MCP server](./guides/mcp-server.md)

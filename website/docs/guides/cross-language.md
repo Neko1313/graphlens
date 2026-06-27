@@ -108,4 +108,5 @@ graphs, runs `link_graph`, and prints the resulting `COMMUNICATES_WITH` edges.
 ## See also
 
 - [Graph model → Boundaries](../graph-model/boundaries.md) — the node/edge details.
-- [MCP server](./mcp-server.md) — the `communicates_with` and `boundaries` agent tools.
+- [MCP server](./mcp-server.md) — the cross-language agent tools, served by the
+  separate [graphlens-mcp](https://github.com/Neko1313/graphlens-mcp) project.

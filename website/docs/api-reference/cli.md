@@ -92,19 +92,9 @@ graphlens neo4j ROOT [OPTIONS]
 
 ---
 
-## `graphlens mcp`
+## Serving a graph to agents (MCP)
 
-Serve a saved graph to agents over the Model Context Protocol. Requires the
-`mcp` extra (`pip install "graphlens-cli[mcp]"`).
-
-```bash
-graphlens mcp --graph GRAPH
-```
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `--graph`, `-g` | path | — | Path to a graph JSON file (from `analyze --output`) — required |
-
-Exposed MCP tools: `stats`, `find`, `callers`, `callees`, `references`,
-`neighbors`, `boundaries`, `communicates_with`. See the
-[MCP server guide](../guides/mcp-server.md).
+The CLI has no MCP command — graphlens is only an analysis engine. To serve a
+graph to coding agents over the Model Context Protocol, use the dedicated
+[graphlens-mcp](https://github.com/Neko1313/graphlens-mcp) project built on top
+of this engine. See the [MCP server guide](../guides/mcp-server.md).

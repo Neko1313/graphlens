@@ -15,7 +15,7 @@ This page covers the building blocks. The next two pages give concrete
 ## The two things you produce
 
 1. **A serialized graph** — `graphlens analyze . --output graph.json`. This is
-   the artifact downstream steps (agents, the [MCP server](../guides/mcp-server.md),
+   the artifact downstream steps (agents, an [MCP server](../guides/mcp-server.md),
    dashboards) consume.
 2. **A pass/fail signal** — `graphlens analyze . --strict` exits non-zero if the
    resolver did not complete, so the job fails loudly instead of shipping a
