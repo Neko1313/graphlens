@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-06-27
+### Bug Fixes
+
+- build docs by @Neko1313
+
+### Refactoring
+
+- **cli**: drop built-in mcp server in favor of standalone graphlens-mcp by @Neko1313
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.7.0...v0.7.1
 ## [0.7.0] - 2026-06-23
 ### Bug Fixes
 
