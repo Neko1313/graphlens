@@ -177,11 +177,10 @@ class TestInternalHelpers:
         """When file is not relative to project_root, falls back to py_root."""
         from graphlens import GraphLens as CG
 
-        from graphlens_python._adapter import _analyze_root
+        from graphlens_python._adapter import _build_root_structure
         from graphlens_python._deps import (
             PYTHON_DEFAULT_DEP_PARSERS,
         )
-        from graphlens_python._resolver import TyResolver
 
         # py_root is a sibling of project_root (not a subdirectory)
         project_root = tmp_path / "project"
@@ -194,17 +193,18 @@ class TestInternalHelpers:
         f.write_text("x = 1\n")
 
         graph = CG()
-        _analyze_root(
+        project_name, occurrences, parsed_files = _build_root_structure(
             graph,
             project_root,
             py_root,
             [f],
             PYTHON_DEFAULT_DEP_PARSERS,
-            TyResolver(),
-            [],
         )
         # The file path falls back to py_root-relative
         assert graph is not None
+        assert project_name
+        assert len(occurrences) == 1
+        assert len(parsed_files) == 1
 
 
 class TestMonorepo:
@@ -224,6 +224,50 @@ class TestMonorepo:
         project_names = {p.name for p in projects}
         assert "backend" in project_names
         assert "worker" in project_names
+
+    def test_monorepo_shares_one_resolver_pass(self, tmp_path: Path):
+        # Multiple project roots should share ONE resolver.prepare() call
+        # rooted at project_root (covering every root's files) instead of
+        # one spawn per root — otherwise cross-root references can never
+        # resolve and each root pays its own cold-start indexing cost.
+        for name in ("backend", "worker"):
+            sub = tmp_path / name
+            sub.mkdir()
+            (sub / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
+            pkg = sub / "src" / name
+            pkg.mkdir(parents=True)
+            (pkg / "__init__.py").write_text("")
+            (pkg / "main.py").write_text("def run(): pass\n")
+
+        class _PrepareSpyResolver:
+            def __init__(self):
+                self.prepare_calls = []
+
+            def prepare(self, project_root, files):
+                self.prepare_calls.append((project_root, frozenset(files)))
+
+            def definition_at(self, file, line, col):
+                return None
+
+            def infer_type_at(self, file, line, col):
+                return None
+
+            def references_to(self, file, line, col):
+                return []
+
+            def status(self):
+                from graphlens import ResolverStatus
+
+                return ResolverStatus.UNAVAILABLE
+
+        resolver = _PrepareSpyResolver()
+        PythonAdapter(resolver=resolver).analyze(tmp_path)
+
+        assert len(resolver.prepare_calls) == 1
+        root, files = resolver.prepare_calls[0]
+        assert root == tmp_path
+        assert len(files) == 4
+        assert {f.name for f in files} == {"__init__.py", "main.py"}
 
     def test_root_project_and_nested_projects_are_separate(self, tmp_path: Path):
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "monorepo"\n')

@@ -135,45 +135,55 @@ class PythonAdapter(LanguageAdapter):
     ) -> GraphLens:
         project_root = Path(project_root).resolve()
         graph = GraphLens()
-        statuses: list[ResolverStatus] = []
-        metrics = ResolverMetrics()
 
         if files is not None:
-            metrics.merge(
-                _analyze_root(
-                    graph,
-                    project_root,
-                    project_root,
-                    files,
-                    self._dep_parsers,
-                    self._resolver,
-                    self._boundary_extractors,
-                )
-            )
-            statuses.append(self._resolver.status())
+            root_files = [(project_root, files)]
         else:
             py_roots = find_python_roots(project_root)
-            for py_root in py_roots:
-                root_files = self.collect_files(py_root)
-                root_files = filter_nested_root_files(
-                    root_files,
+            root_files = [
+                (
                     py_root,
-                    py_roots,
+                    filter_nested_root_files(
+                        self.collect_files(py_root), py_root, py_roots
+                    ),
                 )
-                metrics.merge(
-                    _analyze_root(
-                        graph,
-                        project_root,
-                        py_root,
-                        root_files,
-                        self._dep_parsers,
-                        self._resolver,
-                        self._boundary_extractors,
-                    )
-                )
-                statuses.append(self._resolver.status())
+                for py_root in py_roots
+            ]
 
-        status = ResolverStatus.combine(statuses)
+        # Phase 1 — structure for every project root, no resolution yet, so
+        # the SpanIndex below spans the whole workspace and cross-root
+        # definition targets already exist before any occurrence resolves.
+        built = [
+            _build_root_structure(
+                graph, project_root, py_root, root_file_list,
+                self._dep_parsers,
+            )
+            for py_root, root_file_list in root_files
+        ]
+
+        # Phase 2 — a SINGLE ty server rooted at project_root resolves every
+        # root. Rooting one server at project_root (instead of one per root)
+        # is what lets cross-root references resolve and avoids reloading
+        # the whole workspace once per root.
+        all_files = [f for _r, fs in root_files for f in fs]
+        self._resolver.prepare(project_root, all_files)
+        span_index = SpanIndex.from_graph(graph)
+        metrics = ResolverMetrics()
+        for project_name, occurrences, _parsed in built:
+            metrics.merge(
+                _resolve_occurrences(
+                    graph, project_name, self._resolver, span_index,
+                    occurrences,
+                )
+            )
+
+        # Phase 3 — boundary extraction per root (independent of resolution).
+        for _project_name, _occurrences, parsed_files in built:
+            _extract_boundaries(
+                graph, parsed_files, self._boundary_extractors
+            )
+
+        status = self._resolver.status()
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
         graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
@@ -185,16 +195,26 @@ class PythonAdapter(LanguageAdapter):
         return graph
 
 
-def _analyze_root(  # noqa: PLR0913, PLR0915
+def _build_root_structure(  # noqa: PLR0915
     graph: GraphLens,
     project_root: Path,
     py_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-    resolver: SymbolResolver,
-    boundary_extractors: list[PyBoundaryExtractor],
-) -> ResolverMetrics:
-    """Analyze one Python project root and populate graph in-place."""
+) -> tuple[
+    str,
+    list[tuple[str, OccurrenceRef]],
+    list[tuple[Path, str, TSNode]],
+]:
+    """
+    Build structural nodes and imports for one Python project root.
+
+    Returns ``(project_name, occurrences, parsed_files)``. Type-aware
+    resolution and boundary extraction run later at the project level so a
+    single workspace-rooted resolver and a full-graph ``SpanIndex`` serve
+    every root (cross-root definitions only exist once every root's
+    structure is built).
+    """
     project_name = detect_project_name(py_root)
     source_roots = find_source_roots(py_root, files)
 
@@ -311,16 +331,6 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
         )
         parsed_files.append((file, file_id, tree.root_node))
 
-    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL
-    span_index = SpanIndex.from_graph(graph)
-    resolver.prepare(py_root, files)
-    metrics = _resolve_occurrences(
-        graph, project_name, resolver, span_index, all_occurrences
-    )
-
-    # Boundary pass: emit BOUNDARY nodes + EXPOSES/CONSUMES edges.
-    _extract_boundaries(graph, parsed_files, boundary_extractors)
-
     # PROJECT --CONTAINS--> top-level modules
     top_level = {qn: mid for qn, mid in modules.items() if "." not in qn}
     for module_id in top_level.values():
@@ -331,7 +341,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
                 kind=RelationKind.CONTAINS,
             )
         )
-    return metrics
+    return project_name, all_occurrences, parsed_files
 
 
 def _ensure_external_symbol(

@@ -361,13 +361,14 @@ def test_monorepo_shared_project_name(make_project, tmp_path):
     assert project_id in graph.nodes
 
 
-def test_composer_replace_monorepo_shares_one_resolver_pass(tmp_path: Path):
-    # laravel/framework-style split: a root composer.json 'replace's its
-    # sub-packages, so they should share ONE resolver.prepare() call scoped
-    # to the head, covering every member's files — not one spawn per member.
+def test_monorepo_shares_one_resolver_pass(tmp_path: Path):
+    # Multiple composer.json roots (e.g. laravel/framework's illuminate/*
+    # sub-packages) should share ONE resolver.prepare() call rooted at
+    # project_root, covering every root's files — not one spawn per root —
+    # otherwise cross-root references can never resolve and each root pays
+    # its own cold-start indexing cost.
     (tmp_path / "composer.json").write_text(
         '{"name": "acme/framework", '
-        '"replace": {"acme/support": "self.version"}, '
         '"autoload": {"psr-4": {"Acme\\\\": "src/"}}}'
     )
     (tmp_path / "src").mkdir()
@@ -392,30 +393,6 @@ def test_composer_replace_monorepo_shares_one_resolver_pass(tmp_path: Path):
     head, files = resolver.prepare_calls[0]
     assert head == tmp_path
     assert {f.name for f in files} == {"Core.php", "Str.php"}
-
-
-def test_unrelated_nested_roots_keep_separate_resolver_passes(
-    make_project, tmp_path
-):
-    # Two composer.json roots with no 'replace' link between them are
-    # unrelated projects sharing a checkout — each still gets its own
-    # resolver.prepare() call, scoped to just its own directory.
-    make_project(
-        {"src/A.php": "<?php\nnamespace App;\nclass A {}\n"},
-        composer={"name": "acme/app", "autoload": {"psr-4": {"App\\": "src/"}}},
-    )
-    sub = tmp_path / "sub"
-    sub.mkdir()
-    (sub / "composer.json").write_text('{"name": "acme/other"}')
-    (sub / "src").mkdir()
-    (sub / "src" / "B.php").write_text("<?php\nnamespace Sub;\nclass B {}\n")
-
-    resolver = _PrepareSpyResolver()
-    PhpAdapter(resolver=resolver).analyze(tmp_path)
-
-    assert len(resolver.prepare_calls) == 2
-    prepared_roots = {root for root, _files in resolver.prepare_calls}
-    assert prepared_roots == {tmp_path, sub}
 
 
 def test_duplicate_file_in_files_list(make_project):

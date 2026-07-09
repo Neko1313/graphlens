@@ -284,6 +284,50 @@ class TestAnalyze:
         assert project_names == {"monorepo", "core", "worker"}
         assert project_top_level_module_names(graph, "monorepo") == {"app"}
 
+    def test_monorepo_shares_one_resolver_pass(self, tmp_path: Path):
+        # Multiple project roots should share ONE resolver.prepare() call
+        # rooted at project_root (covering every root's files) instead of
+        # one spawn per root — otherwise cross-root references can never
+        # resolve and each root pays its own cold-start indexing cost.
+        for name in ("core", "worker"):
+            sub = tmp_path / name
+            sub.mkdir()
+            (sub / "package.json").write_text(f'{{"name": "{name}"}}')
+            (sub / "index.ts").write_text("export const value = 1;\n")
+
+        class _PrepareSpyResolver:
+            def __init__(self):
+                self.prepare_calls = []
+
+            def prepare(self, project_root, files):
+                self.prepare_calls.append((project_root, frozenset(files)))
+
+            def definition_at(self, file, line, col):
+                return None
+
+            def resolve_all(self, queries):
+                return [None] * len(queries)
+
+            def infer_type_at(self, file, line, col):
+                return None
+
+            def references_to(self, file, line, col):
+                return []
+
+            def status(self):
+                from graphlens import ResolverStatus
+
+                return ResolverStatus.UNAVAILABLE
+
+        resolver = _PrepareSpyResolver()
+        TypescriptAdapter(resolver=resolver).analyze(tmp_path)
+
+        assert len(resolver.prepare_calls) == 1
+        root, files = resolver.prepare_calls[0]
+        assert root == tmp_path
+        assert {f.name for f in files} == {"index.ts"}
+        assert len(files) == 2
+
 
 # ---------------------------------------------------------------------------
 # Batch resolution pass tests (FakeResolver — no Node.js required)
@@ -640,13 +684,13 @@ class TestBatchResolutionPass:
         When a file is under lang_root but not project_root, the relative
         path is computed from lang_root as a fallback (line 343-344).
 
-        We call _analyze_root directly with project_root set to a sibling
-        directory so that file.relative_to(project_root) fails but
+        We call _build_root_structure directly with project_root set to a
+        sibling directory so that file.relative_to(project_root) fails but
         file.relative_to(lang_root) succeeds.
         """
         from graphlens import GraphLens
 
-        from graphlens_typescript._adapter import _analyze_root
+        from graphlens_typescript._adapter import _build_root_structure
 
         lang_root = tmp_path / "pkg"
         lang_root.mkdir()
@@ -659,13 +703,11 @@ class TestBatchResolutionPass:
         with tempfile.TemporaryDirectory() as outside:
             project_root = Path(outside)
             graph = GraphLens()
-            _analyze_root(
+            _build_root_structure(
                 graph,
                 project_root,  # file is NOT under this
                 lang_root,     # file IS under this
                 [ts_file],
-                [],
-                FakeResolver(None),
                 [],
             )
             file_nodes = [
@@ -681,13 +723,13 @@ class TestBatchResolutionPass:
         ``if project_id not in graph.nodes`` guard (False branch) prevents
         a DuplicateNodeError on the second call.
 
-        We call _analyze_root directly with two separate source files from
-        two roots that have the same package name detected. The second call
-        hits the guard at line 313.
+        We call _build_root_structure directly with two separate source
+        files from two roots that have the same package name detected. The
+        second call hits the guard at line 313.
         """
         from graphlens import GraphLens
 
-        from graphlens_typescript._adapter import _analyze_root
+        from graphlens_typescript._adapter import _build_root_structure
 
         # root1 and root2 are both "named" the same via package.json
         root1 = tmp_path / "a"
@@ -704,13 +746,9 @@ class TestBatchResolutionPass:
 
         graph = GraphLens()
         # First call: creates the project node
-        _analyze_root(
-            graph, tmp_path, root1, [file1], [], FakeResolver(None), []
-        )
+        _build_root_structure(graph, tmp_path, root1, [file1], [])
         # Second call: project_id already in graph → False branch of guard
-        _analyze_root(
-            graph, tmp_path, root2, [file2], [], FakeResolver(None), []
-        )
+        _build_root_structure(graph, tmp_path, root2, [file2], [])
         projects = [n for n in graph.nodes.values() if n.kind.value == "project"]
         assert len(projects) == 1  # deduped
 
@@ -743,7 +781,7 @@ class TestBatchResolutionPass:
 
         from graphlens import GraphLens
 
-        from graphlens_typescript._adapter import _analyze_root
+        from graphlens_typescript._adapter import _build_root_structure
 
         # Normal file under lang_root
         lang_root = tmp_path
@@ -758,13 +796,11 @@ class TestBatchResolutionPass:
 
             graph = GraphLens()
             # outside_file can't be qualified → ValueError → skipped
-            _analyze_root(
+            _build_root_structure(
                 graph,
                 lang_root,
                 lang_root,
                 [good_file, outside_file],
-                [],
-                FakeResolver(None),
                 [],
             )
             # good_file was processed; outside_file was skipped

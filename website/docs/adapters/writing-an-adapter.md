@@ -59,7 +59,7 @@ Each adapter follows the same internal structure:
 packages/graphlens-mylang/
   src/graphlens_mylang/
     __init__.py              # exports MyLangAdapter (+ resolver if public)
-    _adapter.py              # LanguageAdapter subclass + _analyze_root()
+    _adapter.py              # LanguageAdapter subclass + _build_root_structure()
     _visitor.py              # ASTVisitor + ImportClassifier + OccurrenceRef
     _resolver.py             # SymbolResolver subclass
     _deps.py                 # DependencyFileParser implementations + default list
@@ -69,9 +69,12 @@ packages/graphlens-mylang/
 
 ## The analysis pipeline
 
-A well-behaved adapter runs this pipeline inside `_analyze_root()`:
+A well-behaved adapter splits this pipeline into two phases: structure once
+per project sub-root (`_build_root_structure()`), then resolution once for
+the whole `analyze()` call. Never call `resolver.prepare()` from inside the
+per-sub-root loop — see [Monorepo support](#monorepo-support) below.
 
-### Before visiting any file (pre-pass)
+### Before visiting any file (pre-pass, per sub-root)
 
 1. **Internal modules** — derive top-level module names from file paths via the
    module resolver (no parsing needed).
@@ -108,11 +111,17 @@ node kind), build deterministic IDs with `make_node_id`, and record
 Remember Tree-sitter positions are 0-based `(row, col)`; convert to 1-based when
 building a [`Span`](../api-reference/models.md#span).
 
-### After visiting all files (resolution pass)
+### After every sub-root's structure is built (resolution pass, once, in `analyze()`)
 
 4. Build a `SpanIndex` from the completed graph — the location → node bridge.
-5. Call `resolver.prepare(project_root, files)`.
-6. For each occurrence, call `resolver.definition_at(file, line, col)`.
+   Building it only after every sub-root's structure exists is what lets
+   cross-sub-root definitions resolve to a real node instead of an
+   `EXTERNAL_SYMBOL` fallback.
+5. Call `resolver.prepare(project_root, all_files)` **once**, rooted at the
+   top-level `project_root` with the union of every sub-root's files — never
+   once per sub-root (see [Monorepo support](#monorepo-support)).
+6. For each occurrence (across every sub-root), call
+   `resolver.definition_at(file, line, col)`.
 7. Look up the target with `SpanIndex.at(...)` and emit the appropriate edge
    (`CALLS` / `REFERENCES` / `HAS_TYPE` / `INHERITS_FROM`). If the target is not
    in the graph, fall back to an `EXTERNAL_SYMBOL` node.
@@ -148,6 +157,19 @@ Implement `find_<lang>_roots()` so analysis handles multi-language repos:
   project root for the same language;
 - while analyzing a parent root, exclude files that belong to nested roots so a
   child project is not also modeled as a module of the parent.
+
+**One resolver session for the whole discovered root set — never one per
+sub-root.** A monorepo can yield dozens of sub-roots (e.g. a split-package
+repo with a manifest per component — Laravel's `illuminate/*` sub-packages
+under `laravel/framework` is the canonical example). Calling
+`resolver.prepare()` once per sub-root, scoped to that sub-root's own
+directory, is wrong twice over: cross-sub-root references can never resolve
+(the resolver's workspace never contains sibling sub-roots' files), and each
+sub-root pays its own subprocess spawn plus a full re-index from zero, which
+dominates wall-clock on a repo with many sub-roots. Apply this
+unconditionally — don't try to detect whether sub-roots are "really the same
+codebase" first; merging unrelated sub-roots into one resolver session costs
+a bit of extra indexing but is never incorrect.
 
 ## Scaffold it automatically
 

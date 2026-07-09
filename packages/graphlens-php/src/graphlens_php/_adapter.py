@@ -33,8 +33,6 @@ from graphlens_php._module_resolver import (
 )
 from graphlens_php._project_detector import (
     EXCLUDED_DIRS,
-    composer_declared_name,
-    composer_replace_names,
     detect_project_name,
     find_php_roots,
     is_php_project,
@@ -137,58 +135,62 @@ class PhpAdapter(LanguageAdapter):
     ) -> GraphLens:
         project_root = Path(project_root).resolve()
         graph = GraphLens()
-        statuses: list[ResolverStatus] = []
-        metrics = ResolverMetrics()
 
         if files is not None:
-            metrics.merge(
-                _analyze_root(
-                    graph,
-                    project_root,
-                    project_root,
-                    files,
-                    self._dep_parsers,
-                    self._resolver,
-                )
-            )
-            statuses.append(self._resolver.status())
+            root_files = [(project_root, files)]
         else:
             php_roots = find_php_roots(project_root)
-            for cluster in _cluster_monorepo_roots(php_roots):
-                cluster_files = {
-                    root: filter_nested_root_files(
-                        self.collect_files(root), root, php_roots
-                    )
-                    for root in cluster
-                }
-                prepare = True
-                if len(cluster) > 1:
-                    # Composer 'replace' monorepo split (e.g. laravel/
-                    # framework + its illuminate/* sub-packages): one
-                    # resolver pass scoped to the cluster head, covering
-                    # every member's files, so cross-package references
-                    # resolve instead of each member only seeing its own
-                    # directory.
-                    union_files = [
-                        f for root in cluster for f in cluster_files[root]
-                    ]
-                    self._resolver.prepare(cluster[0], union_files)
-                    prepare = False
-                for php_root in cluster:
-                    metrics.merge(
-                        _analyze_root(
-                            graph,
-                            project_root,
-                            php_root,
-                            cluster_files[php_root],
-                            self._dep_parsers,
-                            self._resolver,
-                            prepare=prepare,
+            root_files = [
+                (
+                    php_root,
+                    filter_nested_root_files(
+                        self.collect_files(php_root), php_root, php_roots
+                    ),
+                )
+                for php_root in php_roots
+            ]
+
+        # Phase 1 — structure for every project root, no resolution yet, so
+        # the SpanIndex below spans the whole workspace and cross-root
+        # definition targets already exist before any occurrence resolves.
+        built = [
+            _build_root_structure(
+                graph, project_root, php_root, root_file_list,
+                self._dep_parsers,
+            )
+            for php_root, root_file_list in root_files
+        ]
+
+        # Phase 2 — a SINGLE intelephense rooted at project_root resolves
+        # every root. Rooting one server at project_root (instead of one
+        # per root) is what lets cross-root references resolve (e.g.
+        # laravel/framework's illuminate/* sub-packages) and avoids
+        # reloading the whole workspace once per root.
+        all_files = [f for _r, fs in root_files for f in fs]
+        self._resolver.prepare(project_root, all_files)
+        span_index = SpanIndex.from_graph(graph)
+        metrics = ResolverMetrics()
+        for _project_id, project_name, occurrences, _modules in built:
+            metrics.merge(
+                _resolve_occurrences(
+                    graph, project_name, self._resolver, span_index,
+                    occurrences,
+                )
+            )
+
+        # Phase 3 — PROJECT --CONTAINS--> top-level namespace modules.
+        for project_id, _project_name, _occurrences, modules in built:
+            for qname, module_id in modules.items():
+                if "\\" not in qname:
+                    graph.add_relation(
+                        Relation(
+                            source_id=project_id,
+                            target_id=module_id,
+                            kind=RelationKind.CONTAINS,
                         )
                     )
-                    statuses.append(self._resolver.status())
 
-        status = ResolverStatus.combine(statuses)
+        status = self._resolver.status()
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
         graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
@@ -200,56 +202,26 @@ class PhpAdapter(LanguageAdapter):
         return graph
 
 
-def _cluster_monorepo_roots(php_roots: list[Path]) -> list[list[Path]]:
-    """
-    Group ``php_roots`` into Composer monorepo-split families.
-
-    A root becomes a cluster head when its ``composer.json`` ``replace`` map
-    names another discovered root's declared package — the standard Composer
-    convention for a monorepo that splits into independently-installable
-    sub-packages (e.g. ``laravel/framework`` replacing
-    ``illuminate/support``, ``illuminate/database``, ...). Members of such a
-    cluster share ONE resolver pass scoped to the head (see ``analyze()``),
-    so cross-package references resolve instead of each sub-package's
-    resolver only ever seeing its own directory. Roots not claimed by any
-    head stay standalone singleton clusters — unrelated projects that
-    happen to share a checkout are left alone.
-    """
-    names = {root: composer_declared_name(root) for root in php_roots}
-    claimed: set[Path] = set()
-    clusters: list[list[Path]] = []
-    for root in php_roots:
-        replaces = composer_replace_names(root)
-        if not replaces:
-            continue
-        members = [
-            other
-            for other in php_roots
-            if other != root
-            and other not in claimed
-            and names[other] in replaces
-        ]
-        if members:
-            clusters.append([root, *members])
-            claimed.add(root)
-            claimed.update(members)
-    for root in php_roots:
-        if root not in claimed:
-            clusters.append([root])
-    return clusters
-
-
-def _analyze_root(  # noqa: PLR0913
+def _build_root_structure(
     graph: GraphLens,
     project_root: Path,
     php_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-    resolver: SymbolResolver,
-    *,
-    prepare: bool = True,
-) -> ResolverMetrics:
-    """Analyze one PHP project root and populate graph in-place."""
+) -> tuple[
+    str,
+    str,
+    list[tuple[str, OccurrenceRef]],
+    dict[str, str],
+]:
+    """
+    Build structural nodes for one PHP project root.
+
+    Returns ``(project_id, project_name, occurrences, modules)``. Type-aware
+    resolution runs later at the project level so a single workspace-rooted
+    resolver and a full-graph ``SpanIndex`` serve every root (cross-root
+    definitions only exist once every root's structure is built).
+    """
     project_name = detect_project_name(php_root)
 
     classifier = ImportClassifier(
@@ -337,25 +309,7 @@ def _analyze_root(  # noqa: PLR0913
             (visitor.abs_file_path, o) for o in visitor.occurrences
         )
 
-    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
-    span_index = SpanIndex.from_graph(graph)
-    if prepare:
-        resolver.prepare(php_root, files)
-    metrics = _resolve_occurrences(
-        graph, project_name, resolver, span_index, all_occurrences
-    )
-
-    # PROJECT --CONTAINS--> top-level namespace modules.
-    for qname, module_id in modules.items():
-        if "\\" not in qname:
-            graph.add_relation(
-                Relation(
-                    source_id=project_id,
-                    target_id=module_id,
-                    kind=RelationKind.CONTAINS,
-                )
-            )
-    return metrics
+    return project_id, project_name, all_occurrences, modules
 
 
 def _collect_third_party(
