@@ -55,7 +55,7 @@ framework itself.
 - **Tree-sitter powered** — every adapter uses Tree-sitter for structure and
   exact span positions, combined with a type-aware resolver
   (`ty` for Python, the TypeScript Compiler API, `gopls` for Go,
-  `rust-analyzer` for Rust, PHPantom for PHP) that emits real `CALLS` /
+  `rust-analyzer` for Rust, Intelephense for PHP) that emits real `CALLS` /
   `REFERENCES` / `HAS_TYPE` / `INHERITS_FROM` edges.
 - **Cross-language aware** — adapters emit language-agnostic `BOUNDARY` ports
   (HTTP, queues, gRPC, Temporal), and [`graphlens-link`](./guides/cross-language.md)
@@ -137,7 +137,7 @@ print("called by:", [n.name for n in graph.callers(fn.id)])
 - [uv](https://docs.astral.sh/uv/) is recommended for installation and development.
 - Language resolvers drive external toolchains. The Python (`ty`) and TypeScript
   (Node) toolchains are installed on demand; Go (`gopls`), Rust
-  (`rust-analyzer`), and PHP (`phpantom_lsp`) are most easily obtained through the
+  (`rust-analyzer`), and PHP (`intelephense`) are most easily obtained through the
   [Docker image](./ci-integration/docker.md). The PHP adapter is Docker-only —
   it is not published to PyPI.
 

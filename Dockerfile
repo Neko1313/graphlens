@@ -61,15 +61,15 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
            && rustup component add rust-analyzer rust-src --toolchain "$tc"; \
        done
 
-# --- PHP semantic resolver (PHPantom) ---------------------------------------
-# PHPantom (phpantom_lsp) is the PhpantomResolver engine: a self-contained Rust
-# language server — no PHP runtime needed — built here with the cargo from the
-# rustup install above and dropped on the PATH. Composer (with the minimal php
-# runtime it needs) is included only so a project's `vendor/` tree can be
-# populated, letting PHPantom resolve third-party symbols precisely.
-RUN . "$HOME/.cargo/env" \
-    && cargo install phpantom_lsp --root /usr/local --locked \
-    && phpantom_lsp --version
+# --- PHP semantic resolver (Intelephense) -----------------------------------
+# Intelephense is the IntelephenseResolver engine: a Node.js language server
+# (installed via npm, using the Node.js toolchain set up above for the
+# TypeScript resolver) — no PHP runtime needed for the resolver itself.
+# Composer (with the minimal php runtime it needs) is included only so a
+# project's `vendor/` tree can be populated, letting Intelephense resolve
+# third-party symbols precisely.
+RUN npm install -g intelephense \
+    && intelephense --version
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         php-cli \

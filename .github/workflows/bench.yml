@@ -1,31 +1,41 @@
 name: Benchmark
 
-# Load benchmark: analyse large real-world projects inside the published
-# image and refresh the `## Benchmarks` block in README.md. Report-only —
-# it never gates a release.
+# Two independent uses of the same load-benchmark script:
+#
+# - `benchmark` (workflow_dispatch only): analyses every project in the
+#   published image and refreshes the `## Benchmarks` block in README.md.
+#   Report-only — it never gates a release. No longer runs automatically on
+#   `release: published`; re-run it by hand from Actions after a release
+#   when you want README numbers refreshed.
+# - `pr-changes` / `pr-benchmark` (pull_request): a per-language matrix, run
+#   from the PR's own source (not the published image), that only benchmarks
+#   the language(s) whose adapter changed in the PR. Report-only, posted to
+#   the job summary — never touches README or pushes anywhere.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       image_tag:
         description: "Image tag to benchmark (e.g. latest or 0.5.0)"
         default: "latest"
+  pull_request:
+    branches: ["*"]
 
 permissions:
-  contents: write
-  packages: read
-
-# Never run two benchmark commits against main at once, and never cancel a
-# release benchmark midway.
-concurrency:
-  group: benchmark
-  cancel-in-progress: false
+  contents: read
 
 jobs:
   benchmark:
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # Never run two full benchmark runs against main at once, and never
+    # cancel one midway.
+    concurrency:
+      group: benchmark
+      cancel-in-progress: false
     defaults:
       run:
         shell: bash
@@ -40,12 +50,7 @@ jobs:
       - name: Resolve image tag
         id: img
         run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            tag="${{ github.event.release.tag_name }}"
-            tag="${tag#v}"
-          else
-            tag="${{ github.event.inputs.image_tag }}"
-          fi
+          tag="${{ github.event.inputs.image_tag }}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/neko1313/graphlens:${tag}" >> "$GITHUB_OUTPUT"
           echo "Benchmarking image ghcr.io/neko1313/graphlens:${tag}"
@@ -143,3 +148,134 @@ jobs:
           done
           echo "::error::could not push README update to main"
           exit 1
+
+  pr-changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      # dorny/paths-filter's `changes` output is already a JSON array of the
+      # filter names below that matched, e.g. `["python","php"]` — exactly
+      # the matrix `pr-benchmark` needs, no extra glue required.
+      matrix: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - "packages/graphlens-python/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            typescript:
+              - "packages/graphlens-typescript/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            go:
+              - "packages/graphlens-go/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            rust:
+              - "packages/graphlens-rust/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            php:
+              - "packages/graphlens-php/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+
+  pr-benchmark:
+    needs: pr-changes
+    if: github.event_name == 'pull_request' && needs.pr-changes.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: bench-pr-${{ github.event.pull_request.number }}-${{ matrix.lang }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: ${{ fromJSON(needs.pr-changes.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - uses: arduino/setup-task@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        if: matrix.lang == 'go'
+        with:
+          go-version: "1.22"
+
+      - name: Install gopls (semantic resolver)
+        if: matrix.lang == 'go'
+        run: |
+          go install golang.org/x/tools/gopls@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install rust-analyzer (semantic resolver)
+        if: matrix.lang == 'rust'
+        run: |
+          rustup component add rust-analyzer
+          echo "$(dirname "$(rustup which rust-analyzer)")" >> "$GITHUB_PATH"
+
+      - uses: actions/setup-node@v4
+        if: matrix.lang == 'php'
+        with:
+          node-version: "20"
+
+      - name: Install intelephense (semantic resolver)
+        if: matrix.lang == 'php'
+        run: npm install -g intelephense
+
+      - name: Install dependencies
+        run: task install
+
+      - name: Run benchmarks for ${{ matrix.lang }}
+        run: |
+          mkdir -p benchmarks/results
+          mapfile -t projects < <(python3 benchmarks/run_benchmarks.py list --lang "${{ matrix.lang }}")
+          if [[ ${#projects[@]} -eq 0 ]]; then
+            echo "No benchmark projects tagged for ${{ matrix.lang }} — nothing to run"
+            exit 0
+          fi
+          echo "Projects: ${projects[*]}"
+          for name in "${projects[@]}"; do
+            safe="${name//\//__}"
+            echo "::group::benchmark ${name}"
+            timeout --signal=TERM 1200 uv run python3 benchmarks/run_benchmarks.py analyze \
+              --project "$name" \
+              --manifest benchmarks/projects.json \
+              --workdir /tmp/bench \
+              --out "benchmarks/results/${safe}.json" \
+              || echo "::warning::benchmark for ${name} failed or timed out"
+            echo "::endgroup::"
+          done
+
+      - name: Report results
+        if: always()
+        run: |
+          {
+            echo "## graphlens PR benchmark — ${{ matrix.lang }}"
+            echo
+            python3 benchmarks/run_benchmarks.py render \
+              --results benchmarks/results \
+              --image-tag "pr-${{ github.event.pull_request.number }}" \
+              --print
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-benchmark-results-${{ matrix.lang }}
+          path: benchmarks/results/

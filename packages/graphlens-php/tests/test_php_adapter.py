@@ -105,7 +105,7 @@ class _StructureResolver(SymbolResolver):
     """Structure-only resolver: emits no edges, reports UNAVAILABLE.
 
     Lets adapter tests build a deterministic structural graph without
-    spawning a PHPantom subprocess (which may be on PATH in CI).
+    spawning an Intelephense subprocess (which may be on PATH in CI).
     """
 
     def prepare(self, project_root: Path, files: list[Path]) -> None:
@@ -343,11 +343,11 @@ def test_duplicate_file_in_files_list(make_project):
     )
 
 
-def test_default_resolver_is_phpantom():
-    from graphlens_php._resolver import PhpantomResolver
+def test_default_resolver_is_intelephense():
+    from graphlens_php._resolver import IntelephenseResolver
 
     adapter = PhpAdapter()
-    assert isinstance(adapter._resolver, PhpantomResolver)
+    assert isinstance(adapter._resolver, IntelephenseResolver)
 
 
 def test_default_dep_parsers():
