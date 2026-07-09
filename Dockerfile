@@ -68,8 +68,11 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
 # Composer (with the minimal php runtime it needs) is included only so a
 # project's `vendor/` tree can be populated, letting Intelephense resolve
 # third-party symbols precisely.
+# The CLI only understands transport flags (--stdio/--node-ipc/--socket=/
+# --pipe=), no --version/--help — passing either crashes it — so the smoke
+# test checks the npm install instead of invoking the binary.
 RUN npm install -g intelephense \
-    && intelephense --version
+    && npm ls -g intelephense --depth=0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         php-cli \
