@@ -32,7 +32,7 @@ Generates a production-ready `graphlens-<lang>` adapter package following the ex
 - **`name_span` on structural nodes** — visitor records `metadata["name_span"]` (Span of the name token) on every CLASS, FUNCTION, METHOD, VARIABLE, ATTRIBUTE, TYPE_ALIAS, PARAMETER node so the `SpanIndex` can map definition positions back to node IDs
 - **OccurrenceRef collection** — visitor collects `OccurrenceRef` objects (role, 1-based position of the name token, enclosing node ID) for every use-site but does **not** emit CALLS, REFERENCES, HAS_TYPE, or INHERITS_FROM edges directly — those are produced by the post-visit resolution pass
 - **SymbolResolver** — each adapter ships a `SymbolResolver` subclass (`_resolver.py`) that wraps a type-aware engine; it must never raise — all errors return `None`/`[]`
-- **Post-visit resolution pass** — after visiting all files: build `SpanIndex`, call `resolver.prepare()`, then for each `OccurrenceRef` call `resolver.definition_at()` and emit the correct edge or fall back to `EXTERNAL_SYMBOL`
+- **Post-visit resolution pass, ONCE for the whole `analyze()` call, never per sub-root** — after every sub-root's structure is built: build `SpanIndex` from the now-complete graph, call `resolver.prepare(project_root, all_files)` **once**, rooted at the top-level `project_root` with the union of every sub-root's files, then for each `OccurrenceRef` call `resolver.definition_at()` and emit the correct edge or fall back to `EXTERNAL_SYMBOL`. Calling `resolver.prepare()` inside the per-sub-root loop is a bug: it scopes the resolver's workspace to just that one sub-root (so cross-sub-root references can never resolve) and pays a full subprocess-spawn + re-index cost per sub-root instead of once.
 
 ---
 
@@ -190,7 +190,10 @@ See [Patterns → _resolver.py](references/PATTERNS.md#_resolverpy).
 
 See [assets/adapter_template.md](assets/adapter_template.md) and [Patterns → _adapter.py](references/PATTERNS.md#_adapterpy).
 
-`_analyze_root()` pipeline order (must not deviate):
+`analyze()` splits into two phases — **never** call `resolver.prepare()` from
+inside the per-sub-root loop (see the monorepo rule below):
+
+**Phase 1 — `_build_root_structure()`, once per sub-root, no resolver call:**
 1. `detect_project_name()`
 2. `find_source_roots()`
 3. Pre-pass: collect `internal_tops` from file paths (no source parsing)
@@ -200,7 +203,33 @@ See [assets/adapter_template.md](assets/adapter_template.md) and [Patterns → _
 7. Per-file loop: `_ensure_module_chain()` → FILE node → parse → `{Lang}ASTVisitor`
 8. Collect all `OccurrenceRef` objects from each visitor into a flat list
 9. Link PROJECT → top-level modules via CONTAINS
-10. **Resolution pass**: build `SpanIndex(graph)`, call `resolver.prepare(lang_root, files)`, then for each `OccurrenceRef` call `resolver.definition_at(file, line, col)` → use `SpanIndex.at()` to find the target node → emit the correct edge (CALLS/REFERENCES/HAS_TYPE/INHERITS_FROM) or fall back to `_get_or_create_external_symbol()`
+10. Return `(project_id, project_name, occurrences, ...)` — do **not** resolve anything here
+
+**Phase 2 — in `analyze()`, once for the whole call, after every sub-root's
+Phase 1 has run:**
+11. Build `SpanIndex(graph)` from the now-complete graph (spans every sub-root)
+12. Call `resolver.prepare(project_root, all_files)` **once**, rooted at the
+    top-level `project_root`, with the union of every sub-root's files
+13. For each `OccurrenceRef` (across every sub-root) call
+    `resolver.definition_at(file, line, col)` → use `SpanIndex.at()` to find
+    the target node → emit the correct edge (CALLS/REFERENCES/HAS_TYPE/
+    INHERITS_FROM) or fall back to `_get_or_create_external_symbol()`
+
+### Monorepo rule: one resolver session for the whole `analyze()` call
+
+A monorepo can yield dozens of sub-roots (e.g. a split-package repo with a
+manifest per component — `laravel/framework`'s `illuminate/*` sub-packages
+is the canonical example). Calling `resolver.prepare()` once per sub-root,
+scoped to that sub-root's own directory, is wrong twice over: (1) the
+resolver's workspace never contains sibling sub-roots' files, so
+cross-sub-root references can never resolve no matter how good the resolver
+is, and (2) each sub-root pays its own subprocess spawn + full re-index from
+zero, which dominates wall-clock on a repo with many sub-roots. This applies
+unconditionally — don't try to detect whether sub-roots are "really the same
+codebase" first; merging unrelated sub-roots into one resolver session costs
+a bit of extra indexing but is never incorrect. See
+`packages/graphlens-rust/src/graphlens_rust/_adapter.py`'s `analyze()` for
+the reference implementation.
 
 ### Step 10 — Generate `__init__.py`
 

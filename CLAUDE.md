@@ -10,7 +10,7 @@ graphlens/                      ← uv workspace root (also the core library)
     graphlens-typescript/       ← TypeScript language adapter
     graphlens-go/               ← Go language adapter (structure + go.mod)
     graphlens-rust/             ← Rust language adapter (structure + Cargo.toml)
-    graphlens-php/              ← PHP language adapter (tree-sitter + PHPantom)
+    graphlens-php/              ← PHP language adapter (tree-sitter + Intelephense)
     graphlens-cli/              ← CLI: analyze / query / visualize / neo4j
   tests/                         ← core library tests
   examples/                      ← standalone usage examples (no CLI dep)
@@ -27,7 +27,7 @@ Each language adapter follows this internal layout:
 packages/graphlens-<lang>/
   src/graphlens_<lang>/
     __init__.py              ← exports <Lang>Adapter (+ <Lang>Resolver if public)
-    _adapter.py              ← LanguageAdapter subclass + _analyze_root()
+    _adapter.py              ← LanguageAdapter subclass + _build_root_structure()
     _visitor.py              ← ASTVisitor + ImportClassifier + OccurrenceRef
     _resolver.py             ← SymbolResolver subclass (e.g. TyResolver)
     _deps.py                 ← DependencyFileParser implementations + default list
@@ -167,6 +167,39 @@ also modeled as modules of the parent.
 This ensures module qualified names and import mappings are correct when
 `root` is a monorepo containing multiple independent projects.
 
+**One resolver session for the whole discovered root set — never one per
+sub-root.** A monorepo can yield dozens of sub-roots (e.g. a split-package
+repo with a `composer.json`/`go.mod`/`pyproject.toml` per component). Calling
+`resolver.prepare()` once per sub-root, scoped to that sub-root's own
+directory, is wrong twice over: (1) the resolver's workspace never contains
+sibling sub-roots' files, so cross-sub-root references can never resolve no
+matter how good the resolver is, and (2) each sub-root pays its own
+subprocess spawn + full re-index from zero, which dominates wall-clock on a
+repo with many sub-roots. Instead, split the per-root work into two phases
+run from `analyze()`, not from a single per-root function:
+
+1. **Phase 1 — structure, once per sub-root.** Parse files, build
+   PROJECT/MODULE/FILE/CLASS/... nodes, and collect `OccurrenceRef`s for that
+   sub-root — same as before, but do **not** call `resolver.prepare()` or
+   resolve anything here. Return `(project_id, project_name, occurrences,
+   ...)` per sub-root.
+2. **Phase 2 — resolution, once for the entire `analyze()` call.** After
+   every sub-root has been structurally built, call `resolver.prepare()`
+   **once**, rooted at the top-level `project_root` (not any sub-root), with
+   the union of every sub-root's files. Build the `SpanIndex` from the
+   now-complete graph (so it spans every sub-root), then resolve every
+   sub-root's occurrences against it.
+
+This applies unconditionally — don't try to detect whether sub-roots are
+"really the same codebase" first. Merging unrelated sub-roots into one
+resolver session costs a bit of extra indexing but is never incorrect
+(namespaces still keep symbols from resolving to the wrong root); the
+per-sub-root respawn is the actual bug. See
+`packages/graphlens-rust/src/graphlens_rust/_adapter.py`'s `analyze()` for
+the reference implementation (`_build_crate_structure` for phase 1, then a
+single `self._resolver.prepare(project_root, all_files)` for phase 2) —
+every adapter (Go, Python, TypeScript, PHP) now follows this shape.
+
 ### 8. Spans are 1-based
 Tree-sitter positions are 0-based `(row, col)`. Convert to 1-based when
 constructing `Span(start_line, start_col, end_line, end_col)`:
@@ -190,9 +223,11 @@ Every `IMPORT` node must have `metadata["origin"]` set to one of:
 | `"third_party"` | Package listed in a dependency manifest |
 | `"unknown"` | None of the above (transitive dep, missing, etc.) |
 
-Full analysis pipeline in `_analyze_root()`:
+Full analysis pipeline, split as described in §7 — structure per sub-root in
+`_build_<lang>_structure()`/`_build_root_structure()`, resolution once for
+the whole `analyze()` call:
 
-**Before visiting any file (pre-pass):**
+**Before visiting any file (pre-pass, per sub-root):**
 
 1. **Internal** — derive top-level module names from file paths via the module
    resolver (no source parsing needed).
@@ -207,13 +242,17 @@ For `"internal"` imports: resolve `RESOLVES_TO` to the existing `MODULE` node
 when it is present in the graph; fall back to `EXTERNAL_SYMBOL` so the edge
 is never missing when the target file hasn't been processed yet.
 
-**After visiting all files (resolution pass):**
+**After every sub-root's structure is built (resolution pass, once, in
+`analyze()`):**
 
 4. Build a `SpanIndex` from the completed graph — this is the
    location→node bridge that maps any `(file_path, line, col)` to the node
-   whose `name_span` contains that position.
-5. Call `SymbolResolver.prepare(project_root, files)` to initialise the
-   type-aware engine (e.g. ty for Python, tsc for TypeScript).
+   whose `name_span` contains that position. Building it only after every
+   sub-root's structure exists is what lets cross-sub-root definitions
+   resolve to a real node instead of an `EXTERNAL_SYMBOL` fallback.
+5. Call `SymbolResolver.prepare(project_root, all_files)` **once**, rooted at
+   the top-level `project_root` with the union of every sub-root's files —
+   never once per sub-root (see §7).
 6. For each `OccurrenceRef` collected by the visitor, call
    `SymbolResolver.definition_at(file, line, col)` to resolve the use-site to
    its definition. The current resolution pass uses `definition_at` for every
@@ -292,14 +331,18 @@ Key checklist:
 6. Root discovery includes both root and nested same-language projects, and
    parent analysis excludes files from nested roots
 7. `_deps.py`: `DependencyFileParser` implementations + `<LANG>_DEFAULT_DEP_PARSERS`
-8. `ImportClassifier` pre-pass in `_analyze_root()`, `origin` on every IMPORT node
+8. `ImportClassifier` pre-pass in `_build_root_structure()`, `origin` on every IMPORT node
 9. Adapter accepts `dep_parsers` constructor param for custom override
 10. Visitor: dispatch by `node.type`, three stacks, `make_node_id` for IDs; records
     `metadata["name_span"]` on structural nodes; collects `OccurrenceRef`s (does NOT
     emit CALLS/INHERITS_FROM/REFERENCES/HAS_TYPE directly)
 11. `_resolver.py`: `SymbolResolver` subclass; never raises — all errors return None/[]
-12. Post-visit resolution pass: build `SpanIndex`, call `resolver.prepare()`, then
-    for each occurrence call `definition_at()` / `infer_type_at()` and emit edges
+12. `analyze()` splits into phase 1 (`_build_root_structure()` per sub-root, no
+    resolver call) and phase 2 (once for the whole call): build `SpanIndex` from
+    the now-complete graph, call `resolver.prepare(project_root, all_files)`
+    **once** across every sub-root, then for each occurrence call
+    `definition_at()` / `infer_type_at()` and emit edges — see §7's monorepo
+    rule; never call `resolver.prepare()` inside the per-sub-root loop
 13. Tests mirror `packages/graphlens-python/tests/` structure including `test_<lang>_deps.py`
 
 ## Adding a dependency parser for an existing adapter

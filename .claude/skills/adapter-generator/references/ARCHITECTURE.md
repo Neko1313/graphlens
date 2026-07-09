@@ -9,7 +9,7 @@ packages/graphlens-{lang}/
 ├── src/
 │   └── graphlens_{lang}/
 │       ├── __init__.py              ← exports {Lang}Adapter + {Lang}Resolver
-│       ├── _adapter.py              ← LanguageAdapter subclass + _analyze_root()
+│       ├── _adapter.py              ← LanguageAdapter subclass + _build_root_structure()
 │       ├── _visitor.py              ← tree-sitter parser setup, ImportClassifier,
 │       │                               OccurrenceRef, VisitorContext, {Lang}ASTVisitor
 │       ├── _resolver.py             ← SymbolResolver subclass ({Lang}Resolver)

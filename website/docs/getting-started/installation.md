@@ -42,7 +42,7 @@ pip install "graphlens[all]"           # every adapter + the linker
 
 The **PHP** adapter is Docker-only — it is not published to PyPI, so there is no
 `graphlens[php]` extra. Use the [Docker image](#docker-all-adapters--toolchains-pre-installed),
-which bundles `PhpAdapter` together with the `phpantom_lsp` binary.
+which bundles `PhpAdapter` together with the `intelephense` binary.
 
 With uv:
 
@@ -82,7 +82,7 @@ graphlens --help
 
 The published image bundles the CLI with **every** adapter **and** the
 toolchains their resolvers drive (`ty`, Node, Go + `gopls`, Rust +
-`rust-analyzer`, PHP + `phpantom_lsp`). This is the supported way to get the
+`rust-analyzer`, PHP + `intelephense`). This is the supported way to get the
 Go, Rust, and PHP adapters, which are not published to PyPI, and the easiest
 way to run graphlens in CI with no local setup. Mount your project at
 `/workspace`:
@@ -105,7 +105,7 @@ The image is published to the GitHub Container Registry on each release
 | `graphlens[typescript]` | `graphlens_typescript` | `TypescriptAdapter`, `TsResolver` |
 | `graphlens[go]` | `graphlens_go` | `GoAdapter`, `GoplsResolver` |
 | `graphlens[rust]` | `graphlens_rust` | `RustAdapter`, `RustAnalyzerResolver` |
-| Docker image only | `graphlens_php` | `PhpAdapter`, `PhpantomResolver` |
+| Docker image only | `graphlens_php` | `PhpAdapter`, `IntelephenseResolver` |
 | `graphlens[link]` | `graphlens_link` | `link_graph`, `LinkResult` |
 | `graphlens-cli` | `graphlens_cli` | the `graphlens` CLI |
 

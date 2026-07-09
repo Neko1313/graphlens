@@ -150,6 +150,34 @@ def test_monorepo_multiple_projects(tmp_path: Path):
     assert len(projects) >= 2
 
 
+def test_monorepo_shares_one_resolver_pass(tmp_path: Path):
+    # Multiple go.mod roots should share ONE resolver.prepare() call rooted
+    # at project_root (covering every module's files) instead of one spawn
+    # per module — otherwise cross-module references can never resolve and
+    # each module pays its own cold-start indexing cost.
+    (tmp_path / "go.mod").write_text("module root\n")
+    (tmp_path / "a.go").write_text("package main\nfunc A() {}\n")
+    sub = tmp_path / "svc"
+    sub.mkdir()
+    (sub / "go.mod").write_text("module root/svc\n")
+    (sub / "b.go").write_text("package svc\nfunc B() {}\n")
+
+    class _PrepareSpyResolver(GoResolver):
+        def __init__(self):
+            self.prepare_calls = []
+
+        def prepare(self, project_root, files):
+            self.prepare_calls.append((project_root, frozenset(files)))
+
+    resolver = _PrepareSpyResolver()
+    GoAdapter(resolver=resolver).analyze(tmp_path)
+
+    assert len(resolver.prepare_calls) == 1
+    root, files = resolver.prepare_calls[0]
+    assert root == tmp_path
+    assert {f.name for f in files} == {"a.go", "b.go"}
+
+
 def test_unreadable_file_skipped(tmp_path: Path):
     (tmp_path / "go.mod").write_text("module root\n")
     good = tmp_path / "a.go"

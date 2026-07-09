@@ -1,14 +1,20 @@
 """
 PHP symbol resolver.
 
-``PhpantomResolver`` is the only resolver: it drives a ``phpantom_lsp --stdio``
-subprocess (PHPantom, a self-contained Rust LSP server — no PHP runtime needed)
-over stdio via :class:`_PhpLspClient`, resolving the project's occurrences at
-thousands of ``textDocument/definition`` per second through the pipelined batch
-path. When the ``phpantom_lsp`` binary is absent it degrades automatically:
-:meth:`PhpantomResolver.status` reports :data:`ResolverStatus.UNAVAILABLE` and
-every query returns ``None``/``[]``, so the structural graph is still produced
-with only the type-aware edges dropped.
+``IntelephenseResolver`` is the only resolver: it drives an ``intelephense
+--stdio`` subprocess (the free tier of Ben Mewburn's Intelephense language
+server — a Node.js implementation, no PHP runtime needed) over stdio via
+:class:`_PhpLspClient`. ``textDocument/definition`` and
+``textDocument/references`` — the two capabilities this resolver uses — are
+both fully available without a licence key; Premium only gates features this
+resolver never calls (rename, code lens, type hierarchy, ...). Intelephense
+indexes the whole workspace from disk right after ``initialize``, signalling
+completion with a non-standard ``indexingEnded`` notification, so the client
+waits for that once up front instead of guessing from a quiet stdout period.
+When the ``intelephense`` binary is absent it degrades automatically:
+:meth:`IntelephenseResolver.status` reports :data:`ResolverStatus.UNAVAILABLE`
+and every query returns ``None``/``[]``, so the structural graph is still
+produced with only the type-aware edges dropped.
 
 The resolver never raises: every error returns ``None``/``[]`` so the
 structural graph is always produced, only the type-aware edges degrade.
@@ -23,6 +29,7 @@ import os
 import select
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -46,13 +53,18 @@ class _PhpLspClient:  # pragma: no cover - integration transport
     Minimal synchronous LSP JSON-RPC client over stdio.
 
     Holds only the JSON-RPC framing, lifecycle, and pipelined batch — no
-    PHPantom-specific logic — so the resolver stays separate from the wire
-    protocol. The spawn ``argv`` (``phpantom_lsp --stdio``) and ``name`` (used
-    only for log messages) are passed in by :class:`PhpantomResolver`.
+    Intelephense-specific logic beyond the ``indexingEnded`` wait, which is
+    the one non-standard signal this server needs. The spawn ``argv``
+    (``intelephense --stdio``) and ``name`` (used only for log messages) are
+    passed in by :class:`IntelephenseResolver`.
     """
 
     def __init__(
-        self, project_root: Path, argv: list[str], name: str = "php-lsp"
+        self,
+        project_root: Path,
+        argv: list[str],
+        name: str = "php-lsp",
+        storage_path: Path | None = None,
     ) -> None:
         self._name = name
         self._proc: subprocess.Popen = subprocess.Popen(  # type: ignore[type-arg]
@@ -68,7 +80,7 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         # while the main thread may still write MethodNotFound replies, so
         # two threads can race on stdin and interleave a frame's bytes.
         self._write_lock = threading.Lock()
-        self._initialize(project_root)
+        self._initialize(project_root, storage_path)
 
     # ------------------------------------------------------------------
     # Transport
@@ -116,54 +128,74 @@ class _PhpLspClient:  # pragma: no cover - integration transport
             return None
         return self._read_frame()
 
-    def _drain_until_quiet(
-        self,
-        quiet: float = 1.0,
-        budget: float = 120.0,
-        writer: threading.Thread | None = None,
-    ) -> None:
+    def _reply_method_not_found(self, mid: int) -> None:
+        self._write(
+            {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32601, "message": "Method not found"},
+            }
+        )
+
+    def _wait_for_indexing(self, budget: float = 120.0) -> None:
         """
-        Drain server notifications until the stream goes quiet.
+        Drain notifications until ``indexingEnded`` arrives, or timeout.
 
-        Reads and discards server-initiated messages until none arrives for
-        ``quiet`` seconds (or ``budget`` elapses). PHPantom builds its
-        cross-file index asynchronously after ``didOpen``
-        and emits a burst of ``window/logMessage`` / ``publishDiagnostics``
-        notifications while it works, with no explicit "index ready" signal.
-        Definition queries issued before that burst settles resolve to null,
-        so the batch path drains the burst first.
-
-        ``writer`` is an optional thread still feeding stdin (the ``didOpen``
-        sender). While it is alive a lull does **not** end the drain: we must
-        keep reading so phpantom's stdout never fills and blocks it — which
-        would deadlock the writer against our own pending write. Quiet only
-        counts once the writer has finished.
+        Intelephense indexes the entire workspace from disk right after
+        ``initialize``/``initialized`` — unlike PHPantom it does not need a
+        per-file ``didOpen`` to discover symbols — and emits custom
+        ``indexingStarted`` / ``indexingEnded`` notifications bracketing that
+        work. Waiting for the explicit ``indexingEnded`` signal here, once,
+        replaces PHPantom's "drain stdout until it goes quiet" heuristic with
+        a real completion event, so every subsequent definition query already
+        sees a fully-populated index.
         """
         if self._proc.stdout is None or self._proc.poll() is not None:
             return
         deadline = time.monotonic() + budget
         while time.monotonic() < deadline:
-            ready, _, _ = select.select([self._proc.stdout], [], [], quiet)
+            ready, _, _ = select.select(
+                [self._proc.stdout], [], [], deadline - time.monotonic()
+            )
             if not ready:
-                if writer is not None and writer.is_alive():
-                    continue  # opener still sending — keep draining its output
-                return  # silence → index settled
+                return  # no signal within budget — proceed best-effort
             msg = self._read_frame()
             if msg is None:
                 return  # EOF
-            # Answer any server→client request so it is not left pending.
+            method = msg.get("method")
+            mid = msg.get("id")
+            if method and mid is not None:
+                self._reply_method_not_found(mid)
+            elif method == "indexingEnded":
+                return
+
+    def _drain_while_writing(
+        self, writer: threading.Thread, budget: float = 120.0
+    ) -> None:
+        """
+        Discard server notifications while *writer* is still sending.
+
+        A ``didOpen`` burst carries full file text (megabytes for a big
+        project), so it is written from a writer thread while we drain
+        Intelephense's stdout concurrently; otherwise both pipes fill and
+        deadlock. Indexing readiness is already handled by
+        :meth:`_wait_for_indexing` at startup, so this only needs to keep the
+        pipe from filling — it does not gate on any particular message.
+        """
+        if self._proc.stdout is None or self._proc.poll() is not None:
+            return
+        deadline = time.monotonic() + budget
+        while writer.is_alive() and time.monotonic() < deadline:
+            remaining = min(deadline - time.monotonic(), 0.5)
+            ready, _, _ = select.select([self._proc.stdout], [], [], remaining)
+            if not ready:
+                continue
+            msg = self._read_frame()
+            if msg is None:
+                return  # EOF
             mid = msg.get("id")
             if "method" in msg and mid is not None:
-                self._write(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": mid,
-                        "error": {
-                            "code": -32601,
-                            "message": "Method not found",
-                        },
-                    }
-                )
+                self._reply_method_not_found(mid)
 
     def _recv_response(
         self, expected_id: int, timeout: float = 30.0
@@ -175,16 +207,7 @@ class _PhpLspClient:  # pragma: no cover - integration transport
             msg_id = msg.get("id")
             if "method" in msg:
                 if msg_id is not None:
-                    self._write(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {
-                                "code": -32601,
-                                "message": "Method not found",
-                            },
-                        }
-                    )
+                    self._reply_method_not_found(msg_id)
                 continue
             if msg_id == expected_id:
                 return msg
@@ -210,12 +233,21 @@ class _PhpLspClient:  # pragma: no cover - integration transport
     # LSP lifecycle
     # ------------------------------------------------------------------
 
-    def _initialize(self, project_root: Path) -> None:
+    def _initialize(
+        self, project_root: Path, storage_path: Path | None
+    ) -> None:
+        init_options: dict[str, object] = {}
+        if storage_path is not None:
+            init_options["storagePath"] = str(storage_path)
+        licence = os.environ.get("GRAPHLENS_INTELEPHENSE_LICENCE")
+        if licence:
+            init_options["licenceKey"] = licence
         resp = self._request(
             "initialize",
             {
                 "processId": os.getpid(),
                 "rootUri": project_root.as_uri(),
+                "initializationOptions": init_options,
                 "capabilities": {
                     "textDocument": {
                         "definition": {"dynamicRegistration": False},
@@ -230,6 +262,7 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         )
         if resp is not None:
             self._notify("initialized", {})
+            self._wait_for_indexing()
 
     # ------------------------------------------------------------------
     # File management
@@ -261,11 +294,8 @@ class _PhpLspClient:  # pragma: no cover - integration transport
         Build (don't send) a ``didOpen`` for every not-yet-opened file.
 
         Marks each opened. Kept separate from sending so the batch path can
-        write these from a
-        writer thread: a ``didOpen`` carries the file's full text, so a whole
-        project is megabytes — writing it inline would block on a full stdin
-        pipe while phpantom blocks on a full stdout pipe (its diagnostics),
-        deadlocking both. The caller writes these concurrently with a reader.
+        write these from a writer thread while a reader concurrently drains
+        the pipe (see :meth:`_drain_while_writing`).
         """
         msgs: list[dict] = []  # type: ignore[type-arg]
         for file in files:
@@ -331,30 +361,29 @@ class _PhpLspClient:  # pragma: no cover - integration transport
 
         Two phases, each writing from a writer thread while the main thread
         reads concurrently so a full stdin/stdout pipe can never deadlock:
-        (1) send ``didOpen`` for every file and drain the indexer until it
-        settles, then (2) send every ``textDocument/definition`` request up
-        front and collect responses by JSON-RPC id. Order is preserved;
-        unanswered positions stay ``None``. This turns N blocking round-trips
-        into one pipelined stream — the entire point of the batch path, and
-        what lets PHPantom resolve a whole project's occurrences per second.
+        (1) send ``didOpen`` for every file, draining the pipe as it goes —
+        Intelephense's index is already known-ready from
+        :meth:`_wait_for_indexing` at startup, so this phase only exists to
+        hand it current buffer content, not to wait for anything — then (2)
+        send every ``textDocument/definition`` request up front and collect
+        responses by JSON-RPC id. Order is preserved; unanswered positions
+        stay ``None``. This turns N blocking round-trips into one pipelined
+        stream — the entire point of the batch path.
         """
         if not queries:
             return []
         results: list[dict | None] = [None] * len(queries)
         if self._proc.poll() is not None:
             return results
-        # Phase 1 — open every file, then let the async indexer settle.
-        # didOpen carries full file text (megabytes for a big project), so it
-        # is written from a writer thread while we drain phpantom's stdout
-        # concurrently; otherwise both pipes fill and deadlock. The drain does
-        # not treat a lull as "settled" until the opener has finished.
+        # Phase 1 — open every file so Intelephense has current buffer
+        # content for local-scope resolution.
         open_msgs = self._build_open_messages([f for (f, _l, _c) in queries])
         if open_msgs:
             opener = threading.Thread(
                 target=self._write_all, args=(open_msgs,), daemon=True
             )
             opener.start()
-            self._drain_until_quiet(writer=opener)
+            self._drain_while_writing(opener)
             opener.join(timeout=5)
             if self._proc.poll() is not None:
                 return results
@@ -394,16 +423,7 @@ class _PhpLspClient:  # pragma: no cover - integration transport
             mid = msg.get("id")
             if "method" in msg:
                 if mid is not None:
-                    self._write(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": mid,
-                            "error": {
-                                "code": -32601,
-                                "message": "Method not found",
-                            },
-                        }
-                    )
+                    self._reply_method_not_found(mid)
                 continue
             idx = id2idx.get(mid) if mid is not None else None
             if idx is not None:
@@ -448,51 +468,73 @@ class _PhpLspClient:  # pragma: no cover - integration transport
             self.shutdown()
 
 
-class PhpantomResolver(SymbolResolver):
+class IntelephenseResolver(SymbolResolver):
     """
-    Resolve PHP symbols via a ``phpantom_lsp --stdio`` subprocess.
+    Resolve PHP symbols via an ``intelephense --stdio`` subprocess.
 
-    PHPantom is a self-contained Rust LSP server — no PHP runtime required —
-    and resolves ``textDocument/definition`` at thousands of queries per
-    second through the pipelined batch path. Point ``$GRAPHLENS_PHPANTOM`` at
-    the binary, or have ``phpantom_lsp`` / ``phpantom`` on ``PATH``.
+    Intelephense is a Node.js LSP server; ``textDocument/definition`` and
+    ``textDocument/references`` — the only two capabilities this resolver
+    uses — are fully available on its free tier, no licence key required.
+    Point ``$GRAPHLENS_INTELEPHENSE`` at the binary, or have ``intelephense``
+    on ``PATH``. An optional ``$GRAPHLENS_INTELEPHENSE_LICENCE`` is forwarded
+    as ``initializationOptions.licenceKey`` for callers who do want the
+    Premium features this resolver itself never calls.
 
-    Spawns one server per :meth:`prepare` call via :class:`_PhpLspClient`. If
-    the server cannot be started, :meth:`prepare` logs a warning and all
-    queries return ``None``/``[]`` — the structural graph is still produced.
-    ``infer_type_at`` always returns ``None``.
+    Spawns one server per :meth:`prepare` call via :class:`_PhpLspClient`,
+    backed by a fresh per-run ``storagePath`` (cleaned up on shutdown) so
+    runs never see another run's cache. If the server cannot be started,
+    :meth:`prepare` logs a warning and all queries return ``None``/``[]`` —
+    the structural graph is still produced. ``infer_type_at`` always returns
+    ``None``.
     """
 
-    _engine = "phpantom"
+    _engine = "intelephense"
 
     def __init__(self) -> None:
         self._client: _PhpLspClient | None = None
         self._root: Path | None = None
+        self._storage_dir: Path | None = None
 
     def _spawn_argv(self) -> list[str]:
         binary = (
-            os.environ.get("GRAPHLENS_PHPANTOM")
-            or shutil.which("phpantom_lsp")
-            or shutil.which("phpantom")
-            or "phpantom_lsp"
+            os.environ.get("GRAPHLENS_INTELEPHENSE")
+            or shutil.which("intelephense")
+            or "intelephense"
         )
         return [binary, "--stdio"]
 
     def prepare(self, project_root: Path, files: list[Path]) -> None:  # noqa: ARG002
-        if self._client is not None:
-            with contextlib.suppress(Exception):
-                self._client.shutdown()
-            self._client = None
+        self._shutdown_client()
         self._root = project_root
+        self._storage_dir = Path(
+            tempfile.mkdtemp(prefix="graphlens-intelephense-")
+        )
         try:
             self._client = _PhpLspClient(
-                project_root, self._spawn_argv(), name=self._engine
+                project_root,
+                self._spawn_argv(),
+                name=self._engine,
+                storage_path=self._storage_dir,
             )
         except Exception:
             logger.warning(
                 "Failed to start %s for %s", self._engine, project_root
             )
             self._client = None
+            self._cleanup_storage()
+
+    def _shutdown_client(self) -> None:
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._client.shutdown()
+            self._client = None
+        self._cleanup_storage()
+
+    def _cleanup_storage(self) -> None:
+        if self._storage_dir is not None:
+            with contextlib.suppress(Exception):
+                shutil.rmtree(self._storage_dir)
+            self._storage_dir = None
 
     def definition_at(
         self, file: Path, line: int, col: int
@@ -591,6 +633,4 @@ class PhpantomResolver(SymbolResolver):
         return "unknown"
 
     def __del__(self) -> None:
-        if self._client is not None:
-            with contextlib.suppress(Exception):
-                self._client.shutdown()
+        self._shutdown_client()

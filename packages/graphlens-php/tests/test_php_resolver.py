@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from graphlens import ResolverStatus
 
 from graphlens_php._resolver import (
-    PhpantomResolver,
+    IntelephenseResolver,
     _PhpLspClient,
     _uri_to_path,
 )
@@ -34,33 +34,38 @@ def test_uri_to_path_non_file():
 # ---------------------------------------------------------------------------
 
 
-def test_phpantom_spawn_argv_env_override(monkeypatch):
-    monkeypatch.setenv("GRAPHLENS_PHPANTOM", "/opt/phpantom_lsp")
-    assert PhpantomResolver()._spawn_argv() == ["/opt/phpantom_lsp", "--stdio"]
+def test_intelephense_spawn_argv_env_override(monkeypatch):
+    monkeypatch.setenv("GRAPHLENS_INTELEPHENSE", "/opt/intelephense")
+    assert IntelephenseResolver()._spawn_argv() == [
+        "/opt/intelephense",
+        "--stdio",
+    ]
 
 
-def test_phpantom_spawn_argv_default(monkeypatch):
-    monkeypatch.delenv("GRAPHLENS_PHPANTOM", raising=False)
+def test_intelephense_spawn_argv_default(monkeypatch):
+    monkeypatch.delenv("GRAPHLENS_INTELEPHENSE", raising=False)
     monkeypatch.setattr(
         "graphlens_php._resolver.shutil.which", lambda _name: None
     )
-    assert PhpantomResolver()._spawn_argv() == ["phpantom_lsp", "--stdio"]
+    assert IntelephenseResolver()._spawn_argv() == ["intelephense", "--stdio"]
 
 
 # ---------------------------------------------------------------------------
-# PhpantomResolver (mocked client)
+# IntelephenseResolver (mocked client)
 # ---------------------------------------------------------------------------
 
 
 def _resolver(tmp_path: Path):
-    r = PhpantomResolver()
+    r = IntelephenseResolver()
     r._root = tmp_path
     r._client = MagicMock(spec=_PhpLspClient)
     return r
 
 
 def test_definition_at_none_when_no_client(tmp_path: Path):
-    assert PhpantomResolver().definition_at(tmp_path / "A.php", 1, 1) is None
+    assert (
+        IntelephenseResolver().definition_at(tmp_path / "A.php", 1, 1) is None
+    )
 
 
 def test_infer_type_at_always_none(tmp_path: Path):
@@ -70,7 +75,7 @@ def test_infer_type_at_always_none(tmp_path: Path):
 
 
 def test_references_to_empty_when_no_client(tmp_path: Path):
-    assert PhpantomResolver().references_to(tmp_path / "A.php", 1, 1) == []
+    assert IntelephenseResolver().references_to(tmp_path / "A.php", 1, 1) == []
 
 
 def test_definition_at_hit(tmp_path: Path):
@@ -104,7 +109,7 @@ def test_definition_at_swallows_exception(tmp_path: Path):
 
 
 def test_resolve_all_none_when_no_client(tmp_path: Path):
-    out = PhpantomResolver().resolve_all(
+    out = IntelephenseResolver().resolve_all(
         [(tmp_path / "A.php", 1, 1), (tmp_path / "B.php", 2, 2)]
     )
     assert out == [None, None]
@@ -185,52 +190,69 @@ def test_classify_none_is_stdlib(tmp_path: Path):
 
 
 def test_classify_unknown_when_outside_root(tmp_path: Path):
-    r = PhpantomResolver()
+    r = IntelephenseResolver()
     r._client = MagicMock(spec=_PhpLspClient)
     r._root = None
     assert r._classify(Path("/elsewhere/X.php")) == "unknown"
 
 
 def test_prepare_starts_client(tmp_path: Path):
-    r = PhpantomResolver()
+    r = IntelephenseResolver()
     with patch("graphlens_php._resolver._PhpLspClient") as Mock:
         Mock.return_value = MagicMock(spec=_PhpLspClient)
         r.prepare(tmp_path, [])
-    Mock.assert_called_once_with(tmp_path, r._spawn_argv(), name=r._engine)
+    Mock.assert_called_once_with(
+        tmp_path, r._spawn_argv(), name=r._engine, storage_path=r._storage_dir
+    )
     assert r._root == tmp_path
+    assert r._storage_dir is not None
+    assert r._storage_dir.is_dir()
 
 
-def test_prepare_shuts_down_previous_client(tmp_path: Path):
-    r = PhpantomResolver()
+def test_prepare_shuts_down_previous_client_and_storage(tmp_path: Path):
+    r = IntelephenseResolver()
     old = MagicMock(spec=_PhpLspClient)
     r._client = old
+    old_storage = tmp_path / "old-storage"
+    old_storage.mkdir()
+    r._storage_dir = old_storage
     with patch(
         "graphlens_php._resolver._PhpLspClient",
         return_value=MagicMock(spec=_PhpLspClient),
     ):
         r.prepare(tmp_path, [])
     old.shutdown.assert_called_once()
+    assert not old_storage.exists()
 
 
-def test_prepare_swallows_start_failure(tmp_path: Path):
-    r = PhpantomResolver()
+def test_prepare_swallows_start_failure_and_cleans_storage(tmp_path: Path):
+    r = IntelephenseResolver()
     with patch(
         "graphlens_php._resolver._PhpLspClient",
         side_effect=FileNotFoundError("server missing"),
     ):
         r.prepare(tmp_path, [])
     assert r._client is None
+    assert r._storage_dir is None
 
 
 def test_status_reflects_client_presence():
-    r = PhpantomResolver()
+    r = IntelephenseResolver()
     assert r.status() is ResolverStatus.UNAVAILABLE
     r._client = MagicMock(spec=_PhpLspClient)
     assert r.status() is ResolverStatus.OK
 
 
-def test_del_with_client_shuts_down(tmp_path: Path):
+def test_del_with_client_shuts_down_and_cleans_storage(tmp_path: Path):
     r = _resolver(tmp_path)
     client = r._client
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    r._storage_dir = storage
     r.__del__()
     client.shutdown.assert_called_once()
+    assert not storage.exists()
+
+
+def test_del_with_no_client_is_a_noop():
+    IntelephenseResolver().__del__()

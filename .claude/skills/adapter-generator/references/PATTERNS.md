@@ -720,7 +720,7 @@ from graphlens_{lang}._visitor import (
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from graphlens.contracts import DependencyFileParser
+    from graphlens.contracts import DependencyFileParser, SymbolResolver
 
 logger = logging.getLogger("graphlens_{lang}")
 _STDLIB = get_stdlib_names()
@@ -729,11 +729,16 @@ _STDLIB = get_stdlib_names()
 class {Lang}Adapter(LanguageAdapter):
     """Language adapter for {language} projects."""
 
-    def __init__(self, dep_parsers: list[DependencyFileParser] | None = None) -> None:
+    def __init__(
+        self,
+        dep_parsers: list[DependencyFileParser] | None = None,
+        resolver: SymbolResolver | None = None,
+    ) -> None:
         self._dep_parsers = (
             dep_parsers if dep_parsers is not None
             else {LANG}_DEFAULT_DEP_PARSERS
         )
+        self._resolver = resolver if resolver is not None else {Lang}Resolver()
 
     def language(self) -> str:
         return "{lang}"
@@ -747,22 +752,51 @@ class {Lang}Adapter(LanguageAdapter):
     def analyze(self, project_root: Path, files: list[Path] | None = None) -> GraphLens:
         graph = GraphLens()
         if files is not None:
-            _analyze_root(graph, project_root, project_root, files, self._dep_parsers)
+            root_files = [(project_root, files)]
         else:
-            for root in find_{lang}_roots(project_root):
-                root_files = self.collect_files(root)
-                _analyze_root(graph, project_root, root, root_files, self._dep_parsers)
+            roots = find_{lang}_roots(project_root)
+            root_files = [(root, self.collect_files(root)) for root in roots]
+
+        # Phase 1 — structure for every sub-root, no resolution yet, so the
+        # SpanIndex below spans the whole workspace and cross-sub-root
+        # definition targets already exist before any occurrence resolves.
+        built = [
+            _build_root_structure(graph, project_root, root, files_, self._dep_parsers)
+            for root, files_ in root_files
+        ]
+
+        # Phase 2 — a SINGLE resolver rooted at project_root resolves every
+        # sub-root. Rooting one server at project_root (instead of one per
+        # sub-root) is what lets cross-sub-root references resolve and
+        # avoids reloading the whole workspace once per sub-root. See
+        # CLAUDE.md §7 — never call resolver.prepare() inside the Phase 1
+        # loop above.
+        all_files = [f for _root, fs in root_files for f in fs]
+        self._resolver.prepare(project_root, all_files)
+        span_index = SpanIndex(graph)
+        for project_id, project_name, occurrences, _modules in built:
+            _resolve_occurrences(
+                graph, project_id, project_name, self._resolver, span_index, occurrences,
+            )
+
         return graph
 
 
-def _analyze_root(
+def _build_root_structure(
     graph: GraphLens,
     project_root: Path,
     lang_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-) -> None:
-    """Analyze one {language} project root and populate graph in-place."""
+) -> tuple[str, str, list[OccurrenceRef], dict[str, str]]:
+    """
+    Build structural nodes for one {language} project root.
+
+    Returns ``(project_id, project_name, occurrences, modules)``. Type-aware
+    resolution runs later at the project level (see ``analyze()`` Phase 2) so
+    a single workspace-rooted resolver and a full-graph ``SpanIndex`` serve
+    every sub-root.
+    """
     project_name = detect_project_name(lang_root)
     source_roots = find_source_roots(lang_root, files)
 
@@ -860,23 +894,31 @@ def _analyze_root(
             kind=RelationKind.CONTAINS,
         ))
 
-    # ── Resolution pass ───────────────────────────────────────────────────────
-    # After all files are visited: use SpanIndex + SymbolResolver to emit
-    # CALLS / REFERENCES / HAS_TYPE / INHERITS_FROM edges that point to
-    # real declaration nodes rather than EXTERNAL_SYMBOL placeholders.
-    span_index = SpanIndex(graph)
-    resolver = {Lang}Resolver()
-    resolver.prepare(lang_root, files)
+    return project_id, project_name, all_occurrences, modules
 
-    _ROLE_TO_EDGE = {
-        "call":       RelationKind.CALLS,
-        "read":       RelationKind.REFERENCES,
-        "write":      RelationKind.REFERENCES,
-        "annotation": RelationKind.HAS_TYPE,
-        "base":       RelationKind.INHERITS_FROM,
-    }
 
-    for occ in all_occurrences:
+# ── Resolution pass — called ONCE from analyze() Phase 2, never per sub-root ──
+# Uses SpanIndex + the already-prepare()d SymbolResolver to emit CALLS /
+# REFERENCES / HAS_TYPE / INHERITS_FROM edges that point to real declaration
+# nodes rather than EXTERNAL_SYMBOL placeholders.
+_ROLE_TO_EDGE = {
+    "call":       RelationKind.CALLS,
+    "read":       RelationKind.REFERENCES,
+    "write":      RelationKind.REFERENCES,
+    "annotation": RelationKind.HAS_TYPE,
+    "base":       RelationKind.INHERITS_FROM,
+}
+
+
+def _resolve_occurrences(
+    graph: GraphLens,
+    project_id: str,
+    project_name: str,
+    resolver: SymbolResolver,
+    span_index: SpanIndex,
+    occurrences: list[OccurrenceRef],
+) -> None:
+    for occ in occurrences:
         edge_kind = _ROLE_TO_EDGE.get(occ.role)
         if edge_kind is None:
             continue

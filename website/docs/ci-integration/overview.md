@@ -52,7 +52,7 @@ assert graph.metadata[RESOLVER_STATUS_KEY] == "ok"
 ## Two ways to get the toolchains
 
 Each resolver drives an external engine (`ty`, Node, `gopls`, `rust-analyzer`,
-`phpantom_lsp`). You have two options in CI:
+`intelephense`). You have two options in CI:
 
 - **The Docker image** — `ghcr.io/neko1313/graphlens` bundles the CLI with every
   adapter **and** every toolchain pre-installed. Nothing to set up, and the only

@@ -478,8 +478,11 @@ def _cmd_render(args: argparse.Namespace) -> int:
 def _cmd_list(args: argparse.Namespace) -> int:
     for project in load_manifest(Path(args.manifest)):
         name = project.get("name")
-        if name:
-            sys.stdout.write(f"{name}\n")
+        if not name:
+            continue
+        if args.lang and args.lang not in project.get("langs", []):
+            continue
+        sys.stdout.write(f"{name}\n")
     return 0
 
 
@@ -505,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_ls = sub.add_parser("list", help="print project names")
     p_ls.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    p_ls.add_argument("--lang", default="", help="only list projects covering this language")
     p_ls.set_defaults(func=_cmd_list)
 
     args = parser.parse_args(argv)

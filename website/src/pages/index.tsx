@@ -51,7 +51,7 @@ const features: FeatureItem[] = [
     title: 'Type-aware resolution',
     badge: '🎯',
     description:
-      'Tree-sitter extracts structure and exact spans; a per-language resolver (ty, the TypeScript Compiler API, gopls, rust-analyzer, PHPantom) resolves real CALLS, REFERENCES, and HAS_TYPE edges.',
+      'Tree-sitter extracts structure and exact spans; a per-language resolver (ty, the TypeScript Compiler API, gopls, rust-analyzer, Intelephense) resolves real CALLS, REFERENCES, and HAS_TYPE edges.',
   },
   {
     title: 'Built for pipelines',

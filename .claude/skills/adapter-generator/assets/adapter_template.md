@@ -95,35 +95,46 @@ class {Lang}Adapter(LanguageAdapter):
         graph = GraphLens()
 
         if files is not None:
-            _analyze_root(
-                graph,
-                project_root,
-                project_root,
-                files,
-                self._dep_parsers,
-            )
+            root_files = [(project_root, files)]
         else:
-            for lang_root in find_{lang}_roots(project_root):
-                root_files = self.collect_files(lang_root)
-                _analyze_root(
-                    graph,
-                    project_root,
-                    lang_root,
-                    root_files,
-                    self._dep_parsers,
-                )
+            lang_roots = find_{lang}_roots(project_root)
+            root_files = [
+                (lang_root, self.collect_files(lang_root))
+                for lang_root in lang_roots
+            ]
+
+        # Phase 1 — structure for every sub-root, no resolution yet.
+        built = [
+            _build_root_structure(
+                graph, project_root, lang_root, files_, self._dep_parsers
+            )
+            for lang_root, files_ in root_files
+        ]
+
+        # Phase 2 — ONCE resolver.prepare()/resolve wiring goes here (added
+        # in a later generation step, when _resolver.py exists — see
+        # SKILL.md Step 9). It MUST be called once, rooted at project_root
+        # with the union of every sub-root's files — never once per
+        # sub-root inside the Phase 1 loop above. See CLAUDE.md §7.
+        _ = built  # placeholder until the resolver step wires this up
 
         return graph
 
 
-def _analyze_root(
+def _build_root_structure(
     graph: GraphLens,
     project_root: Path,
     lang_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-) -> None:
-    """Analyze one {language} project root and populate graph in-place."""
+) -> tuple[str, str, dict[str, str]]:
+    """
+    Analyze one {language} project root and populate graph in-place.
+
+    Returns ``(project_id, project_name, modules)``. Once the resolver step
+    is added, extend this to also return the collected ``OccurrenceRef``
+    list, and move resolution to ``analyze()`` (see Phase 2 above).
+    """
     project_name = detect_project_name(lang_root)
     source_roots = find_source_roots(lang_root, files)
 
@@ -244,6 +255,8 @@ def _analyze_root(
                 kind=RelationKind.CONTAINS,
             )
         )
+
+    return project_id, project_name, modules
 
 
 def _find_source_root_for(file: Path, source_roots: list[Path]) -> Path | None:

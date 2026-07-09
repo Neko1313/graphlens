@@ -105,11 +105,38 @@ class _StructureResolver(SymbolResolver):
     """Structure-only resolver: emits no edges, reports UNAVAILABLE.
 
     Lets adapter tests build a deterministic structural graph without
-    spawning a PHPantom subprocess (which may be on PATH in CI).
+    spawning an Intelephense subprocess (which may be on PATH in CI).
     """
 
     def prepare(self, project_root: Path, files: list[Path]) -> None:
         pass
+
+    def definition_at(self, file, line, col):
+        return None
+
+    def infer_type_at(self, file, line, col):
+        return None
+
+    def references_to(self, file, line, col):
+        return []
+
+    def status(self) -> ResolverStatus:
+        return ResolverStatus.UNAVAILABLE
+
+
+class _PrepareSpyResolver(SymbolResolver):
+    """Structure-only resolver that records every ``prepare()`` call.
+
+    Lets tests assert how many times (and with what scope) the adapter
+    spins up a resolver session — the thing that changes when Composer
+    ``replace`` monorepo roots get clustered into one shared pass.
+    """
+
+    def __init__(self) -> None:
+        self.prepare_calls: list[tuple[Path, frozenset[Path]]] = []
+
+    def prepare(self, project_root: Path, files: list[Path]) -> None:
+        self.prepare_calls.append((project_root, frozenset(files)))
 
     def definition_at(self, file, line, col):
         return None
@@ -334,6 +361,40 @@ def test_monorepo_shared_project_name(make_project, tmp_path):
     assert project_id in graph.nodes
 
 
+def test_monorepo_shares_one_resolver_pass(tmp_path: Path):
+    # Multiple composer.json roots (e.g. laravel/framework's illuminate/*
+    # sub-packages) should share ONE resolver.prepare() call rooted at
+    # project_root, covering every root's files — not one spawn per root —
+    # otherwise cross-root references can never resolve and each root pays
+    # its own cold-start indexing cost.
+    (tmp_path / "composer.json").write_text(
+        '{"name": "acme/framework", '
+        '"autoload": {"psr-4": {"Acme\\\\": "src/"}}}'
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Core.php").write_text(
+        "<?php\nnamespace Acme;\nclass Core {}\n"
+    )
+    sub = tmp_path / "src" / "Support"
+    sub.mkdir()
+    (sub / "composer.json").write_text(
+        '{"name": "acme/support", '
+        '"autoload": {"psr-4": {"Acme\\\\Support\\\\": "src/"}}}'
+    )
+    (sub / "src").mkdir()
+    (sub / "src" / "Str.php").write_text(
+        "<?php\nnamespace Acme\\Support;\nclass Str {}\n"
+    )
+
+    resolver = _PrepareSpyResolver()
+    PhpAdapter(resolver=resolver).analyze(tmp_path)
+
+    assert len(resolver.prepare_calls) == 1
+    head, files = resolver.prepare_calls[0]
+    assert head == tmp_path
+    assert {f.name for f in files} == {"Core.php", "Str.php"}
+
+
 def test_duplicate_file_in_files_list(make_project):
     root = make_project({"src/User.php": USER_PHP}, composer=COMPOSER)
     f = root / "src" / "User.php"
@@ -343,11 +404,11 @@ def test_duplicate_file_in_files_list(make_project):
     )
 
 
-def test_default_resolver_is_phpantom():
-    from graphlens_php._resolver import PhpantomResolver
+def test_default_resolver_is_intelephense():
+    from graphlens_php._resolver import IntelephenseResolver
 
     adapter = PhpAdapter()
-    assert isinstance(adapter._resolver, PhpantomResolver)
+    assert isinstance(adapter._resolver, IntelephenseResolver)
 
 
 def test_default_dep_parsers():

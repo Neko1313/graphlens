@@ -100,44 +100,54 @@ class GoAdapter(LanguageAdapter):
     ) -> GraphLens:
         project_root = Path(project_root).resolve()
         graph = GraphLens()
-        statuses: list[ResolverStatus] = []
-        metrics = ResolverMetrics()
 
         if files is not None:
-            metrics.merge(
-                _analyze_root(
-                    graph,
-                    project_root,
-                    project_root,
-                    files,
-                    self._dep_parsers,
-                    self._resolver,
-                    self._boundary_extractors,
-                )
-            )
-            statuses.append(self._resolver.status())
+            root_files = [(project_root, files)]
         else:
             roots = find_go_roots(project_root)
-            for go_root in roots:
-                root_files = filter_nested_root_files(
-                    self.collect_files(go_root),
+            root_files = [
+                (
                     go_root,
-                    roots,
+                    filter_nested_root_files(
+                        self.collect_files(go_root), go_root, roots
+                    ),
                 )
-                metrics.merge(
-                    _analyze_root(
-                        graph,
-                        project_root,
-                        go_root,
-                        root_files,
-                        self._dep_parsers,
-                        self._resolver,
-                        self._boundary_extractors,
-                    )
-                )
-                statuses.append(self._resolver.status())
+                for go_root in roots
+            ]
 
-        status = ResolverStatus.combine(statuses)
+        # Phase 1 — structure for every module root, no resolution yet, so
+        # the SpanIndex below spans the whole workspace and cross-module
+        # definition targets already exist before any occurrence resolves.
+        built = [
+            _build_root_structure(
+                graph, project_root, go_root, module_files, self._dep_parsers
+            )
+            for go_root, module_files in root_files
+        ]
+
+        # Phase 2 — a SINGLE gopls rooted at project_root resolves every
+        # module. Rooting one server at project_root (instead of one per
+        # module) is what lets cross-module calls resolve and avoids
+        # reloading the whole workspace once per module.
+        all_files = [f for _r, fs in root_files for f in fs]
+        self._resolver.prepare(project_root, all_files)
+        span_index = SpanIndex.from_graph(graph)
+        metrics = ResolverMetrics()
+        for project_name, occurrences, _parsed in built:
+            metrics.merge(
+                _resolve_occurrences(
+                    graph, project_name, project_root, self._resolver,
+                    span_index, occurrences,
+                )
+            )
+
+        # Phase 3 — boundary extraction per module (independent of resolution).
+        for _project_name, _occurrences, parsed_files in built:
+            _extract_boundaries(
+                graph, parsed_files, self._boundary_extractors
+            )
+
+        status = self._resolver.status()
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
         graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
@@ -149,16 +159,26 @@ class GoAdapter(LanguageAdapter):
         return graph
 
 
-def _analyze_root(  # noqa: PLR0913
+def _build_root_structure(
     graph: GraphLens,
     project_root: Path,
     go_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-    resolver: SymbolResolver,
-    boundary_extractors: list[GoBoundaryExtractor],
-) -> ResolverMetrics:
-    """Analyse one Go module root and populate ``graph`` in place."""
+) -> tuple[
+    str,
+    list[tuple[str, OccurrenceRef]],
+    list[tuple[str, str, TSNode]],
+]:
+    """
+    Build structural nodes and internal imports for one Go module root.
+
+    Returns ``(project_name, occurrences, parsed_files)``. Type-aware
+    resolution and boundary extraction run later at the project level so a
+    single workspace-rooted resolver and a full-graph ``SpanIndex`` serve
+    every module (cross-module definitions only exist once every module's
+    structure is built).
+    """
     module_path = read_module_path(go_root) or go_root.name
     project_name = module_path.rstrip("/").split("/")[-1]
 
@@ -220,15 +240,7 @@ def _analyze_root(  # noqa: PLR0913
     # package exists), falling back to an EXTERNAL_SYMBOL when none matches.
     _resolve_internal_imports(graph, project_name, internal_imports, packages)
 
-    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
-    span_index = SpanIndex.from_graph(graph)
-    resolver.prepare(go_root, files)
-    metrics = _resolve_occurrences(
-        graph, project_name, project_root, resolver, span_index, occurrences
-    )
-
-    _extract_boundaries(graph, parsed_files, boundary_extractors)
-    return metrics
+    return project_name, occurrences, parsed_files
 
 
 def _resolve_internal_imports(

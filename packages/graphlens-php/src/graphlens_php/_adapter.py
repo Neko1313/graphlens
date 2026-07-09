@@ -37,7 +37,7 @@ from graphlens_php._project_detector import (
     find_php_roots,
     is_php_project,
 )
-from graphlens_php._resolver import PhpantomResolver
+from graphlens_php._resolver import IntelephenseResolver
 from graphlens_php._visitor import (
     ImportClassifier,
     OccurrenceRef,
@@ -82,9 +82,10 @@ class PhpAdapter(LanguageAdapter):
                 ``PHP_DEFAULT_DEP_PARSERS``.
             resolver: symbol resolver used for cross-file resolution of calls,
                 references, type uses, and base classes. Defaults to
-                ``PhpantomResolver`` (drives the ``phpantom_lsp`` Rust binary;
-                degrades to a structure-only graph when it is absent). Inject a
-                custom ``SymbolResolver`` subclass to override.
+                ``IntelephenseResolver`` (drives the ``intelephense`` Node.js
+                LSP server; degrades to a structure-only graph when it is
+                absent). Inject a custom ``SymbolResolver`` subclass to
+                override.
 
         """
         self._dep_parsers = (
@@ -93,7 +94,7 @@ class PhpAdapter(LanguageAdapter):
             else PHP_DEFAULT_DEP_PARSERS
         )
         self._resolver = (
-            resolver if resolver is not None else PhpantomResolver()
+            resolver if resolver is not None else IntelephenseResolver()
         )
 
     def language(self) -> str:
@@ -134,43 +135,62 @@ class PhpAdapter(LanguageAdapter):
     ) -> GraphLens:
         project_root = Path(project_root).resolve()
         graph = GraphLens()
-        statuses: list[ResolverStatus] = []
-        metrics = ResolverMetrics()
 
         if files is not None:
-            metrics.merge(
-                _analyze_root(
-                    graph,
-                    project_root,
-                    project_root,
-                    files,
-                    self._dep_parsers,
-                    self._resolver,
-                )
-            )
-            statuses.append(self._resolver.status())
+            root_files = [(project_root, files)]
         else:
             php_roots = find_php_roots(project_root)
-            for php_root in php_roots:
-                root_files = self.collect_files(php_root)
-                root_files = filter_nested_root_files(
-                    root_files,
+            root_files = [
+                (
                     php_root,
-                    php_roots,
+                    filter_nested_root_files(
+                        self.collect_files(php_root), php_root, php_roots
+                    ),
                 )
-                metrics.merge(
-                    _analyze_root(
-                        graph,
-                        project_root,
-                        php_root,
-                        root_files,
-                        self._dep_parsers,
-                        self._resolver,
-                    )
-                )
-                statuses.append(self._resolver.status())
+                for php_root in php_roots
+            ]
 
-        status = ResolverStatus.combine(statuses)
+        # Phase 1 — structure for every project root, no resolution yet, so
+        # the SpanIndex below spans the whole workspace and cross-root
+        # definition targets already exist before any occurrence resolves.
+        built = [
+            _build_root_structure(
+                graph, project_root, php_root, root_file_list,
+                self._dep_parsers,
+            )
+            for php_root, root_file_list in root_files
+        ]
+
+        # Phase 2 — a SINGLE intelephense rooted at project_root resolves
+        # every root. Rooting one server at project_root (instead of one
+        # per root) is what lets cross-root references resolve (e.g.
+        # laravel/framework's illuminate/* sub-packages) and avoids
+        # reloading the whole workspace once per root.
+        all_files = [f for _r, fs in root_files for f in fs]
+        self._resolver.prepare(project_root, all_files)
+        span_index = SpanIndex.from_graph(graph)
+        metrics = ResolverMetrics()
+        for _project_id, project_name, occurrences, _modules in built:
+            metrics.merge(
+                _resolve_occurrences(
+                    graph, project_name, self._resolver, span_index,
+                    occurrences,
+                )
+            )
+
+        # Phase 3 — PROJECT --CONTAINS--> top-level namespace modules.
+        for project_id, _project_name, _occurrences, modules in built:
+            for qname, module_id in modules.items():
+                if "\\" not in qname:
+                    graph.add_relation(
+                        Relation(
+                            source_id=project_id,
+                            target_id=module_id,
+                            kind=RelationKind.CONTAINS,
+                        )
+                    )
+
+        status = self._resolver.status()
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
         graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
@@ -182,15 +202,26 @@ class PhpAdapter(LanguageAdapter):
         return graph
 
 
-def _analyze_root(  # noqa: PLR0913
+def _build_root_structure(
     graph: GraphLens,
     project_root: Path,
     php_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-    resolver: SymbolResolver,
-) -> ResolverMetrics:
-    """Analyze one PHP project root and populate graph in-place."""
+) -> tuple[
+    str,
+    str,
+    list[tuple[str, OccurrenceRef]],
+    dict[str, str],
+]:
+    """
+    Build structural nodes for one PHP project root.
+
+    Returns ``(project_id, project_name, occurrences, modules)``. Type-aware
+    resolution runs later at the project level so a single workspace-rooted
+    resolver and a full-graph ``SpanIndex`` serve every root (cross-root
+    definitions only exist once every root's structure is built).
+    """
     project_name = detect_project_name(php_root)
 
     classifier = ImportClassifier(
@@ -278,24 +309,7 @@ def _analyze_root(  # noqa: PLR0913
             (visitor.abs_file_path, o) for o in visitor.occurrences
         )
 
-    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL.
-    span_index = SpanIndex.from_graph(graph)
-    resolver.prepare(php_root, files)
-    metrics = _resolve_occurrences(
-        graph, project_name, resolver, span_index, all_occurrences
-    )
-
-    # PROJECT --CONTAINS--> top-level namespace modules.
-    for qname, module_id in modules.items():
-        if "\\" not in qname:
-            graph.add_relation(
-                Relation(
-                    source_id=project_id,
-                    target_id=module_id,
-                    kind=RelationKind.CONTAINS,
-                )
-            )
-    return metrics
+    return project_id, project_name, all_occurrences, modules
 
 
 def _collect_third_party(

@@ -167,45 +167,55 @@ class TypescriptAdapter(LanguageAdapter):
         """
         project_root = Path(project_root).resolve()
         graph = GraphLens()
-        statuses: list[ResolverStatus] = []
-        metrics = ResolverMetrics()
 
         if files is not None:
-            metrics.merge(
-                _analyze_root(
-                    graph,
-                    project_root,
-                    project_root,
-                    files,
-                    self._dep_parsers,
-                    self._resolver,
-                    self._boundary_extractors,
-                )
-            )
-            statuses.append(self._resolver.status())
+            root_files = [(project_root, files)]
         else:
             lang_roots = find_typescript_roots(project_root)
-            for lang_root in lang_roots:
-                root_files = self.collect_files(lang_root)
-                root_files = filter_nested_root_files(
-                    root_files,
+            root_files = [
+                (
                     lang_root,
-                    lang_roots,
+                    filter_nested_root_files(
+                        self.collect_files(lang_root), lang_root, lang_roots
+                    ),
                 )
-                metrics.merge(
-                    _analyze_root(
-                        graph,
-                        project_root,
-                        lang_root,
-                        root_files,
-                        self._dep_parsers,
-                        self._resolver,
-                        self._boundary_extractors,
-                    )
-                )
-                statuses.append(self._resolver.status())
+                for lang_root in lang_roots
+            ]
 
-        status = ResolverStatus.combine(statuses)
+        # Phase 1 — structure for every project root, no resolution yet, so
+        # the SpanIndex below spans the whole workspace and cross-root
+        # definition targets already exist before any occurrence resolves.
+        built = [
+            _build_root_structure(
+                graph, project_root, lang_root, root_file_list,
+                self._dep_parsers,
+            )
+            for lang_root, root_file_list in root_files
+        ]
+
+        # Phase 2 — a SINGLE tsc-backed resolver rooted at project_root
+        # resolves every root. Rooting one server at project_root (instead
+        # of one per root) is what lets cross-root references resolve and
+        # avoids reloading the whole workspace once per root.
+        all_files = [f for _r, fs in root_files for f in fs]
+        self._resolver.prepare(project_root, all_files)
+        span_index = SpanIndex.from_graph(graph)
+        metrics = ResolverMetrics()
+        for project_name, occurrences, _parsed in built:
+            metrics.merge(
+                _resolve_occurrences(
+                    graph, project_name, self._resolver, span_index,
+                    occurrences,
+                )
+            )
+
+        # Phase 3 — boundary extraction per root (independent of resolution).
+        for _project_name, _occurrences, parsed_files in built:
+            _extract_boundaries(
+                graph, parsed_files, self._boundary_extractors
+            )
+
+        status = self._resolver.status()
         graph.metadata[RESOLVER_STATUS_KEY] = status.value
         graph.metadata[RESOLVER_METRICS_KEY] = metrics.as_dict()
         if strict and status is not ResolverStatus.OK:
@@ -337,16 +347,26 @@ def _resolve_occurrences(
     return metrics
 
 
-def _analyze_root(  # noqa: PLR0913, PLR0915
+def _build_root_structure(  # noqa: PLR0915
     graph: GraphLens,
     project_root: Path,
     lang_root: Path,
     files: list[Path],
     dep_parsers: list[DependencyFileParser],
-    resolver: SymbolResolver,
-    boundary_extractors: list[TsBoundaryExtractor],
-) -> ResolverMetrics:
-    """Analyze one TypeScript project root and populate graph in-place."""
+) -> tuple[
+    str,
+    list[tuple[str, OccurrenceRef]],
+    list[tuple[Path, str, TSNode, str]],
+]:
+    """
+    Build structural nodes and imports for one TypeScript project root.
+
+    Returns ``(project_name, occurrences, parsed_files)``. Type-aware
+    resolution and boundary extraction run later at the project level so a
+    single workspace-rooted resolver and a full-graph ``SpanIndex`` serve
+    every root (cross-root definitions only exist once every root's
+    structure is built).
+    """
     project_name = detect_project_name(lang_root)
     source_roots = find_source_roots(lang_root, files)
 
@@ -473,16 +493,6 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
             (file, file_id, tree.root_node, "tsx" if is_tsx else "ts")
         )
 
-    # Resolution pass: bind occurrences to real nodes or EXTERNAL_SYMBOL
-    span_index = SpanIndex.from_graph(graph)
-    resolver.prepare(lang_root, files)
-    metrics = _resolve_occurrences(
-        graph, project_name, resolver, span_index, all_occurrences
-    )
-
-    # Boundary pass: emit BOUNDARY nodes + EXPOSES/CONSUMES edges.
-    _extract_boundaries(graph, parsed_files, boundary_extractors)
-
     # PROJECT --CONTAINS--> top-level modules
     top_level = {qn: mid for qn, mid in modules.items() if "." not in qn}
     for module_id in top_level.values():
@@ -493,7 +503,7 @@ def _analyze_root(  # noqa: PLR0913, PLR0915
                 kind=RelationKind.CONTAINS,
             )
         )
-    return metrics
+    return project_name, all_occurrences, parsed_files
 
 
 def _extract_boundaries(
