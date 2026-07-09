@@ -55,6 +55,17 @@ def find_php_roots(search_root: Path) -> list[Path]:
     )
 
 
+def _load_composer(project_root: Path) -> dict:
+    composer = project_root / "composer.json"
+    if not composer.exists():
+        return {}
+    try:
+        data = json.loads(composer.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def detect_project_name(project_root: Path) -> str:
     """
     Extract the project name.
@@ -63,14 +74,30 @@ def detect_project_name(project_root: Path) -> str:
     1. composer.json ``name`` (e.g. ``vendor/package``)
     2. project_root directory name
     """
-    composer = project_root / "composer.json"
-    if composer.exists():
-        try:
-            data = json.loads(composer.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            data = {}
-        name = data.get("name") if isinstance(data, dict) else None
-        if isinstance(name, str) and name:
-            return name
-
+    name = _load_composer(project_root).get("name")
+    if isinstance(name, str) and name:
+        return name
     return project_root.name
+
+
+def composer_declared_name(project_root: Path) -> str | None:
+    """Return this root's own ``composer.json`` ``name``, or None if unset."""
+    name = _load_composer(project_root).get("name")
+    return name if isinstance(name, str) and name else None
+
+
+def composer_replace_names(project_root: Path) -> frozenset[str]:
+    """
+    Return the package names declared in this root's ``replace`` map.
+
+    ``replace`` is Composer's standard convention for a monorepo that splits
+    into independently-installable sub-packages (e.g. ``laravel/framework``
+    replacing ``illuminate/support``, ``illuminate/database``, ...) — the
+    packages it names are logically part of the same codebase, not
+    unrelated projects that merely happen to share a checkout.
+    """
+    replace = _load_composer(project_root).get("replace")
+    if not isinstance(replace, dict):
+        return frozenset()
+    # JSON object keys are always strings, so every key qualifies.
+    return frozenset(replace)

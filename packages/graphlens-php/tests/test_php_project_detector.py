@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from graphlens_php._project_detector import (
+    composer_declared_name,
+    composer_replace_names,
     detect_project_name,
     find_php_roots,
     is_php_project,
@@ -71,3 +73,42 @@ def test_detect_project_name_invalid_json(tmp_path: Path):
 
 def test_detect_project_name_no_composer(tmp_path: Path):
     assert detect_project_name(tmp_path) == tmp_path.name
+
+
+def test_composer_declared_name(tmp_path: Path):
+    (tmp_path / "composer.json").write_text('{"name": "acme/demo"}')
+    assert composer_declared_name(tmp_path) == "acme/demo"
+
+
+def test_composer_declared_name_none_when_unset(tmp_path: Path):
+    (tmp_path / "composer.json").write_text('{"type": "library"}')
+    assert composer_declared_name(tmp_path) is None
+
+
+def test_composer_declared_name_no_composer(tmp_path: Path):
+    assert composer_declared_name(tmp_path) is None
+
+
+def test_composer_replace_names(tmp_path: Path):
+    (tmp_path / "composer.json").write_text(
+        '{"replace": {"illuminate/support": "self.version", '
+        '"illuminate/database": "self.version"}}'
+    )
+    assert composer_replace_names(tmp_path) == {
+        "illuminate/support",
+        "illuminate/database",
+    }
+
+
+def test_composer_replace_names_absent(tmp_path: Path):
+    (tmp_path / "composer.json").write_text('{"name": "acme/demo"}')
+    assert composer_replace_names(tmp_path) == frozenset()
+
+
+def test_composer_replace_names_not_a_dict(tmp_path: Path):
+    (tmp_path / "composer.json").write_text('{"replace": ["not", "a dict"]}')
+    assert composer_replace_names(tmp_path) == frozenset()
+
+
+def test_composer_replace_names_no_composer(tmp_path: Path):
+    assert composer_replace_names(tmp_path) == frozenset()

@@ -124,6 +124,33 @@ class _StructureResolver(SymbolResolver):
         return ResolverStatus.UNAVAILABLE
 
 
+class _PrepareSpyResolver(SymbolResolver):
+    """Structure-only resolver that records every ``prepare()`` call.
+
+    Lets tests assert how many times (and with what scope) the adapter
+    spins up a resolver session — the thing that changes when Composer
+    ``replace`` monorepo roots get clustered into one shared pass.
+    """
+
+    def __init__(self) -> None:
+        self.prepare_calls: list[tuple[Path, frozenset[Path]]] = []
+
+    def prepare(self, project_root: Path, files: list[Path]) -> None:
+        self.prepare_calls.append((project_root, frozenset(files)))
+
+    def definition_at(self, file, line, col):
+        return None
+
+    def infer_type_at(self, file, line, col):
+        return None
+
+    def references_to(self, file, line, col):
+        return []
+
+    def status(self) -> ResolverStatus:
+        return ResolverStatus.UNAVAILABLE
+
+
 # ---------------------------------------------------------------------------
 # Adapter metadata
 # ---------------------------------------------------------------------------
@@ -332,6 +359,63 @@ def test_monorepo_shared_project_name(make_project, tmp_path):
     graph = PhpAdapter(resolver=_StructureResolver()).analyze(tmp_path)
     project_id = make_node_id("shared", "shared", NodeKind.PROJECT.value)
     assert project_id in graph.nodes
+
+
+def test_composer_replace_monorepo_shares_one_resolver_pass(tmp_path: Path):
+    # laravel/framework-style split: a root composer.json 'replace's its
+    # sub-packages, so they should share ONE resolver.prepare() call scoped
+    # to the head, covering every member's files — not one spawn per member.
+    (tmp_path / "composer.json").write_text(
+        '{"name": "acme/framework", '
+        '"replace": {"acme/support": "self.version"}, '
+        '"autoload": {"psr-4": {"Acme\\\\": "src/"}}}'
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Core.php").write_text(
+        "<?php\nnamespace Acme;\nclass Core {}\n"
+    )
+    sub = tmp_path / "src" / "Support"
+    sub.mkdir()
+    (sub / "composer.json").write_text(
+        '{"name": "acme/support", '
+        '"autoload": {"psr-4": {"Acme\\\\Support\\\\": "src/"}}}'
+    )
+    (sub / "src").mkdir()
+    (sub / "src" / "Str.php").write_text(
+        "<?php\nnamespace Acme\\Support;\nclass Str {}\n"
+    )
+
+    resolver = _PrepareSpyResolver()
+    PhpAdapter(resolver=resolver).analyze(tmp_path)
+
+    assert len(resolver.prepare_calls) == 1
+    head, files = resolver.prepare_calls[0]
+    assert head == tmp_path
+    assert {f.name for f in files} == {"Core.php", "Str.php"}
+
+
+def test_unrelated_nested_roots_keep_separate_resolver_passes(
+    make_project, tmp_path
+):
+    # Two composer.json roots with no 'replace' link between them are
+    # unrelated projects sharing a checkout — each still gets its own
+    # resolver.prepare() call, scoped to just its own directory.
+    make_project(
+        {"src/A.php": "<?php\nnamespace App;\nclass A {}\n"},
+        composer={"name": "acme/app", "autoload": {"psr-4": {"App\\": "src/"}}},
+    )
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "composer.json").write_text('{"name": "acme/other"}')
+    (sub / "src").mkdir()
+    (sub / "src" / "B.php").write_text("<?php\nnamespace Sub;\nclass B {}\n")
+
+    resolver = _PrepareSpyResolver()
+    PhpAdapter(resolver=resolver).analyze(tmp_path)
+
+    assert len(resolver.prepare_calls) == 2
+    prepared_roots = {root for root, _files in resolver.prepare_calls}
+    assert prepared_roots == {tmp_path, sub}
 
 
 def test_duplicate_file_in_files_list(make_project):
