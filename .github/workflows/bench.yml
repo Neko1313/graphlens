@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pinned so PHP benchmark numbers stay comparable run-to-run instead of
+  # drifting with whatever intelephense shipped that day.
+  INTELEPHENSE_VERSION: "1.18.5"
+
 jobs:
   benchmark:
     if: github.event_name == 'workflow_dispatch'
@@ -233,9 +238,16 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Cache npm downloads for intelephense
+        if: matrix.lang == 'php'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-intelephense-${{ env.INTELEPHENSE_VERSION }}
+
       - name: Install intelephense (semantic resolver)
         if: matrix.lang == 'php'
-        run: npm install -g intelephense
+        run: npm install -g "intelephense@${INTELEPHENSE_VERSION}"
 
       - name: Install dependencies
         run: task install

@@ -17,6 +17,7 @@ FROM python:3.13-slim
 ARG GO_VERSION=1.26.0
 ARG GOPLS_VERSION=v0.22.0
 ARG NODE_MAJOR=20
+ARG INTELEPHENSE_VERSION=1.18.5
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GOPATH=/root/go \
@@ -71,7 +72,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
 # The CLI only understands transport flags (--stdio/--node-ipc/--socket=/
 # --pipe=), no --version/--help — passing either crashes it — so the smoke
 # test checks the npm install instead of invoking the binary.
-RUN npm install -g intelephense \
+RUN npm install -g "intelephense@${INTELEPHENSE_VERSION}" \
     && npm ls -g intelephense --depth=0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
