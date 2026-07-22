@@ -545,7 +545,7 @@ wheels = [
 
 [[package]]
 name = "graphlens"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -639,7 +639,7 @@ test = [
 
 [[package]]
 name = "graphlens-cli"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-cli" }
 dependencies = [
     { name = "graphlens" },
@@ -677,7 +677,7 @@ provides-extras = ["python", "typescript", "neo4j", "all"]
 
 [[package]]
 name = "graphlens-csharp"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-csharp" }
 dependencies = [
     { name = "graphlens" },
@@ -694,7 +694,7 @@ requires-dist = [
 
 [[package]]
 name = "graphlens-go"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-go" }
 dependencies = [
     { name = "graphlens" },
@@ -711,7 +711,7 @@ requires-dist = [
 
 [[package]]
 name = "graphlens-link"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-link" }
 dependencies = [
     { name = "graphlens" },
@@ -722,7 +722,7 @@ requires-dist = [{ name = "graphlens", editable = "." }]
 
 [[package]]
 name = "graphlens-php"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-php" }
 dependencies = [
     { name = "graphlens" },
@@ -739,7 +739,7 @@ requires-dist = [
 
 [[package]]
 name = "graphlens-python"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-python" }
 dependencies = [
     { name = "graphlens" },
@@ -758,7 +758,7 @@ requires-dist = [
 
 [[package]]
 name = "graphlens-rust"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-rust" }
 dependencies = [
     { name = "graphlens" },
@@ -775,7 +775,7 @@ requires-dist = [
 
 [[package]]
 name = "graphlens-typescript"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "packages/graphlens-typescript" }
 dependencies = [
     { name = "graphlens" },
