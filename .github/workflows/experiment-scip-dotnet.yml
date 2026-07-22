@@ -1,0 +1,127 @@
+name: "Experiment: scip-dotnet on eShop (throwaway)"
+
+# One-off validation, NOT part of the permanent CI surface: run scip-dotnet
+# against the same dotnet/eShop checkout used by the C# benchmark and inspect
+# the resulting SCIP index with graphlens-rust's existing (language-agnostic)
+# decoder, to decide whether a CsharpScipResolver is worth building before
+# writing one. Manual dispatch only. Delete this file once the question is
+# answered either way.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install scip-dotnet
+        run: |
+          dotnet tool install --global scip-dotnet
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Clone dotnet/eShop
+        run: git clone --depth 1 https://github.com/dotnet/eShop.git /tmp/eshop
+
+      - name: Restore the Linux-buildable project subset (eShop.Web.slnf)
+        working-directory: /tmp/eshop
+        run: dotnet restore eShop.Web.slnf
+
+      - name: Run scip-dotnet against the same 21 projects (skip its own restore)
+        working-directory: /tmp/eshop
+        run: |
+          mapfile -t projects < <(python3 -c "
+          import json
+          d = json.load(open('eShop.Web.slnf'))
+          for p in d['solution']['projects']:
+              print(p.replace('\\\\', '/'))
+          ")
+          echo "Indexing ${#projects[@]} projects: ${projects[*]}"
+          scip-dotnet index "${projects[@]}" \
+            --skip-dotnet-restore \
+            --output /tmp/eshop/index.scip
+          ls -la /tmp/eshop/index.scip
+
+      - name: Analyze the produced SCIP index
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "packages/graphlens-rust/src")
+          from collections import Counter
+          from graphlens_rust._scip import iter_documents, SCIP_ROLE_DEFINITION
+
+          data = open("/tmp/eshop/index.scip", "rb").read()
+          print(f"index.scip size: {len(data):,} bytes")
+
+          docs = 0
+          total_occ = 0
+          def_occ = 0
+          empty_symbol_occ = 0
+          symbols = set()
+          # symbol -> (defining top-level project dir, set of referencing project dirs)
+          def_project = {}
+          ref_projects = {}
+
+          def top_project(rel_path):
+              parts = rel_path.split("/")
+              # eShop layout: src/<Project>/... or tests/<Project>/...
+              return "/".join(parts[:2]) if len(parts) >= 2 else rel_path
+
+          for rel, occurrences in iter_documents(data):
+              docs += 1
+              proj = top_project(rel)
+              for occ in occurrences:
+                  total_occ += 1
+                  if not occ.symbol:
+                      empty_symbol_occ += 1
+                      continue
+                  symbols.add(occ.symbol)
+                  if occ.roles & SCIP_ROLE_DEFINITION:
+                      def_occ += 1
+                      def_project.setdefault(occ.symbol, proj)
+                  else:
+                      ref_projects.setdefault(occ.symbol, set()).add(proj)
+
+          print(f"documents: {docs}")
+          print(f"total occurrences: {total_occ:,}")
+          print(f"definition occurrences: {def_occ:,}")
+          print(f"occurrences with empty symbol: {empty_symbol_occ:,}")
+          print(f"distinct non-empty symbols: {len(symbols):,}")
+
+          cross_project_symbols = 0
+          examples = []
+          for sym, def_proj in def_project.items():
+              refs = ref_projects.get(sym, set())
+              other = refs - {def_proj}
+              if other:
+                  cross_project_symbols += 1
+                  if len(examples) < 15:
+                      examples.append((sym, def_proj, sorted(other)))
+
+          print(f"symbols defined in one project AND referenced from a DIFFERENT project: {cross_project_symbols}")
+          print("\n--- sample cross-project resolutions ---")
+          for sym, def_proj, other in examples:
+              print(f"  defined in {def_proj:30} referenced from {other}  {sym[:100]}")
+
+          print("\n--- sample of 20 distinct non-local symbols ---")
+          non_local = [s for s in symbols if not s.startswith("local ")][:20]
+          for s in non_local:
+              print(f"  {s}")
+          PY
+
+      - name: Upload the raw index for inspection
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eshop-scip-dotnet-index
+          path: /tmp/eshop/index.scip
+          if-no-files-found: warn
