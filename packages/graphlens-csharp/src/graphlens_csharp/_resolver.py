@@ -1,5 +1,17 @@
 """
-C# symbol resolver.
+C# symbol resolvers.
+
+Two resolvers, the same tradeoff as the Rust adapter's LSP-vs-SCIP pair:
+
+``CsharpScipResolver`` (the default) runs ``scip-dotnet index`` — a Roslyn-
+based *batch* SCIP indexer (Apache-2.0, Sourcegraph) — once per
+:meth:`~CsharpScipResolver.prepare` call, then answers every query from an
+in-memory index. No live workspace, no per-query round-trip, no read timeout
+to go quiet on: the whole point of the batch shape. On the reference
+``dotnet/eShop`` solution (24 projects, ~42k occurrences) this produces a
+complete index with real cross-project resolution in well under a minute,
+where the live-LSP path below needed a circuit breaker to avoid multi-minute
+stalls and still left roughly half the occurrences unresolved.
 
 ``CsharpLspResolver`` drives a ``csharp-ls`` subprocess — Razzmatazz's
 Roslyn-based C# language server, installable as a .NET global tool
@@ -7,7 +19,9 @@ Roslyn-based C# language server, installable as a .NET global tool
 :class:`_CsharpLspClient`. It uses ``textDocument/definition`` and
 ``textDocument/references``; both come from Roslyn's semantic model, so the
 resolved definitions are type-aware (correct method overload, base type, field
-declaration) rather than name-matched.
+declaration) rather than name-matched. Kept as an explicit alternative (inject
+it via ``CsharpAdapter(resolver=CsharpLspResolver())``) for callers who want
+live queries against an already-running workspace rather than a batch index.
 
 Point ``$GRAPHLENS_CSHARP_LS`` at the binary, or have ``csharp-ls`` on
 ``PATH``. csharp-ls loads the solution/project via Roslyn on ``initialize``;
@@ -17,7 +31,7 @@ automatically: :meth:`CsharpLspResolver.status` reports
 :data:`ResolverStatus.UNAVAILABLE` and every query returns ``None``/``[]``, so
 the structural graph is still produced with only the type-aware edges dropped.
 
-The resolver never raises: every error returns ``None``/``[]``.
+Both resolvers never raise: every error returns ``None``/``[]``.
 """
 
 from __future__ import annotations
@@ -29,13 +43,17 @@ import os
 import select
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import IO
 from urllib.parse import unquote
 
 from graphlens.contracts import Occurrence, Query, ResolvedRef, SymbolResolver
 from graphlens.status import ResolverStatus
+
+from graphlens_csharp._scip import SCIP_ROLE_DEFINITION, iter_documents
 
 logger = logging.getLogger("graphlens_csharp")
 
@@ -640,3 +658,323 @@ class CsharpLspResolver(SymbolResolver):
 
     def __del__(self) -> None:
         self._shutdown_client()
+
+
+# ---------------------------------------------------------------------------
+# CsharpScipResolver — batch SCIP index via scip-dotnet
+# ---------------------------------------------------------------------------
+
+# Wall-clock ceiling for one ``scip-dotnet index`` run. On the reference
+# dotnet/eShop solution (24 projects) this finishes in well under a minute;
+# the cap only guards a pathological hang (e.g. a restore stuck on a network
+# fetch).
+_SCIP_TIMEOUT_S = 1800.0
+
+# A scip-dotnet SCIP symbol needs at least <scheme> <manager> <package>
+# <version> to classify its origin.
+_SCIP_SYMBOL_MIN_PARTS = 4
+
+
+def _scip_symbol_origin(symbol: str) -> str:
+    """
+    Classify an external SCIP symbol: ``stdlib``/``third_party``/``unknown``.
+
+    A scip-dotnet symbol reads ``scip-dotnet nuget <package> <version>
+    <descriptors>``. ``<package>`` is literally ``.`` for a symbol declared
+    inside the indexed solution itself — such a symbol only reaches this
+    function when it was *not* found in :attr:`CsharpScipResolver._defs`
+    (its defining file was outside the indexed set, e.g. a project that
+    failed to restore), which is a genuine miss rather than a real origin, so
+    it classifies as ``unknown``. ``System`` / ``System.*`` is the BCL,
+    matching the same rule ``_deps.get_stdlib_names`` uses for the import
+    classifier; every other package (including ``Microsoft.*``, which mostly
+    ships as independent NuGet packages) is ``third_party``.
+    """
+    parts = symbol.split(" ", 4)
+    if len(parts) < _SCIP_SYMBOL_MIN_PARTS or parts[1] != "nuget":
+        return "unknown"
+    package = parts[2]
+    if package == ".":
+        return "unknown"
+    if package == "System" or package.startswith("System."):
+        return "stdlib"
+    return "third_party"
+
+
+class CsharpScipResolver(SymbolResolver):
+    """
+    Resolve C# symbols from a ``scip-dotnet index`` batch index.
+
+    Instead of driving an interactive Roslyn LSP server (which pays a per-
+    query round-trip and can go quiet mid-workspace-load on a large or
+    partially-broken solution — see :class:`CsharpLspResolver`),
+    :meth:`prepare` runs ``scip-dotnet index`` once to write a static SCIP
+    index, parses it, and answers every query from in-memory lookup tables.
+
+    Requires ``scip-dotnet`` on ``PATH`` (install:
+    ``dotnet tool install --global scip-dotnet``; point
+    ``$GRAPHLENS_SCIP_DOTNET`` at the binary to override). If the batch run
+    fails or the binary is missing, every query returns ``None``/``[]`` so
+    the structural graph still stands and :meth:`status` reports
+    ``UNAVAILABLE``.
+
+    No explicit solution/project path is passed: ``scip-dotnet`` is invoked
+    with ``--working-directory`` pointed at ``project_root`` and no
+    positional project arguments, so it falls back to its own top-level
+    auto-discovery (mirrors driving ``rust-analyzer scip <path>`` for Rust).
+    That discovery only looks at files directly under ``project_root`` (not
+    recursively) and, unlike csharp-ls, does not guard against being handed
+    the same project twice — if two of the files it discovers at that top
+    level reference each other (e.g. a stray ``.csproj`` sitting next to a
+    ``.sln`` that already includes it), the underlying Roslyn call raises an
+    unhandled exception. That failure is caught the same as any other and
+    degrades to ``UNAVAILABLE`` rather than propagating; it does not affect
+    the common case of one project or one covering solution at the root
+    (verified end to end against the 24-project ``dotnet/eShop`` solution).
+
+    All methods return ``None``/``[]`` on any error — never raise.
+    ``infer_type_at`` always returns ``None``.
+    """
+
+    _engine = "scip-dotnet"
+
+    def __init__(self) -> None:
+        self._root: Path | None = None
+        self._status = ResolverStatus.UNAVAILABLE
+        # relative_path -> {(line0, col0): symbol} for every occurrence.
+        self._by_doc: dict[str, dict[tuple[int, int], str]] = {}
+        # global symbol -> (relative_path, line0, col0) of its definition.
+        self._defs: dict[str, tuple[str, int, int]] = {}
+        # relative_path -> {document-scoped "local …" symbol: (line0, col0)}.
+        self._local_defs: dict[str, dict[str, tuple[int, int]]] = {}
+
+    def _spawn_argv(self) -> list[str]:
+        binary = (
+            os.environ.get("GRAPHLENS_SCIP_DOTNET")
+            or shutil.which("scip-dotnet")
+            or "scip-dotnet"
+        )
+        return [binary]
+
+    def prepare(self, project_root: Path, files: list[Path]) -> None:  # noqa: ARG002
+        self._root = project_root.resolve()
+        self._by_doc = {}
+        self._defs = {}
+        self._local_defs = {}
+        self._status = ResolverStatus.UNAVAILABLE
+        try:
+            data, returncode = self._run_scip(project_root)
+            if data is None:
+                return
+            self._ingest(data)
+            if not self._by_doc:
+                self._status = ResolverStatus.DEGRADED
+            elif returncode != 0:
+                # scip-dotnet errored mid-run (e.g. a project failed to
+                # restore) but left a partial index. Report DEGRADED rather
+                # than OK so strict mode won't trust a silently incomplete
+                # graph — the LSP resolver signals the analogous case the
+                # same way.
+                self._status = ResolverStatus.DEGRADED
+            else:
+                self._status = ResolverStatus.OK
+        except Exception:
+            logger.warning("scip-dotnet index failed for %s", project_root)
+            self._status = ResolverStatus.UNAVAILABLE
+
+    def _run_scip(  # pragma: no cover - subprocess
+        self, project_root: Path
+    ) -> tuple[bytes | None, int | None]:
+        """Run ``scip-dotnet index``; return ``(index bytes, exit code)``."""
+        argv = self._spawn_argv()
+        stderr = tempfile.TemporaryFile()  # noqa: SIM115
+        fd, out_name = tempfile.mkstemp(suffix=".scip")
+        os.close(fd)  # we only need the path; scip-dotnet writes the file
+        out_path = Path(out_name)
+        try:
+            proc = subprocess.run(
+                [
+                    *argv,
+                    "index",
+                    "--working-directory",
+                    str(project_root),
+                    "--output",
+                    str(out_path),
+                ],
+                cwd=str(project_root),
+                stdout=subprocess.DEVNULL,
+                stderr=stderr,
+                timeout=_SCIP_TIMEOUT_S,
+                check=False,
+            )
+            if out_path.is_file() and out_path.stat().st_size > 0:
+                return out_path.read_bytes(), proc.returncode
+            self._log_scip_failure(proc.returncode, stderr)
+            return None, proc.returncode
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("scip-dotnet index did not complete: %s", exc)
+            return None, None
+        finally:
+            with contextlib.suppress(Exception):
+                stderr.close()
+            with contextlib.suppress(OSError):
+                out_path.unlink()
+
+    @staticmethod
+    def _log_scip_failure(  # pragma: no cover - subprocess
+        returncode: int | None, stderr: IO[bytes]
+    ) -> None:
+        """Log the exit code and a stderr tail when no index was produced."""
+        tail = ""
+        with contextlib.suppress(Exception):
+            stderr.flush()
+            stderr.seek(0)
+            tail = stderr.read().decode("utf-8", errors="replace")
+            tail = tail[-2000:].strip()
+        logger.warning(
+            "scip-dotnet index produced no index (exit %s); the solution "
+            "likely failed to load. stderr tail:\n%s",
+            returncode,
+            tail or "<empty>",
+        )
+
+    def _ingest(self, data: bytes) -> None:
+        """Fold a SCIP index into the by-document and definition tables."""
+        pool: dict[str, str] = {}  # intern symbols: many occurrences share one
+        for rel, occurrences in iter_documents(data):
+            doc_map: dict[tuple[int, int], str] = {}
+            for occ in occurrences:
+                if not occ.symbol:
+                    continue
+                symbol = pool.setdefault(occ.symbol, occ.symbol)
+                key = (occ.start_line, occ.start_col)
+                doc_map[key] = symbol
+                if occ.roles & SCIP_ROLE_DEFINITION:
+                    if symbol.startswith("local "):
+                        self._local_defs.setdefault(rel, {})[symbol] = key
+                    else:
+                        self._defs.setdefault(
+                            symbol, (rel, occ.start_line, occ.start_col)
+                        )
+            if doc_map:
+                self._by_doc[rel] = doc_map
+
+    def _rel(self, file: Path) -> str:
+        """
+        Map an absolute file to its index-relative form (root-relative).
+
+        SCIP ``relative_path`` always uses forward slashes, so normalise with
+        ``as_posix()`` — otherwise ``_by_doc`` lookups would miss on Windows.
+        """
+        if self._root is None:  # pragma: no cover - guarded by callers
+            return str(file)
+        try:
+            return file.resolve().relative_to(self._root).as_posix()
+        except (ValueError, OSError):
+            return str(file)
+
+    def _symbol_at_rel(self, rel: str, line: int, col: int) -> str | None:
+        """Return the SCIP symbol at (line, col) in the document *rel*."""
+        doc_map = self._by_doc.get(rel)
+        if doc_map is None:
+            return None
+        return doc_map.get((line - 1, col - 1))
+
+    def _symbol_at(self, file: Path, line: int, col: int) -> str | None:
+        """Return the SCIP symbol whose occurrence starts at (line, col)."""
+        return self._symbol_at_rel(self._rel(file), line, col)
+
+    def definition_at(
+        self, file: Path, line: int, col: int
+    ) -> ResolvedRef | None:
+        root = self._root
+        if root is None:
+            return None
+        rel = self._rel(file)  # one resolve() per query, reused below
+        symbol = self._symbol_at_rel(rel, line, col)
+        if symbol is None:
+            return None
+        return self._symbol_to_ref(symbol, rel, root)
+
+    def _symbol_to_ref(
+        self, symbol: str, doc_rel: str, root: Path
+    ) -> ResolvedRef | None:
+        """Resolve a symbol to its definition, or to an external ref."""
+        if symbol.startswith("local "):
+            loc = self._local_defs.get(doc_rel, {}).get(symbol)
+            if loc is None:
+                return None
+            return ResolvedRef(
+                full_name="",
+                file_path=root / doc_rel,
+                line=loc[0] + 1,
+                col=loc[1] + 1,
+                kind="",
+                origin="internal",
+            )
+        target = self._defs.get(symbol)
+        if target is not None:
+            rel, line0, col0 = target
+            return ResolvedRef(
+                full_name="",
+                file_path=root / rel,
+                line=line0 + 1,
+                col=col0 + 1,
+                kind="",
+                origin="internal",
+            )
+        return ResolvedRef(
+            full_name=symbol,
+            file_path=None,
+            line=0,
+            col=0,
+            kind="",
+            origin=_scip_symbol_origin(symbol),
+        )
+
+    def resolve_all(self, queries: list[Query]) -> list[ResolvedRef | None]:
+        if self._root is None:
+            return [None] * len(queries)
+        try:
+            return [
+                self.definition_at(file, line, col)
+                for (file, line, col) in queries
+            ]
+        except Exception:  # pragma: no cover - lookups don't raise
+            return [None] * len(queries)
+
+    def infer_type_at(
+        self, file: Path, line: int, col: int  # noqa: ARG002
+    ) -> ResolvedRef | None:
+        return None
+
+    def references_to(
+        self, file: Path, line: int, col: int
+    ) -> list[Occurrence]:
+        root = self._root
+        if root is None:
+            return []
+        symbol = self._symbol_at(file, line, col)
+        if symbol is None or symbol.startswith("local "):
+            return []
+        out: list[Occurrence] = []
+        for rel, doc_map in self._by_doc.items():
+            for (line0, col0), sym in doc_map.items():
+                if sym != symbol:
+                    continue
+                is_def = self._defs.get(symbol) == (rel, line0, col0)
+                if is_def:
+                    continue  # exclude the declaration, like the LSP path
+                out.append(
+                    Occurrence(
+                        file_path=root / rel,
+                        line=line0 + 1,
+                        col=col0 + 1,
+                        is_definition=False,
+                        access="unknown",
+                    )
+                )
+        return out
+
+    def status(self) -> ResolverStatus:
+        return self._status

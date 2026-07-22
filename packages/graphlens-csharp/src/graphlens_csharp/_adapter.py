@@ -34,7 +34,7 @@ from graphlens_csharp._project_detector import (
     find_csharp_roots,
     is_csharp_project,
 )
-from graphlens_csharp._resolver import CsharpLspResolver
+from graphlens_csharp._resolver import CsharpScipResolver
 from graphlens_csharp._visitor import (
     CsharpASTVisitor,
     ImportClassifier,
@@ -79,9 +79,11 @@ class CsharpAdapter(LanguageAdapter):
                 non-standard setups. Defaults to the built-in NuGet parsers.
             resolver: symbol resolver used for cross-file resolution of calls,
                 references, type uses, and base types. Defaults to
+                ``CsharpScipResolver`` (a batch SCIP index via ``scip-dotnet``;
+                degrades to a structure-only graph when it is absent). Pass a
                 ``CsharpLspResolver`` (drives the ``csharp-ls`` Roslyn LSP
-                server; degrades to a structure-only graph when it is absent).
-                Inject a custom ``SymbolResolver`` subclass to override.
+                server) for live queries against a running workspace instead,
+                or inject a custom ``SymbolResolver`` subclass to override.
 
         """
         self._dep_parsers = (
@@ -90,7 +92,7 @@ class CsharpAdapter(LanguageAdapter):
             else CSHARP_DEFAULT_DEP_PARSERS
         )
         self._resolver = (
-            resolver if resolver is not None else CsharpLspResolver()
+            resolver if resolver is not None else CsharpScipResolver()
         )
 
     def language(self) -> str:

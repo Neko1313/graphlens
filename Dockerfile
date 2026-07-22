@@ -3,7 +3,8 @@
 # graphlens CLI image — bundles the CLI and every language adapter together
 # with the toolchains their resolvers drive, so a project can run the full
 # analysis (Python/ty, TypeScript/Node, Go/gopls, Rust/rust-analyzer,
-# PHP/Intelephense, C#/csharp-ls) in CI without installing anything else:
+# PHP/Intelephense, C#/scip-dotnet+csharp-ls) in CI without installing
+# anything else:
 #
 #   docker run --rm -v "$PWD:/workspace" ghcr.io/neko1313/graphlens \
 #       analyze /workspace --output /workspace/graph.json
@@ -20,6 +21,7 @@ ARG NODE_MAJOR=20
 ARG INTELEPHENSE_VERSION=1.18.5
 ARG DOTNET_CHANNEL=10.0
 ARG CSHARP_LS_VERSION=0.25.0
+ARG SCIP_DOTNET_VERSION=0.2.14
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GOPATH=/root/go \
@@ -87,19 +89,24 @@ RUN apt-get update \
         --install-dir=/usr/local/bin --filename=composer \
     && composer --version
 
-# --- .NET SDK + csharp-ls (C# Roslyn semantic resolver) ---------------------
-# csharp-ls is the CsharpLspResolver engine: a Roslyn-based LSP server shipped
-# as a .NET global tool. Roslyn loads the project's compilation from source,
-# so the .NET SDK is required (installed via the official dotnet-install.sh —
-# no apt repo needed). csharp-ls 0.25 targets net10.0, so channel 10.0.
+# --- .NET SDK + scip-dotnet + csharp-ls (C# semantic resolvers) -------------
+# scip-dotnet is the CsharpScipResolver engine (the adapter's default): a
+# Roslyn-based batch SCIP indexer, run once per analysis to write a static
+# index that every query then reads back offline — see _resolver.py's module
+# docstring for why that beats a live LSP server on large solutions. csharp-ls
+# is the CsharpLspResolver engine (an explicit alternative, not the default):
+# a Roslyn-based LSP server for live queries against a running workspace.
+# Both are .NET global tools, so Roslyn needs the .NET SDK to load a
+# compilation from source (installed via the official dotnet-install.sh — no
+# apt repo needed). csharp-ls 0.25 targets net10.0, so channel 10.0.
 # libicu + tzdata are mandatory: this slim base ships neither, and .NET aborts
 # (SIGABRT) the moment any `dotnet` command touches globalization
 # (CultureInfo / TimeZoneInfo during DateTime.Now) without ICU present.
-# The binary is an LSP server that reads stdin, so invoking it (no
+# csharp-ls is an LSP server that reads stdin, so invoking it (no
 # --version/--help) would hang the build — the smoke test runs `dotnet
-# --version` (fails fast if globalization is broken) then lists the installed
-# tool. csharp-ls lands in /root/.dotnet/tools (on PATH below), where the
-# resolver's shutil.which("csharp-ls") finds it.
+# --version` (fails fast if globalization is broken) then lists both
+# installed tools. Both land in /root/.dotnet/tools (on PATH below), where
+# shutil.which("scip-dotnet") / shutil.which("csharp-ls") find them.
 ENV DOTNET_ROOT=/usr/local/dotnet \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NOLOGO=1 \
@@ -113,7 +120,9 @@ RUN apt-get update \
         --install-dir "${DOTNET_ROOT}" \
     && rm /tmp/dotnet-install.sh \
     && dotnet --version \
+    && dotnet tool install --global scip-dotnet --version "${SCIP_DOTNET_VERSION}" \
     && dotnet tool install --global csharp-ls --version "${CSHARP_LS_VERSION}" \
+    && dotnet tool list --global | grep -q scip-dotnet \
     && dotnet tool list --global | grep -q csharp-ls
 
 # --- uv (installer) ---------------------------------------------------------

@@ -70,8 +70,9 @@ python3 benchmarks/run_benchmarks.py render --results benchmarks/results --print
 
 Without Docker, install the adapters into the current environment
 (`uv sync --all-packages`) plus their toolchains (`ty`, Node, Go + `gopls`,
-Rust + `rust-analyzer`, PHP + `intelephense`, .NET + `csharp-ls`) and run the
-same `run_benchmarks.py` commands with your interpreter.
+Rust + `rust-analyzer`, PHP + `intelephense`, .NET + `scip-dotnet` +
+`csharp-ls`) and run the same `run_benchmarks.py` commands with your
+interpreter.
 
 ## How it runs in CI
 

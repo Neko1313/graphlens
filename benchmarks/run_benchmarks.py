@@ -176,11 +176,11 @@ def run_prepare(
     """
     Run a per-project setup command (e.g. ``dotnet restore``) inside *dest*.
 
-    Some resolvers need a built/restored workspace to resolve at all — Roslyn
-    (csharp-ls) can only answer definition queries once a project's
-    dependencies are restored. A manifest entry may therefore carry a
-    ``prepare`` command (a string or an argv list) run after clone and before
-    analysis.
+    Some resolvers need a built/restored workspace to resolve at all — the
+    Roslyn-based C# resolvers (``scip-dotnet``, ``csharp-ls``) can only
+    answer definition queries once a project's dependencies are restored. A
+    manifest entry may therefore carry a ``prepare`` command (a string or an
+    argv list) run after clone and before analysis.
 
     Best-effort by design: a missing tool, non-zero exit, or timeout only adds
     a note and analysis proceeds — the resolver degrades rather than the whole
