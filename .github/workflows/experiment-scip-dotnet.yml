@@ -9,6 +9,9 @@ name: "Experiment: scip-dotnet on eShop (throwaway)"
 
 on:
   workflow_dispatch: {}
+  push:
+    branches:
+      - claude/csharp-realizacija-c1l9s7
 
 jobs:
   probe:
