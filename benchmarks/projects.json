@@ -65,12 +65,12 @@
       "description": "Web application framework (large, PSR-4 + Composer)"
     },
     {
-      "name": "JamesNK/Newtonsoft.Json",
-      "repo": "https://github.com/JamesNK/Newtonsoft.Json",
-      "ref": "13.0.3",
+      "name": "dotnet/eShop",
+      "repo": "https://github.com/dotnet/eShop",
+      "ref": "main",
       "langs": ["csharp"],
-      "prepare": ["dotnet", "restore", "Src/Newtonsoft.Json.sln"],
-      "description": "JSON library (medium; restored so Roslyn can resolve)"
+      "prepare": ["dotnet", "restore", "eShop.Web.slnf"],
+      "description": "Reference microservices app (21 of 24 projects are net10.0 and Linux-buildable per upstream's own CI filter, eShop.Web.slnf — 3 MAUI mobile projects are skipped; a multi-root monorepo the resolver actually resolves, unlike Newtonsoft.Json's net20-net45 multi-targeting)"
     }
   ]
 }

@@ -38,7 +38,7 @@ upstream tag for reproducibility:
 | Go | gin-gonic/gin · casdoor/casdoor · gohugoio/hugo |
 | Rust | BurntSushi/ripgrep · tokio-rs/axum · astral-sh/ruff |
 | PHP | laravel/framework |
-| C# | JamesNK/Newtonsoft.Json |
+| C# | dotnet/eShop |
 
 Edit the file to add or swap projects; the workflow loops over every entry and
 the README table follows the manifest order. If a pinned `ref` has gone missing
