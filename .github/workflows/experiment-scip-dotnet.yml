@@ -65,10 +65,87 @@ jobs:
       - name: Analyze the produced SCIP index
         run: |
           python3 - <<'PY'
-          import sys
-          sys.path.insert(0, "packages/graphlens-rust/src")
-          from collections import Counter
-          from graphlens_rust._scip import iter_documents, SCIP_ROLE_DEFINITION
+          # Inlined copy of graphlens_rust._scip's decoder (pure stdlib, zero
+          # deps) -- importing the real module drags in graphlens_rust's
+          # __init__.py -> _adapter.py -> the core `graphlens` package, which
+          # isn't installed in this throwaway job. Logic is identical.
+          SCIP_ROLE_DEFINITION = 0x1
+          _WIRE_VARINT, _WIRE_I64, _WIRE_LEN, _WIRE_I32 = 0, 1, 2, 5
+          _INDEX_DOCUMENTS = 2
+          _DOC_RELATIVE_PATH, _DOC_OCCURRENCES = 1, 2
+          _OCC_RANGE, _OCC_SYMBOL, _OCC_ROLES = 1, 2, 3
+
+          def _read_varint(buf, i):
+              shift = result = 0
+              while True:
+                  byte = buf[i]; i += 1
+                  result |= (byte & 0x7F) << shift
+                  if not byte & 0x80:
+                      return result, i
+                  shift += 7
+
+          def _iter_fields(buf):
+              i, n = 0, len(buf)
+              while i < n:
+                  tag, i = _read_varint(buf, i)
+                  fn, wt = tag >> 3, tag & 0x7
+                  if wt == _WIRE_VARINT:
+                      value, i = _read_varint(buf, i)
+                      yield fn, wt, value
+                  elif wt == _WIRE_LEN:
+                      length, i = _read_varint(buf, i)
+                      yield fn, wt, buf[i:i + length]; i += length
+                  elif wt == _WIRE_I64:
+                      yield fn, wt, buf[i:i + 8]; i += 8
+                  elif wt == _WIRE_I32:
+                      yield fn, wt, buf[i:i + 4]; i += 4
+                  else:
+                      raise ValueError(f"unsupported wire type {wt}")
+
+          def _packed_varints(buf):
+              out, i, n = [], 0, len(buf)
+              while i < n:
+                  v, i = _read_varint(buf, i)
+                  out.append(v)
+              return out
+
+          class ScipOccurrence:
+              __slots__ = ("symbol", "roles", "start_line", "start_col")
+              def __init__(self, symbol, roles, start_line, start_col):
+                  self.symbol, self.roles = symbol, roles
+                  self.start_line, self.start_col = start_line, start_col
+
+          def _parse_occurrence(buf):
+              symbol, roles, range_ints = "", 0, []
+              for fn, wt, value in _iter_fields(buf):
+                  if fn == _OCC_RANGE:
+                      if wt == _WIRE_LEN:
+                          range_ints.extend(_packed_varints(value))
+                      elif wt == _WIRE_VARINT:
+                          range_ints.append(value)
+                  elif fn == _OCC_SYMBOL and wt == _WIRE_LEN:
+                      symbol = value.decode("utf-8", "replace")
+                  elif fn == _OCC_ROLES and wt == _WIRE_VARINT:
+                      roles = value
+              if len(range_ints) < 2:
+                  return None
+              return ScipOccurrence(symbol, roles, range_ints[0], range_ints[1])
+
+          def _parse_document(buf):
+              rel_path, occurrences = "", []
+              for fn, wt, value in _iter_fields(buf):
+                  if fn == _DOC_RELATIVE_PATH and wt == _WIRE_LEN:
+                      rel_path = value.decode("utf-8", "replace")
+                  elif fn == _DOC_OCCURRENCES and wt == _WIRE_LEN:
+                      occ = _parse_occurrence(value)
+                      if occ is not None:
+                          occurrences.append(occ)
+              return rel_path, occurrences
+
+          def iter_documents(data):
+              for fn, wt, value in _iter_fields(data):
+                  if fn == _INDEX_DOCUMENTS and wt == _WIRE_LEN:
+                      yield _parse_document(value)
 
           data = open("/tmp/eshop/index.scip", "rb").read()
           print(f"index.scip size: {len(data):,} bytes")
