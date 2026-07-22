@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from graphlens.contracts import DependencyFileParser
+from graphlens.contracts import DependencyFileParser, normalize_pkg_name
 
 from graphlens_csharp._module_resolver import iter_by_local, parse_xml
 
@@ -29,10 +29,10 @@ if TYPE_CHECKING:
 
 
 def _top_segment(package_id: str) -> str:
-    """Return the lowercased top segment of a dotted NuGet package id."""
+    """Return the top segment of a dotted NuGet package id, normalized."""
     if not isinstance(package_id, str):
         return ""
-    return package_id.split(".", maxsplit=1)[0].strip().lower()
+    return normalize_pkg_name(package_id).split(".", maxsplit=1)[0]
 
 
 class CsprojDepsParser(DependencyFileParser):

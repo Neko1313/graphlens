@@ -177,9 +177,14 @@ class CsharpAdapter(LanguageAdapter):
             )
 
         # Phase 3 — PROJECT --CONTAINS--> top-level namespace modules.
+        # Two sub-roots can share a project_id (identical AssemblyName) and
+        # a top-level namespace, so dedup on (project_id, module_id) —
+        # add_relation itself does not.
+        linked: set[tuple[str, str]] = set()
         for project_id, _project_name, _occurrences, modules in built:
             for qname, module_id in modules.items():
-                if "." not in qname:
+                if "." not in qname and (project_id, module_id) not in linked:
+                    linked.add((project_id, module_id))
                     graph.add_relation(
                         Relation(
                             source_id=project_id,

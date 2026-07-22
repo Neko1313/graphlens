@@ -38,6 +38,20 @@ def test_is_csharp_project_false_when_no_markers(tmp_path):
     assert not is_csharp_project(tmp_path)
 
 
+def test_is_csharp_project_ignores_csproj_in_excluded_dir(tmp_path):
+    nm = tmp_path / "node_modules" / "pkg"
+    nm.mkdir(parents=True)
+    (nm / "Fake.csproj").write_text(CSPROJ)
+    assert not is_csharp_project(tmp_path)
+
+
+def test_is_csharp_project_ignores_cs_in_excluded_dir(tmp_path):
+    obj = tmp_path / "obj"
+    obj.mkdir()
+    (obj / "Generated.cs").write_text("class G {}")
+    assert not is_csharp_project(tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # find_csharp_roots
 # ---------------------------------------------------------------------------

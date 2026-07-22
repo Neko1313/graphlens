@@ -10,7 +10,11 @@ from graphlens import ResolverStatus
 
 from graphlens_csharp import CsharpScipResolver
 from graphlens_csharp import _resolver as resolver_mod
-from graphlens_csharp._resolver import _find_solution, _scip_symbol_origin
+from graphlens_csharp._resolver import (
+    _find_solution,
+    _scip_index_args,
+    _scip_symbol_origin,
+)
 from graphlens_csharp._scip import SCIP_ROLE_DEFINITION, ScipOccurrence
 
 DEF = SCIP_ROLE_DEFINITION
@@ -116,6 +120,23 @@ def test_find_solution_ignores_nested_files(tmp_path):
     nested.mkdir()
     (nested / "Nested.sln").write_text("")
     assert _find_solution(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# _scip_index_args
+# ---------------------------------------------------------------------------
+
+
+def test_index_args_passes_solution_name_when_found(tmp_path):
+    (tmp_path / "eShop.slnx").write_text("")
+    assert _scip_index_args(tmp_path) == ["eShop.slnx"]
+
+
+def test_index_args_falls_back_to_working_directory(tmp_path):
+    assert _scip_index_args(tmp_path) == [
+        "--working-directory",
+        str(tmp_path),
+    ]
 
 
 # ---------------------------------------------------------------------------

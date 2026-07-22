@@ -180,6 +180,10 @@ class CsharpASTVisitor:
         self._modules = modules if modules is not None else {}
         # Stack of qualified-name prefixes (current scope); "" = global ns.
         self._scope_stack: list[str] = [""]
+        # Source split into per-row byte strings, so span columns can be
+        # converted from tree-sitter's UTF-8 byte offsets to the UTF-16
+        # code-unit offsets Roslyn/SCIP/LSP use — see _make_span/_to_utf16_col.
+        self._lines: list[bytes] = source.split(b"\n")
         # Stack of node IDs for emitting DECLARES relations.
         self._container_stack: list[str] = [file_node_id]
         # Stack of NodeKind to know if we are inside a type body.
@@ -338,9 +342,10 @@ class CsharpASTVisitor:
         self._handle_callable(node, node.child_by_field_name("name"), None)
 
     def _visit_operator_declaration(self, node: TSNode) -> None:
-        name = node.child_by_field_name("name") or _child_of_type(
-            node, "operator"
-        )
+        # The operator symbol (+, -, ==, ...) is the ``operator`` field, a
+        # leaf whose own node.type is the symbol itself — distinct from the
+        # ``operator`` *keyword* token, which has no field name.
+        name = node.child_by_field_name("operator")
         self._handle_callable(node, name, _return_type(node))
 
     def _visit_local_function_statement(self, node: TSNode) -> None:
@@ -406,8 +411,10 @@ class CsharpASTVisitor:
                 param_name,
                 child,
                 metadata={
-                    "has_default": _child_of_type(child, "equals_value_clause")
-                    is not None,
+                    # A default value is a flat '=' + expression sibling on
+                    # ``parameter``, exactly like a field-declarator's
+                    # initializer — no ``equals_value_clause`` wrapper.
+                    "has_default": _child_of_type(child, "=") is not None,
                 },
                 name_node=name_node,
             )
@@ -602,6 +609,9 @@ class CsharpASTVisitor:
                 if leaf is not None:
                     self._record_occurrence("call", leaf, enclosing_id)
             self._scan_arguments(node, enclosing_id)
+            initializer = node.child_by_field_name("initializer")
+            if initializer is not None:
+                self._scan_value(initializer, enclosing_id)
             return
         if t == "member_access_expression":
             self._record_occurrence(
@@ -669,7 +679,7 @@ class CsharpASTVisitor:
     def _record_occurrence(
         self, role: str, name_node: TSNode | None, enclosing_id: str
     ) -> None:
-        span = _make_span(name_node)
+        span = self._make_span(name_node)
         if span is None:  # pragma: no cover - defensive
             return
         self.occurrences.append(
@@ -738,7 +748,7 @@ class CsharpASTVisitor:
     ) -> Node:
         md = dict(metadata or {})
         if name_node is not None:
-            name_span = _make_span(name_node)
+            name_span = self._make_span(name_node)
             if name_span is not None:  # pragma: no cover - always valid here
                 md["name_span"] = name_span
         return Node(
@@ -749,7 +759,7 @@ class CsharpASTVisitor:
             qualified_name=qualified_name,
             name=name,
             file_path=str(self._ctx.file_path),
-            span=_make_span(ts_node) if ts_node else None,
+            span=self._make_span(ts_node) if ts_node else None,
             metadata=md,
         )
 
@@ -778,6 +788,44 @@ class CsharpASTVisitor:
         self._scope_stack.pop()
         self._container_stack.pop()
         self._kind_stack.pop()
+
+    def _make_span(self, node: TSNode | None) -> Span | None:
+        """Convert tree-sitter node positions to a Span (1-based)."""
+        if node is None:  # pragma: no cover - callers guard against None
+            return None
+        try:
+            sr, sc = node.start_point
+            er, ec = node.end_point
+            return Span(
+                start_line=sr + 1,
+                start_col=self._to_utf16_col(sr, sc) + 1,
+                end_line=er + 1,
+                end_col=self._to_utf16_col(er, ec) + 1,
+            )
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+    def _to_utf16_col(self, row: int, byte_col: int) -> int:
+        """
+        Convert a tree-sitter byte-offset column to a UTF-16 code-unit one.
+
+        tree-sitter's start_point/end_point columns are UTF-8 byte offsets
+        from the start of the row; Roslyn/SCIP and the LSP protocol (what
+        the resolvers and their SpanIndex lookups are keyed on) use UTF-16
+        code-unit offsets instead. The two coincide for ASCII text — the
+        overwhelming majority of C# source lines — so the conversion only
+        pays for a decode+re-encode on a row that actually contains
+        non-ASCII bytes before the target column.
+        """
+        if row >= len(self._lines):  # pragma: no cover - defensive
+            return byte_col
+        prefix = self._lines[row][:byte_col]
+        if prefix.isascii():
+            return byte_col
+        return (
+            len(prefix.decode("utf-8", errors="replace").encode("utf-16-le"))
+            // 2
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -834,10 +882,18 @@ def _base_type_heads(base_list: TSNode) -> list[TSNode]:
 
     Only the base type itself is returned, not its generic arguments
     (``IRepo<Invoice>`` yields ``IRepo``), so the resulting ``base`` edges
-    point at real base types rather than type arguments.
+    point at real base types rather than type arguments. A record's primary
+    constructor spells its base call as ``primary_constructor_base_type``
+    (``record R(int Id) : Base(Id)``) — a distinct wrapper around the type,
+    not a bare ``identifier``/``qualified_name``/``generic_name`` sibling —
+    so it needs unwrapping via its own ``type`` field first.
     """
     heads: list[TSNode] = []
     for child in base_list.children:
+        if child.type == "primary_constructor_base_type":
+            child = child.child_by_field_name("type")  # noqa: PLW2901
+            if child is None:  # pragma: no cover - defensive
+                continue
         if child.type in ("identifier", "qualified_name", "generic_name"):
             head = _type_head(child)
             if head is not None:  # pragma: no cover - always present
@@ -902,20 +958,3 @@ def _visibility(node: TSNode) -> str:
         if child.type == "modifier" and _node_text(child) in _ACCESS_MODIFIERS:
             return _node_text(child)
     return ""
-
-
-def _make_span(node: TSNode | None) -> Span | None:
-    """Convert tree-sitter node positions to a Span (1-based)."""
-    if node is None:  # pragma: no cover - callers guard against None
-        return None
-    try:
-        sr, sc = node.start_point
-        er, ec = node.end_point
-        return Span(
-            start_line=sr + 1,
-            start_col=sc + 1,
-            end_line=er + 1,
-            end_col=ec + 1,
-        )
-    except Exception:  # pragma: no cover - defensive
-        return None

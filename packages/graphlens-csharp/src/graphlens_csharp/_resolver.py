@@ -692,6 +692,25 @@ def _find_solution(project_root: Path) -> Path | None:
     return None
 
 
+def _scip_index_args(project_root: Path) -> list[str]:
+    """
+    Build the positional/flag args for ``scip-dotnet index`` on this root.
+
+    Split out of :meth:`CsharpScipResolver._run_scip` (which is excluded
+    from coverage as a subprocess boundary) specifically so this branching
+    is unit-testable on its own: it is the exact logic that caused a real
+    resolution failure once already (bare ``--working-directory`` silently
+    exits 1 on a directory holding many projects plus a covering solution —
+    see :class:`CsharpScipResolver`'s docstring), so a regression here
+    should fail a fast unit test rather than only surface via a live
+    benchmark run.
+    """
+    solution = _find_solution(project_root)
+    if solution is not None:
+        return [solution.name]
+    return ["--working-directory", str(project_root)]
+
+
 def _scip_symbol_origin(symbol: str) -> str:
     """
     Classify an external SCIP symbol: ``stdlib``/``third_party``/``unknown``.
@@ -816,12 +835,7 @@ class CsharpScipResolver(SymbolResolver):
         fd, out_name = tempfile.mkstemp(suffix=".scip")
         os.close(fd)  # we only need the path; scip-dotnet writes the file
         out_path = Path(out_name)
-        solution = _find_solution(project_root)
-        target_args = (
-            [solution.name]
-            if solution is not None
-            else ["--working-directory", str(project_root)]
-        )
+        target_args = _scip_index_args(project_root)
         try:
             proc = subprocess.run(
                 [*argv, "index", *target_args, "--output", str(out_path)],

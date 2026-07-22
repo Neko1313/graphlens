@@ -20,9 +20,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-# Directories that never hold first-party project markers.
-_SKIP_DIRS: frozenset[str] = frozenset({"bin", "obj", ".vs", "node_modules"})
-
 
 def local_name(tag: str) -> str:
     """Return an XML tag's local name, dropping any ``{namespace}`` prefix."""
@@ -32,6 +29,8 @@ def local_name(tag: str) -> str:
 def parse_xml(path: Path) -> ElementTree.Element | None:
     """Parse an XML file, returning its root element or ``None`` on error."""
     try:
+        # Local project files, not untrusted network input; Python 3.13's
+        # expat has built-in entity-amplification limits.
         return ElementTree.parse(path).getroot()  # noqa: S314
     except (OSError, ElementTree.ParseError):
         return None
@@ -97,9 +96,13 @@ def internal_namespace_tops(project_root: Path) -> set[str]:
     ``using`` whose first segment matches any first-party assembly's root
     namespace classifies as ``internal``.
     """
+    # Deferred: _project_detector imports from this module, so importing it
+    # back at module level would create a circular import.
+    import graphlens_csharp._project_detector as _pd  # noqa: PLC0415
+
     tops: set[str] = set()
     for csproj in sorted(project_root.rglob("*.csproj")):
-        if _SKIP_DIRS & set(csproj.relative_to(project_root).parts):
+        if _pd.EXCLUDED_DIRS & set(csproj.relative_to(project_root).parts):
             continue
         namespace = _namespace_from_csproj(csproj)
         if namespace:  # pragma: no cover - always non-empty (csproj stem)

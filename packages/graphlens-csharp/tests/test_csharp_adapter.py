@@ -54,9 +54,10 @@ class ConstResolver(SymbolResolver):
     ) -> None:
         self._ref = ref
         self._status = status
+        self.prepare_calls: list[tuple[Path, list[Path]]] = []
 
     def prepare(self, project_root: Path, files: list[Path]) -> None:
-        pass
+        self.prepare_calls.append((project_root, files))
 
     def definition_at(self, file, line, col):
         return self._ref
@@ -372,6 +373,37 @@ def test_two_roots_same_name_share_project(tmp_path):
     graph = CsharpAdapter(resolver=ConstResolver()).analyze(tmp_path)
     projects = [n for n in graph.nodes.values() if n.kind == NodeKind.PROJECT]
     assert len(projects) == 1  # identical AssemblyName → one PROJECT node
+    module = _node(graph, "Same", NodeKind.MODULE)
+    contains = [
+        r
+        for r in graph.relations
+        if r.kind == RelationKind.CONTAINS
+        and r.source_id == projects[0].id
+        and r.target_id == module.id
+    ]
+    assert len(contains) == 1  # shared root must not double the edge
+
+
+def test_prepare_called_once_with_union_of_files(tmp_path):
+    a = tmp_path / "A"
+    b = tmp_path / "B"
+    a.mkdir()
+    b.mkdir()
+    (a / "A.csproj").write_text(
+        "<Project><PropertyGroup><AssemblyName>Alpha</AssemblyName>"
+        "</PropertyGroup></Project>"
+    )
+    (b / "B.csproj").write_text(
+        "<Project><PropertyGroup><AssemblyName>Beta</AssemblyName>"
+        "</PropertyGroup></Project>"
+    )
+    (a / "A.cs").write_text("namespace Alpha; class AC {}")
+    (b / "B.cs").write_text("namespace Beta; class BC {}")
+    resolver = ConstResolver()
+    CsharpAdapter(resolver=resolver).analyze(tmp_path)
+    assert len(resolver.prepare_calls) == 1
+    _project_root, files = resolver.prepare_calls[0]
+    assert set(files) == {a / "A.cs", b / "B.cs"}
 
 
 def test_default_resolver_degrades_without_server(make_project):

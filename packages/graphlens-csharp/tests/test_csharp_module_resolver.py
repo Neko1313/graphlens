@@ -152,3 +152,25 @@ def test_internal_tops_skips_obj_dir(tmp_path):
         "</PropertyGroup></Project>"
     )
     assert internal_namespace_tops(tmp_path) == {"Acme"}
+
+
+def test_internal_tops_skips_test_results_dir(tmp_path):
+    (tmp_path / "App.csproj").write_text(CSPROJ)
+    results = tmp_path / "TestResults"
+    results.mkdir()
+    (results / "Gen.csproj").write_text(
+        "<Project><PropertyGroup><RootNamespace>Zzz</RootNamespace>"
+        "</PropertyGroup></Project>"
+    )
+    assert internal_namespace_tops(tmp_path) == {"Acme"}
+
+
+def test_internal_tops_skips_artifacts_dir(tmp_path):
+    (tmp_path / "App.csproj").write_text(CSPROJ)
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "Gen.csproj").write_text(
+        "<Project><PropertyGroup><RootNamespace>Zzz</RootNamespace>"
+        "</PropertyGroup></Project>"
+    )
+    assert internal_namespace_tops(tmp_path) == {"Acme"}

@@ -71,6 +71,14 @@
       "langs": ["csharp"],
       "prepare": ["dotnet", "restore", "eShop.Web.slnf"],
       "description": "Reference microservices app (21 of 24 projects are net10.0 and Linux-buildable per upstream's own CI filter, eShop.Web.slnf — 3 MAUI mobile projects are skipped; a multi-root monorepo the resolver actually resolves, unlike Newtonsoft.Json's net20-net45 multi-targeting)"
+    },
+    {
+      "name": "microsoft/reverse-proxy",
+      "repo": "https://github.com/microsoft/reverse-proxy",
+      "ref": "v2.3.0",
+      "langs": ["csharp"],
+      "prepare": ["dotnet", "restore", "YARP.slnx"],
+      "description": "YARP: HTTP reverse proxy toolkit (medium, single net8.0 TFM verified via TFMs.props, one covering YARP.slnx at repo root — HTTP boundaries, a non-monorepo counterpoint to eShop's multi-root layout)"
     }
   ]
 }

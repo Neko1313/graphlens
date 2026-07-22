@@ -33,9 +33,15 @@ def is_csharp_project(project_root: Path) -> bool:
     The fallback handles multi-language monorepos and loose C# sources that
     ship no project file.
     """
-    if any(project_root.rglob("*.csproj")):
+    def _has(pattern: str) -> bool:
+        return any(
+            not (EXCLUDED_DIRS & set(p.relative_to(project_root).parts))
+            for p in project_root.rglob(pattern)
+        )
+
+    if _has("*.csproj"):
         return True
-    return any(project_root.rglob("*.cs"))
+    return _has("*.cs")
 
 
 def find_csharp_roots(search_root: Path) -> list[Path]:

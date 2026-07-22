@@ -127,6 +127,14 @@ def test_base_list_records_heads_only():
     assert len(base) == 2  # Base and IRepo — not the Invoice type argument
 
 
+def test_record_primary_constructor_base_type():
+    # record R(int Id) : Base(Id) wraps its base in
+    # primary_constructor_base_type, not a bare identifier/qualified_name.
+    _g, visitor, _f = _visit("record R(int Id) : Base(Id);")
+    base = [o for o in visitor.occurrences if o.role == "base"]
+    assert len(base) == 1
+
+
 def test_record_without_body():
     graph, _v, _f = _visit("record R(int Id, decimal Amount);")
     assert "R" in _qnames(graph, NodeKind.CLASS)
@@ -147,6 +155,18 @@ def test_method_constructor_and_params():
     assert {"C.Get.id", "C.C.seed"} <= _qnames(graph, NodeKind.PARAMETER)
     # Non-predefined return type Invoice becomes an annotation occurrence.
     assert any(o.role == "annotation" for o in visitor.occurrences)
+
+
+def test_parameter_has_default():
+    graph, _v, _f = _visit("class C { void M(int x = 5, int y = 0) {} }")
+    by_name = {n.name: n for n in _kind(graph, NodeKind.PARAMETER)}
+    assert by_name["x"].metadata["has_default"] is True
+
+
+def test_parameter_without_default():
+    graph, _v, _f = _visit("class C { void M(int x) {} }")
+    by_name = {n.name: n for n in _kind(graph, NodeKind.PARAMETER)}
+    assert by_name["x"].metadata["has_default"] is False
 
 
 def test_method_kind_is_method_inside_class():
@@ -211,8 +231,21 @@ def test_operator_and_destructor():
         "class C { public static C operator +(C a, C b) => a; ~C(){} }"
     )
     names = {n.name for n in _kind(graph, NodeKind.METHOD)}
-    assert "operator" in names
+    assert "+" in names
     assert "C" in names  # destructor
+
+
+def test_two_operator_overloads_do_not_collide():
+    # Both used to be named "operator" (the keyword, not the symbol field),
+    # so they collapsed onto the same deterministic node ID.
+    graph, _v, _f = _visit(
+        "class C {"
+        " public static C operator +(C a, C b) => a;"
+        " public static C operator -(C a, C b) => a;"
+        "}"
+    )
+    names = {n.name for n in _kind(graph, NodeKind.METHOD)}
+    assert {"+", "-"} <= names
 
 
 def test_delegate_annotations():
@@ -402,6 +435,38 @@ def test_expression_bodied_accessor():
     assert "call" in _roles(visitor)
 
 
+# ---------------------------------------------------------------------------
+# UTF-16 column conversion
+# ---------------------------------------------------------------------------
+
+
+def test_to_utf16_col_ascii_line_is_identity():
+    _g, visitor, _f = _visit("class C {}")
+    assert visitor._to_utf16_col(0, 5) == 5
+
+
+def test_to_utf16_col_converts_non_ascii_prefix():
+    # "é" is 2 bytes in UTF-8 but 1 code unit in UTF-16 — a byte column and
+    # a UTF-16 column diverge as soon as one appears earlier on the line.
+    source = "var éé = 1;"
+    _g, visitor, _f = _visit(source)
+    byte_col = len("var éé".encode())
+    assert visitor._to_utf16_col(0, byte_col) == len("var éé")
+
+
+def test_occurrence_column_uses_utf16_not_byte_offset():
+    # A non-ASCII identifier earlier on the same line must not shift later
+    # occurrences' columns when byte-width diverges from UTF-16 width —
+    # Roslyn/SCIP/LSP positions are UTF-16 code-unit offsets, tree-sitter's
+    # raw start_point columns are UTF-8 byte offsets.
+    source = "class C { void M() { var éé = 1; Foo(); } }"
+    _g, visitor, _f = _visit(source)
+    foo_occ = next(o for o in visitor.occurrences if o.role == "call")
+    prefix = source[: source.index("Foo(")]
+    expected_col = len(prefix.encode("utf-16-le")) // 2 + 1
+    assert foo_occ.col == expected_col
+
+
 def test_new_predefined_type_has_no_call_target():
     # new string(...) — the type is a predefined_type with no name leaf, so
     # no call occurrence for the ctor, but arguments are still scanned.
@@ -415,6 +480,14 @@ def test_object_initializer_without_parens():
     # new Foo { } has no argument list — _scan_arguments must tolerate that.
     _g, visitor, _f = _visit("class C { void M(){ var f = new Foo { }; } }")
     assert any(o.role == "call" for o in visitor.occurrences)  # Foo
+
+
+def test_object_initializer_contents_are_scanned():
+    _g, visitor, _f = _visit(
+        "class C { void M(){ var f = new Foo { X = Bar() }; } }"
+    )
+    assert "call" in _roles(visitor)  # Bar()
+    assert "read" in _roles(visitor)  # X
 
 
 def test_duplicate_import_reuses_external_symbol():
