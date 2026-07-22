@@ -91,20 +91,28 @@ RUN apt-get update \
 # csharp-ls is the CsharpLspResolver engine: a Roslyn-based LSP server shipped
 # as a .NET global tool. Roslyn loads the project's compilation from source,
 # so the .NET SDK is required (installed via the official dotnet-install.sh —
-# no apt repo needed on slim). csharp-ls 0.25 targets .NET 10.
+# no apt repo needed). csharp-ls 0.25 targets net10.0, so channel 10.0.
+# libicu + tzdata are mandatory: this slim base ships neither, and .NET aborts
+# (SIGABRT) the moment any `dotnet` command touches globalization
+# (CultureInfo / TimeZoneInfo during DateTime.Now) without ICU present.
 # The binary is an LSP server that reads stdin, so invoking it (no
-# --version/--help) would hang the build — the smoke test lists the installed
-# tool instead. csharp-ls lands in /root/.dotnet/tools (on PATH below), where
-# the resolver's shutil.which("csharp-ls") finds it.
+# --version/--help) would hang the build — the smoke test runs `dotnet
+# --version` (fails fast if globalization is broken) then lists the installed
+# tool. csharp-ls lands in /root/.dotnet/tools (on PATH below), where the
+# resolver's shutil.which("csharp-ls") finds it.
 ENV DOTNET_ROOT=/usr/local/dotnet \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_NOLOGO=1 \
     PATH="/usr/local/dotnet:/root/.dotnet/tools:${PATH}"
-RUN curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libicu-dev tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
     && chmod +x /tmp/dotnet-install.sh \
     && /tmp/dotnet-install.sh --channel "${DOTNET_CHANNEL}" \
         --install-dir "${DOTNET_ROOT}" \
     && rm /tmp/dotnet-install.sh \
+    && dotnet --version \
     && dotnet tool install --global csharp-ls --version "${CSHARP_LS_VERSION}" \
     && dotnet tool list --global | grep -q csharp-ls
 
