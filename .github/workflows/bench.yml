@@ -27,6 +27,10 @@ env:
   # Pinned so PHP benchmark numbers stay comparable run-to-run instead of
   # drifting with whatever intelephense shipped that day.
   INTELEPHENSE_VERSION: "1.18.5"
+  # Same idea for the C# resolver: pin the .NET SDK channel and csharp-ls so
+  # numbers stay comparable. csharp-ls 0.25 targets .NET 10.
+  DOTNET_VERSION: "10.0.x"
+  CSHARP_LS_VERSION: "0.25.0"
 
 jobs:
   benchmark:
@@ -189,6 +193,10 @@ jobs:
               - "packages/graphlens-php/**"
               - "benchmarks/**"
               - ".github/workflows/bench.yml"
+            csharp:
+              - "packages/graphlens-csharp/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
 
   pr-benchmark:
     needs: pr-changes
@@ -248,6 +256,18 @@ jobs:
       - name: Install intelephense (semantic resolver)
         if: matrix.lang == 'php'
         run: npm install -g "intelephense@${INTELEPHENSE_VERSION}"
+
+      - uses: actions/setup-dotnet@v4
+        if: matrix.lang == 'csharp'
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install csharp-ls (Roslyn semantic resolver)
+        if: matrix.lang == 'csharp'
+        run: |
+          dotnet tool install --global csharp-ls \
+            --version "${CSHARP_LS_VERSION}"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: task install

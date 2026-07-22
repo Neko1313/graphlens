@@ -38,6 +38,7 @@ upstream tag for reproducibility:
 | Go | gin-gonic/gin · casdoor/casdoor · gohugoio/hugo |
 | Rust | BurntSushi/ripgrep · tokio-rs/axum · astral-sh/ruff |
 | PHP | laravel/framework |
+| C# | JamesNK/Newtonsoft.Json · App-vNext/Polly |
 
 Edit the file to add or swap projects; the workflow loops over every entry and
 the README table follows the manifest order. If a pinned `ref` has gone missing
@@ -69,8 +70,8 @@ python3 benchmarks/run_benchmarks.py render --results benchmarks/results --print
 
 Without Docker, install the adapters into the current environment
 (`uv sync --all-packages`) plus their toolchains (`ty`, Node, Go + `gopls`,
-Rust + `rust-analyzer`) and run the same `run_benchmarks.py` commands with your
-interpreter.
+Rust + `rust-analyzer`, PHP + `intelephense`, .NET + `csharp-ls`) and run the
+same `run_benchmarks.py` commands with your interpreter.
 
 ## How it runs in CI
 

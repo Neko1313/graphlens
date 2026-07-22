@@ -2,15 +2,15 @@
 #
 # graphlens CLI image — bundles the CLI and every language adapter together
 # with the toolchains their resolvers drive, so a project can run the full
-# analysis (Python/ty, TypeScript/Node, Go/gopls, Rust/rust-analyzer) in CI
-# without installing anything else:
+# analysis (Python/ty, TypeScript/Node, Go/gopls, Rust/rust-analyzer,
+# PHP/Intelephense, C#/csharp-ls) in CI without installing anything else:
 #
 #   docker run --rm -v "$PWD:/workspace" ghcr.io/neko1313/graphlens \
 #       analyze /workspace --output /workspace/graph.json
 #
 # The image is built from source, so it always matches the committed code
-# (the Go, Rust and PHP adapters are not published to PyPI — this image is
-# the supported way to get them).
+# (the Go, Rust, PHP and C# adapters are not published to PyPI — this image
+# is the supported way to get them).
 
 FROM python:3.13-slim
 
@@ -18,6 +18,8 @@ ARG GO_VERSION=1.26.0
 ARG GOPLS_VERSION=v0.22.0
 ARG NODE_MAJOR=20
 ARG INTELEPHENSE_VERSION=1.18.5
+ARG DOTNET_CHANNEL=10.0
+ARG CSHARP_LS_VERSION=0.25.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GOPATH=/root/go \
@@ -85,6 +87,27 @@ RUN apt-get update \
         --install-dir=/usr/local/bin --filename=composer \
     && composer --version
 
+# --- .NET SDK + csharp-ls (C# Roslyn semantic resolver) ---------------------
+# csharp-ls is the CsharpLspResolver engine: a Roslyn-based LSP server shipped
+# as a .NET global tool. Roslyn loads the project's compilation from source,
+# so the .NET SDK is required (installed via the official dotnet-install.sh —
+# no apt repo needed on slim). csharp-ls 0.25 targets .NET 10.
+# The binary is an LSP server that reads stdin, so invoking it (no
+# --version/--help) would hang the build — the smoke test lists the installed
+# tool instead. csharp-ls lands in /root/.dotnet/tools (on PATH below), where
+# the resolver's shutil.which("csharp-ls") finds it.
+ENV DOTNET_ROOT=/usr/local/dotnet \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    PATH="/usr/local/dotnet:/root/.dotnet/tools:${PATH}"
+RUN curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+    && chmod +x /tmp/dotnet-install.sh \
+    && /tmp/dotnet-install.sh --channel "${DOTNET_CHANNEL}" \
+        --install-dir "${DOTNET_ROOT}" \
+    && rm /tmp/dotnet-install.sh \
+    && dotnet tool install --global csharp-ls --version "${CSHARP_LS_VERSION}" \
+    && dotnet tool list --global | grep -q csharp-ls
+
 # --- uv (installer) ---------------------------------------------------------
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -97,6 +120,7 @@ RUN uv pip install --system --no-cache \
         /opt/graphlens/packages/graphlens-go \
         /opt/graphlens/packages/graphlens-rust \
         /opt/graphlens/packages/graphlens-php \
+        /opt/graphlens/packages/graphlens-csharp \
         /opt/graphlens/packages/graphlens-link \
         "/opt/graphlens/packages/graphlens-cli[neo4j,mcp]" \
     && graphlens --help >/dev/null
