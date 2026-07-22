@@ -35,4 +35,7 @@ flag_management:
     - name: php
       paths:
         - packages/graphlens-php/src/
+    - name: csharp
+      paths:
+        - packages/graphlens-csharp/src/
 
