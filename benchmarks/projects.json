@@ -69,14 +69,8 @@
       "repo": "https://github.com/JamesNK/Newtonsoft.Json",
       "ref": "13.0.3",
       "langs": ["csharp"],
-      "description": "JSON library (medium, dense intra-project references)"
-    },
-    {
-      "name": "App-vNext/Polly",
-      "repo": "https://github.com/App-vNext/Polly",
-      "ref": "8.5.0",
-      "langs": ["csharp"],
-      "description": "Resilience & transient-fault-handling library (medium)"
+      "prepare": ["dotnet", "restore", "Src/Newtonsoft.Json.sln"],
+      "description": "JSON library (medium; restored so Roslyn can resolve)"
     }
   ]
 }

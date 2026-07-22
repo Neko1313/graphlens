@@ -79,6 +79,19 @@ class _CsharpLspClient:  # pragma: no cover - integration transport
         self._next_id = 0
         self._opened_uris: set[str] = set()
         self._write_lock = threading.Lock()
+        # Per-query read budget. Kept short so an unresponsive server (e.g.
+        # a solution that never finished loading) is abandoned in seconds
+        # rather than blocking the whole analysis; override for huge
+        # solutions via $GRAPHLENS_CSHARP_LS_TIMEOUT.
+        try:
+            self._query_timeout = float(
+                os.environ.get("GRAPHLENS_CSHARP_LS_TIMEOUT", "30")
+            )
+        except ValueError:
+            self._query_timeout = 30.0
+        # False once a batch ends with the server having failed to answer
+        # every request — the resolver reads this to trip its circuit breaker.
+        self.responsive = True
         self._initialize(project_root)
 
     # ------------------------------------------------------------------
@@ -158,14 +171,16 @@ class _CsharpLspClient:  # pragma: no cover - integration transport
                 }
             )
 
-    def _wait_for_ready(self, budget: float = 180.0) -> None:
+    def _wait_for_ready(self, budget: float = 60.0) -> None:
         """
         Drain notifications until the workspace-load progress ends.
 
         Roslyn reports solution/project loading via ``$/progress`` with an
         ``end`` value. Waiting for it once up front means every subsequent
         definition query sees a fully-loaded compilation. Falls through on
-        timeout so a slow load degrades to best-effort rather than hanging.
+        timeout so a slow load degrades to best-effort rather than hanging —
+        the resolver's circuit breaker then abandons a server that turns out
+        never to answer instead of paying the read timeout on every root.
         """
         if self._proc.stdout is None or self._proc.poll() is not None:
             return
@@ -362,6 +377,7 @@ class _CsharpLspClient:  # pragma: no cover - integration transport
             return []
         results: list[dict | None] = [None] * len(queries)
         if self._proc.poll() is not None:
+            self.responsive = False
             return results
         open_msgs = self._build_open_messages([f for (f, _l, _c) in queries])
         if open_msgs:
@@ -372,6 +388,7 @@ class _CsharpLspClient:  # pragma: no cover - integration transport
             self._drain_while_writing(opener)
             opener.join(timeout=5)
             if self._proc.poll() is not None:
+                self.responsive = False
                 return results
         id2idx: dict[int, int] = {}
         reqs: list[dict] = []  # type: ignore[type-arg]
@@ -400,7 +417,7 @@ class _CsharpLspClient:  # pragma: no cover - integration transport
         writer.start()
         got = 0
         while got < len(queries):
-            msg = self._read_one(timeout=60.0)
+            msg = self._read_one(timeout=self._query_timeout)
             if msg is None:
                 break
             mid = msg.get("id")
@@ -413,6 +430,9 @@ class _CsharpLspClient:  # pragma: no cover - integration transport
                 results[idx] = self._first_location(msg.get("result"))
                 got += 1
         writer.join(timeout=5)
+        # A responsive server answers every request (with a location or null);
+        # a short read means it stopped answering — signal the breaker.
+        self.responsive = got == len(queries)
         return results
 
     def references(self, file: Path, line: int, col: int) -> list[dict]:  # type: ignore[type-arg]
@@ -436,15 +456,21 @@ class _CsharpLspClient:  # pragma: no cover - integration transport
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        if self._proc.poll() is not None:
-            return
-        try:
-            self._request("shutdown", None)
-            self._notify("exit", None)
-            self._proc.wait(timeout=5)
-        except Exception:
-            with contextlib.suppress(Exception):
-                self._proc.kill()
+        if self._proc.poll() is None:
+            try:
+                self._request("shutdown", None)
+                self._notify("exit", None)
+                self._proc.wait(timeout=5)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    self._proc.kill()
+        # Close the pipes so a dead process's buffered stdin is not flushed at
+        # GC time — that surfaces as a stray "Exception ignored in
+        # <BufferedWriter> ... BrokenPipeError" on stderr.
+        for stream in (self._proc.stdin, self._proc.stdout):
+            if stream is not None:
+                with contextlib.suppress(Exception):
+                    stream.close()
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
@@ -464,6 +490,12 @@ class CsharpLspResolver(SymbolResolver):
     If the server cannot be started, :meth:`prepare` logs a warning and all
     queries return ``None``/``[]`` — the structural graph is still produced.
     ``infer_type_at`` always returns ``None``.
+
+    A circuit breaker guards wall-clock: if the server fails to answer a batch
+    in full (a workspace that never finished loading, a crash), the resolver
+    stops querying it for the rest of the run and :meth:`status` reports
+    :data:`ResolverStatus.DEGRADED`, so one slow root cannot make every
+    subsequent root pay the read timeout.
     """
 
     _engine = "csharp-ls"
@@ -471,6 +503,9 @@ class CsharpLspResolver(SymbolResolver):
     def __init__(self) -> None:
         self._client: _CsharpLspClient | None = None
         self._root: Path | None = None
+        # Tripped when the server proves unresponsive mid-run; once set, later
+        # batches short-circuit instead of each paying the read timeout.
+        self._degraded = False
 
     def _spawn_argv(self) -> list[str]:
         binary = (
@@ -483,6 +518,7 @@ class CsharpLspResolver(SymbolResolver):
     def prepare(self, project_root: Path, files: list[Path]) -> None:  # noqa: ARG002
         self._shutdown_client()
         self._root = project_root
+        self._degraded = False
         try:
             self._client = _CsharpLspClient(
                 project_root, self._spawn_argv(), name=self._engine
@@ -519,13 +555,21 @@ class CsharpLspResolver(SymbolResolver):
         Overrides the per-query default: the resolution pass issues one query
         per occurrence, so batching writes them all up front and reads
         responses by id, collapsing N round-trips to the server's throughput.
+
+        Circuit breaker: once the server has failed to answer a batch in full
+        (a workspace that never finished loading, a crashed process), every
+        later batch short-circuits to ``None`` so a multi-root project does not
+        pay the read timeout once per root.
         """
-        if self._client is None:
+        if self._client is None or self._degraded:
             return [None] * len(queries)
         try:
             locs = self._client.definition_batch(queries)
         except Exception:
+            self._degraded = True
             return [None] * len(queries)
+        if not self._client.responsive:
+            self._degraded = True
         return [
             self._loc_to_ref(loc) if loc is not None else None for loc in locs
         ]
@@ -536,11 +580,11 @@ class CsharpLspResolver(SymbolResolver):
         return None
 
     def status(self) -> ResolverStatus:
-        return (
-            ResolverStatus.OK
-            if self._client is not None
-            else ResolverStatus.UNAVAILABLE
-        )
+        if self._client is None:
+            return ResolverStatus.UNAVAILABLE
+        if self._degraded:
+            return ResolverStatus.DEGRADED
+        return ResolverStatus.OK
 
     def references_to(
         self, file: Path, line: int, col: int

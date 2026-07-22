@@ -56,6 +56,7 @@ def _resolver(tmp_path: Path):
     r = CsharpLspResolver()
     r._root = tmp_path
     r._client = MagicMock(spec=_CsharpLspClient)
+    r._client.responsive = True
     return r
 
 
@@ -122,10 +123,31 @@ def test_resolve_all_batches_and_maps(tmp_path):
     assert out[1] is None
 
 
-def test_resolve_all_swallows_exception(tmp_path):
+def test_resolve_all_swallows_exception_and_trips_breaker(tmp_path):
     r = _resolver(tmp_path)
     r._client.definition_batch.side_effect = RuntimeError("boom")
     assert r.resolve_all([(tmp_path / "A.cs", 1, 1)]) == [None]
+    assert r._degraded is True
+
+
+def test_resolve_all_short_circuits_when_degraded(tmp_path):
+    r = _resolver(tmp_path)
+    r._degraded = True
+    out = r.resolve_all([(tmp_path / "A.cs", 1, 1), (tmp_path / "B.cs", 2, 2)])
+    assert out == [None, None]
+    r._client.definition_batch.assert_not_called()  # server left untouched
+
+
+def test_resolve_all_trips_breaker_when_server_unresponsive(tmp_path):
+    r = _resolver(tmp_path)
+    r._client.responsive = False
+    r._client.definition_batch.return_value = [None]
+    assert r.resolve_all([(tmp_path / "A.cs", 1, 1)]) == [None]
+    assert r._degraded is True
+    # A second batch is skipped entirely now that the breaker has tripped.
+    r._client.definition_batch.reset_mock()
+    assert r.resolve_all([(tmp_path / "B.cs", 2, 2)]) == [None]
+    r._client.definition_batch.assert_not_called()
 
 
 def test_references_to_occurrences(tmp_path):
@@ -203,6 +225,12 @@ def test_status_reflects_client_presence():
     assert r.status() is ResolverStatus.OK
 
 
+def test_status_degraded_when_breaker_tripped(tmp_path):
+    r = _resolver(tmp_path)
+    r._degraded = True
+    assert r.status() is ResolverStatus.DEGRADED
+
+
 def test_prepare_starts_client(tmp_path):
     r = CsharpLspResolver()
     with patch("graphlens_csharp._resolver._CsharpLspClient") as Mock:
@@ -210,6 +238,17 @@ def test_prepare_starts_client(tmp_path):
         r.prepare(tmp_path, [])
     Mock.assert_called_once_with(tmp_path, r._spawn_argv(), name=r._engine)
     assert r._root == tmp_path
+
+
+def test_prepare_resets_degraded(tmp_path):
+    r = CsharpLspResolver()
+    r._degraded = True
+    with patch(
+        "graphlens_csharp._resolver._CsharpLspClient",
+        return_value=MagicMock(spec=_CsharpLspClient),
+    ):
+        r.prepare(tmp_path, [])
+    assert r._degraded is False
 
 
 def test_prepare_shuts_down_previous_client(tmp_path):

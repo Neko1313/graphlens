@@ -27,6 +27,7 @@ import argparse
 import json
 import platform
 import resource
+import shlex
 import shutil
 import subprocess
 import sys
@@ -169,6 +170,45 @@ def git_clone(repo: str, ref: str, dest: Path) -> tuple[str, list[str]]:
     return head.stdout.strip(), notes
 
 
+def run_prepare(
+    command: object, dest: Path, timeout: float = 600.0
+) -> list[str]:
+    """
+    Run a per-project setup command (e.g. ``dotnet restore``) inside *dest*.
+
+    Some resolvers need a built/restored workspace to resolve at all — Roslyn
+    (csharp-ls) can only answer definition queries once a project's
+    dependencies are restored. A manifest entry may therefore carry a
+    ``prepare`` command (a string or an argv list) run after clone and before
+    analysis.
+
+    Best-effort by design: a missing tool, non-zero exit, or timeout only adds
+    a note and analysis proceeds — the resolver degrades rather than the whole
+    run failing. Returns notes to attach to the result.
+    """
+    argv = command if isinstance(command, list) else shlex.split(str(command))
+    argv = [str(a) for a in argv]
+    if not argv:
+        return []
+    label = " ".join(argv)
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(dest),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"prepare timed out ({label})"]
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"prepare failed ({label}): {exc}"]
+    if proc.returncode != 0:
+        return [f"prepare exited {proc.returncode} ({label})"]
+    return []
+
+
 def count_loc(files: list[Path]) -> tuple[int, int]:
     """Return ``(total_lines, file_count)`` for *files* that exist."""
     total = 0
@@ -216,6 +256,10 @@ def analyze_project(project: dict, workdir: Path) -> BenchResult:
         result.status = "error"
         result.error = f"clone failed: {exc}"
         return result
+
+    prepare = project.get("prepare")
+    if prepare:
+        result.notes.extend(run_prepare(prepare, dest))
 
     all_files: set[Path] = set()
     nodes = relations = 0
