@@ -35,23 +35,31 @@ jobs:
       - name: Clone dotnet/eShop
         run: git clone --depth 1 https://github.com/dotnet/eShop.git /tmp/eshop
 
-      - name: Restore the Linux-buildable project subset (eShop.Web.slnf)
+      - name: Pre-warm the NuGet cache via the known-good project subset
+        # Best-effort only: warms shared package downloads so scip-dotnet's own
+        # internal restore (below) mostly hits cache. A non-zero exit here is
+        # fine and expected -- eShop.Web.slnf is not why we run this.
         working-directory: /tmp/eshop
+        continue-on-error: true
         run: dotnet restore eShop.Web.slnf
 
-      - name: Run scip-dotnet against the same 21 projects (skip its own restore)
+      - name: Run scip-dotnet against the whole solution (its own restore)
+        # Pass eShop.slnx as ONE argument -> scip-dotnet calls
+        # MSBuildWorkspace.OpenSolutionAsync once (not OpenProjectAsync in a
+        # loop). Passing the 21 individual .csproj as separate positional args
+        # instead crashes with "'EventBusRabbitMQ' is already part of the
+        # workspace" -- ScipProjectIndexer.IndexProject has no try/catch around
+        # OpenProjectAsync, so a project pulled in transitively by an earlier
+        # argument's ProjectReference graph collides when passed again as its
+        # own top-level argument. OpenSolutionAsync does not have that failure
+        # mode: it walks the whole graph in one call. It also does not need
+        # --skip-dotnet-restore -- scip-dotnet's own Restore() never checks the
+        # restore process's exit code, so the 3 unrestorable MAUI projects
+        # (HybridApp, ClientApp, ClientApp.UnitTests) degrade to a warning
+        # rather than aborting the run.
         working-directory: /tmp/eshop
         run: |
-          mapfile -t projects < <(python3 -c "
-          import json
-          d = json.load(open('eShop.Web.slnf'))
-          for p in d['solution']['projects']:
-              print(p.replace('\\\\', '/'))
-          ")
-          echo "Indexing ${#projects[@]} projects: ${projects[*]}"
-          scip-dotnet index "${projects[@]}" \
-            --skip-dotnet-restore \
-            --output /tmp/eshop/index.scip
+          scip-dotnet index eShop.slnx --output /tmp/eshop/index.scip
           ls -la /tmp/eshop/index.scip
 
       - name: Analyze the produced SCIP index
