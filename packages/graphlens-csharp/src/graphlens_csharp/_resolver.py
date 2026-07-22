@@ -675,6 +675,23 @@ _SCIP_TIMEOUT_S = 1800.0
 _SCIP_SYMBOL_MIN_PARTS = 4
 
 
+def _find_solution(project_root: Path) -> Path | None:
+    """
+    Return a ``.slnx``/``.sln`` directly under ``project_root``, if any.
+
+    Not recursive: only the top level is checked, matching the scope of
+    scip-dotnet's own auto-discovery. ``.slnx`` is preferred when both exist
+    since it is the format the reference ``dotnet/eShop`` solution ships
+    (and the newer of the two); ties within one extension resolve
+    alphabetically for determinism.
+    """
+    for pattern in ("*.slnx", "*.sln"):
+        matches = sorted(project_root.glob(pattern))
+        if matches:
+            return matches[0]
+    return None
+
+
 def _scip_symbol_origin(symbol: str) -> str:
     """
     Classify an external SCIP symbol: ``stdlib``/``third_party``/``unknown``.
@@ -718,19 +735,26 @@ class CsharpScipResolver(SymbolResolver):
     the structural graph still stands and :meth:`status` reports
     ``UNAVAILABLE``.
 
-    No explicit solution/project path is passed: ``scip-dotnet`` is invoked
-    with ``--working-directory`` pointed at ``project_root`` and no
-    positional project arguments, so it falls back to its own top-level
-    auto-discovery (mirrors driving ``rust-analyzer scip <path>`` for Rust).
-    That discovery only looks at files directly under ``project_root`` (not
-    recursively) and, unlike csharp-ls, does not guard against being handed
-    the same project twice — if two of the files it discovers at that top
-    level reference each other (e.g. a stray ``.csproj`` sitting next to a
-    ``.sln`` that already includes it), the underlying Roslyn call raises an
-    unhandled exception. That failure is caught the same as any other and
-    degrades to ``UNAVAILABLE`` rather than propagating; it does not affect
-    the common case of one project or one covering solution at the root
-    (verified end to end against the 24-project ``dotnet/eShop`` solution).
+    scip-dotnet's own auto-discovery — ``--working-directory`` pointed at
+    ``project_root`` with no positional argument — does not handle a
+    directory holding many projects plus a covering solution: confirmed
+    against the 24-project ``dotnet/eShop`` solution, where it exits 1 with
+    no index and no stderr output. Passing the solution file explicitly
+    avoids that: it routes through a single
+    ``MSBuildWorkspace.OpenSolutionAsync`` call instead, which is what the
+    eShop validation actually exercised end to end. So :meth:`prepare` looks
+    for one ``*.slnx``/``*.sln`` directly under ``project_root`` (not
+    recursively) and passes it by name when found; otherwise it falls back
+    to the bare ``--working-directory`` form (scip-dotnet's documented
+    default for a single project, not independently verified here).
+
+    Never pass more than one project path: unlike csharp-ls, scip-dotnet
+    does not guard against being handed the same project twice, so two
+    paths that reference each other (a project pulled in transitively by
+    one argument's ``ProjectReference`` graph, then named again as its own
+    argument) crash the underlying Roslyn call with an unhandled exception.
+    That failure is caught the same as any other and degrades to
+    ``UNAVAILABLE`` rather than propagating.
 
     All methods return ``None``/``[]`` on any error — never raise.
     ``infer_type_at`` always returns ``None``.
@@ -787,34 +811,36 @@ class CsharpScipResolver(SymbolResolver):
     ) -> tuple[bytes | None, int | None]:
         """Run ``scip-dotnet index``; return ``(index bytes, exit code)``."""
         argv = self._spawn_argv()
+        stdout = tempfile.TemporaryFile()  # noqa: SIM115
         stderr = tempfile.TemporaryFile()  # noqa: SIM115
         fd, out_name = tempfile.mkstemp(suffix=".scip")
         os.close(fd)  # we only need the path; scip-dotnet writes the file
         out_path = Path(out_name)
+        solution = _find_solution(project_root)
+        target_args = (
+            [solution.name]
+            if solution is not None
+            else ["--working-directory", str(project_root)]
+        )
         try:
             proc = subprocess.run(
-                [
-                    *argv,
-                    "index",
-                    "--working-directory",
-                    str(project_root),
-                    "--output",
-                    str(out_path),
-                ],
+                [*argv, "index", *target_args, "--output", str(out_path)],
                 cwd=str(project_root),
-                stdout=subprocess.DEVNULL,
+                stdout=stdout,
                 stderr=stderr,
                 timeout=_SCIP_TIMEOUT_S,
                 check=False,
             )
             if out_path.is_file() and out_path.stat().st_size > 0:
                 return out_path.read_bytes(), proc.returncode
-            self._log_scip_failure(proc.returncode, stderr)
+            self._log_scip_failure(proc.returncode, stdout, stderr)
             return None, proc.returncode
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("scip-dotnet index did not complete: %s", exc)
             return None, None
         finally:
+            with contextlib.suppress(Exception):
+                stdout.close()
             with contextlib.suppress(Exception):
                 stderr.close()
             with contextlib.suppress(OSError):
@@ -822,20 +848,24 @@ class CsharpScipResolver(SymbolResolver):
 
     @staticmethod
     def _log_scip_failure(  # pragma: no cover - subprocess
-        returncode: int | None, stderr: IO[bytes]
+        returncode: int | None, stdout: IO[bytes], stderr: IO[bytes]
     ) -> None:
-        """Log the exit code and a stderr tail when no index was produced."""
-        tail = ""
-        with contextlib.suppress(Exception):
-            stderr.flush()
-            stderr.seek(0)
-            tail = stderr.read().decode("utf-8", errors="replace")
-            tail = tail[-2000:].strip()
+        """Log the exit code and stdout/stderr tails when no index came out."""
+
+        def _tail(stream: IO[bytes]) -> str:
+            with contextlib.suppress(Exception):
+                stream.flush()
+                stream.seek(0)
+                text = stream.read().decode("utf-8", errors="replace")
+                return text[-2000:].strip()
+            return ""
+
         logger.warning(
             "scip-dotnet index produced no index (exit %s); the solution "
-            "likely failed to load. stderr tail:\n%s",
+            "likely failed to load. stdout tail:\n%s\nstderr tail:\n%s",
             returncode,
-            tail or "<empty>",
+            _tail(stdout) or "<empty>",
+            _tail(stderr) or "<empty>",
         )
 
     def _ingest(self, data: bytes) -> None:

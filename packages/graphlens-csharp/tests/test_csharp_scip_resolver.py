@@ -10,7 +10,7 @@ from graphlens import ResolverStatus
 
 from graphlens_csharp import CsharpScipResolver
 from graphlens_csharp import _resolver as resolver_mod
-from graphlens_csharp._resolver import _scip_symbol_origin
+from graphlens_csharp._resolver import _find_solution, _scip_symbol_origin
 from graphlens_csharp._scip import SCIP_ROLE_DEFINITION, ScipOccurrence
 
 DEF = SCIP_ROLE_DEFINITION
@@ -83,6 +83,39 @@ def test_symbol_origin_unknown_own_package_miss():
 
 def test_symbol_origin_unknown_too_short():
     assert _scip_symbol_origin("scip-dotnet nuget") == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# _find_solution
+# ---------------------------------------------------------------------------
+
+
+def test_find_solution_none_when_absent(tmp_path):
+    assert _find_solution(tmp_path) is None
+
+
+def test_find_solution_finds_sln(tmp_path):
+    (tmp_path / "App.sln").write_text("")
+    assert _find_solution(tmp_path) == tmp_path / "App.sln"
+
+
+def test_find_solution_prefers_slnx_over_sln(tmp_path):
+    (tmp_path / "App.sln").write_text("")
+    (tmp_path / "App.slnx").write_text("")
+    assert _find_solution(tmp_path) == tmp_path / "App.slnx"
+
+
+def test_find_solution_alphabetical_tiebreak(tmp_path):
+    (tmp_path / "Zeta.sln").write_text("")
+    (tmp_path / "Alpha.sln").write_text("")
+    assert _find_solution(tmp_path) == tmp_path / "Alpha.sln"
+
+
+def test_find_solution_ignores_nested_files(tmp_path):
+    nested = tmp_path / "sub"
+    nested.mkdir()
+    (nested / "Nested.sln").write_text("")
+    assert _find_solution(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
