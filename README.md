@@ -48,22 +48,22 @@ every release — one cold run per project inside the published Docker image
 
 <!-- BENCH:START -->
 
-_Last run: **2026-07-22 22:51 UTC** · image `latest` · runner `Linux x86_64` · single cold run, indicative only._
+_Last run: **2026-07-24 08:00 UTC** · image `latest` · runner `Linux x86_64` · single cold run, indicative only._
 
 | Project | Lang | Commit | LOC | Files | Nodes | Relations | Time | Peak RSS | KLOC/s | Resolver | Resolved |
 |---|---|---|--:|--:|--:|--:|--:|--:|--:|:--|--:|
-| [apache/superset](https://github.com/apache/superset) | python | `c83fb2b` | 399 519 | 1 886 | 156 065 | 379 236 | 134.3s | 2,028 MB | 3.0 | ok | 84% of 281 667 (68s) |
-| [colinhacks/zod](https://github.com/colinhacks/zod) | typescript | `1fb56a5` | 74 194 | 404 | 8 623 | 24 557 | 21.8s | 647 MB | 3.4 | ok | 87% of 15 771 (18s) |
-| [gin-gonic/gin](https://github.com/gin-gonic/gin) | go | `73726dc` | 23 672 | 98 | 7 227 | 11 882 | 13.3s | 2,078 MB | 1.8 | ok | 100% of 8 920 (12s) |
-| [casdoor/casdoor](https://github.com/casdoor/casdoor) | go | `696bcf0` | 86 898 | 458 | 14 987 | 28 276 | 127.6s | 14,510 MB | 0.7 | ok | 100% of 19 421 (124s) |
-| [gohugoio/hugo](https://github.com/gohugoio/hugo) | go | `4d22555` | 224 821 | 897 | 34 809 | 72 225 | 106.9s | 9,660 MB | 2.1 | ok | 99% of 49 013 (100s) |
-| [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) | rust | `4649aa9` | 50 275 | 98 | 5 365 | 15 087 | 18.9s | 1,577 MB | 2.7 | ok | 99% of 11 435 (1s) |
-| [tokio-rs/axum](https://github.com/tokio-rs/axum) | rust | `c59208c` | 43 653 | 296 | 8 093 | 14 798 | 88.8s | 4,561 MB | 0.5 | ok | 88% of 9 662 (1s) |
-| [astral-sh/ruff](https://github.com/astral-sh/ruff) | rust | `6686f63` | 687 409 | 1 870 | 69 708 | 217 127 | 240.0s | 8,616 MB | 2.9 | ok | 100% of 155 276 (13s) |
-| [laravel/framework](https://github.com/laravel/framework) | php | `bd8aeb6` | 441 358 | 2 478 | 139 767 | 189 711 | 55.0s | 3,005 MB | 8.0 | ok | 56% of 191 435 (38s) |
-| [dotnet/eShop](https://github.com/dotnet/eShop) | csharp | `9b4f943` | 25 385 | 527 | 13 124 | 29 171 | 24.9s | 2,548 MB | 1.0 | ok | 80% of 26 629 (2s) |
-| [microsoft/reverse-proxy](https://github.com/microsoft/reverse-proxy) | csharp | `4154b6d` | 63 236 | 585 | 9 714 | 17 756 | 6.5s | 76 MB | 9.7 | unavailable | 0% of 72 295 (5s) |
-| **Total** | | | **2 120 420** | | **467 482** | | **837.9s** | | **2.5** | | **75% of 841 524** |
+| [apache/superset](https://github.com/apache/superset) | python | `c83fb2b` | 399 519 | 1 886 | 156 058 | 379 236 | 132.5s | 2,027 MB | 3.0 | ok | 84% of 281 667 (67s) |
+| [colinhacks/zod](https://github.com/colinhacks/zod) | typescript | `1fb56a5` | 74 194 | 404 | 8 623 | 24 557 | 21.2s | 644 MB | 3.5 | ok | 87% of 15 771 (18s) |
+| [gin-gonic/gin](https://github.com/gin-gonic/gin) | go | `73726dc` | 23 672 | 98 | 7 227 | 11 882 | 13.8s | 2,052 MB | 1.7 | ok | 100% of 8 920 (13s) |
+| [casdoor/casdoor](https://github.com/casdoor/casdoor) | go | `696bcf0` | 86 898 | 458 | 14 987 | 28 276 | 131.6s | 14,467 MB | 0.7 | ok | 100% of 19 421 (128s) |
+| [gohugoio/hugo](https://github.com/gohugoio/hugo) | go | `4d22555` | 224 821 | 897 | 34 809 | 72 225 | 109.7s | 9,420 MB | 2.0 | ok | 99% of 49 013 (103s) |
+| [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) | rust | `4649aa9` | 50 275 | 98 | 5 365 | 15 087 | 17.8s | 1,263 MB | 2.8 | ok | 99% of 11 435 (1s) |
+| [tokio-rs/axum](https://github.com/tokio-rs/axum) | rust | `c59208c` | 43 653 | 296 | 8 093 | 14 798 | 90.6s | 4,543 MB | 0.5 | ok | 88% of 9 662 (1s) |
+| [astral-sh/ruff](https://github.com/astral-sh/ruff) | rust | `6686f63` | 687 409 | 1 870 | 69 708 | 217 127 | 244.6s | 8,191 MB | 2.8 | ok | 100% of 155 276 (13s) |
+| [laravel/framework](https://github.com/laravel/framework) | php | `bd8aeb6` | 441 358 | 2 478 | 139 766 | 189 710 | 121.8s | 2,957 MB | 3.6 | ok | 56% of 191 435 (104s) |
+| [dotnet/eShop](https://github.com/dotnet/eShop) | csharp | `9b4f943` | 25 385 | 527 | 13 124 | 29 171 | 27.0s | 2,421 MB | 0.9 | ok | 80% of 26 629 (2s) |
+| [microsoft/reverse-proxy](https://github.com/microsoft/reverse-proxy) | csharp | `4154b6d` | 63 236 | 585 | 9 714 | 17 756 | 6.6s | 76 MB | 9.6 | unavailable | 0% of 72 295 (5s) |
+| **Total** | | | **2 120 420** | | **467 474** | | **917.1s** | | **2.3** | | **75% of 841 524** |
 
 > ℹ️ prepare exited 155 (dotnet restore YARP.slnx)
 
