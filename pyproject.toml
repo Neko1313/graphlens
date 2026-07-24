@@ -95,8 +95,11 @@ all = [
 [dependency-groups]
 lint = [
     "bandit>=1.9.3",
-    "ruff>=0.15.0",
-    "ty>=0.0.15",
+    # Capped: ruff 0.16 splits PLR0913 into PLR0913/PLR0917, so existing
+    # `# noqa: PLR0913` comments stop suppressing the new rule and ~330
+    # findings surface across the workspace. Bump once those are triaged.
+    "ruff>=0.15.0,<0.16.0",
+    "ty>=0.0.63",
 ]
 notebook = [
     "ipykernel>=6.30.0",
