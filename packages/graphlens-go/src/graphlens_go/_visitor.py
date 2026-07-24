@@ -73,6 +73,23 @@ def _called_name(fn: TSNode) -> TSNode | None:
     return None  # calling an expression result, e.g. funcs[0]()
 
 
+def _is_assignment_target(node: TSNode) -> bool:
+    """Return whether ``node`` is the LHS of an assignment or inc/dec op."""
+    parent = node.parent
+    if parent is None:
+        return False
+    if parent.type in ("inc_statement", "dec_statement"):
+        return True
+    if parent.type == "expression_list":
+        grandparent = parent.parent
+        return (
+            grandparent is not None
+            and grandparent.type == "assignment_statement"
+            and grandparent.child_by_field_name("left") == parent
+        )
+    return False
+
+
 def _type_name_node(type_node: TSNode | None) -> TSNode | None:
     """Return the type_identifier naming a (possibly qualified) type."""
     if type_node is None:
@@ -91,7 +108,8 @@ class OccurrenceRef:
 
     Coordinates are 1-based (matching :class:`Span`). Roles emitted today
     are ``call`` (CALLS), ``base`` (INHERITS_FROM, for embedded types), and
-    ``read`` (REFERENCES, for package-qualified / selector field access).
+    ``read``/``write`` (REFERENCES, for package-qualified / selector field
+    access).
     """
 
     role: str
@@ -190,11 +208,13 @@ class GoStructureExtractor:
 
     def _collect_references(self, scope: TSNode, enclosing_id: str) -> None:
         """
-        Record a ``read`` occurrence for each package/field selector use.
+        Record a ``read``/``write`` occurrence for each package/field selector.
 
         Skips selectors already recorded as a ``call`` occurrence by
         ``_collect_calls`` (the ``pkg.Foo`` in ``pkg.Foo()``) so a use-site
-        never yields two occurrences.
+        never yields two occurrences. A selector assigned to (``pkg.Var = 5``,
+        ``obj.Field += 1``, ``obj.Field++``) is recorded as ``write`` rather
+        than ``read``.
         """
         for node in _descendants(scope):
             if node.type != "selector_expression":
@@ -208,7 +228,8 @@ class GoStructureExtractor:
                 continue
             field = node.child_by_field_name("field")
             if field is not None:
-                self._add_occurrence("read", field, enclosing_id)
+                role = "write" if _is_assignment_target(node) else "read"
+                self._add_occurrence(role, field, enclosing_id)
 
     def _collect_bases(self, type_node: TSNode, enclosing_id: str) -> None:
         """Record a ``base`` occurrence for each embedded type."""

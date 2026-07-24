@@ -54,6 +54,7 @@ _ROLE_TO_KIND = {
     "call": RelationKind.CALLS,
     "base": RelationKind.INHERITS_FROM,
     "read": RelationKind.REFERENCES,
+    "write": RelationKind.REFERENCES,
 }
 
 logger = logging.getLogger("graphlens_go")
@@ -354,7 +355,7 @@ def _resolve_occurrences(  # noqa: PLR0913
         else:
             metrics.internal += 1
         metadata: dict[str, object] = {"span": occ.span}
-        if occ.role == "read":
+        if occ.role in ("read", "write"):
             metadata["access"] = occ.role
         graph.add_relation(
             Relation(

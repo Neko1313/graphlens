@@ -126,11 +126,27 @@ class RustStructureExtractor:
         self._dispatch(root)
 
     def _dispatch(self, node: TSNode) -> None:
-        """Dispatch each direct child of ``node`` to its handler."""
+        """
+        Dispatch each direct child of ``node`` to its handler.
+
+        ``impl`` blocks are dispatched in a second pass, after every other
+        item in this scope has been declared. Rust doesn't require a type
+        or trait to be declared before an ``impl`` that references it, so
+        without deferring, ``impl Trait for Type`` written above ``struct
+        Type`` / ``trait Trait`` in the same scope would silently miss the
+        ``base`` occurrence recorded in ``_collect_impl_trait`` (its type-id
+        lookup only finds already-declared nodes).
+        """
+        deferred_impls: list[TSNode] = []
         for child in node.children:
+            if child.type == "impl_item":
+                deferred_impls.append(child)
+                continue
             handler = getattr(self, f"_on_{child.type}", None)
             if handler is not None:
                 handler(child)
+        for child in deferred_impls:
+            self._on_impl_item(child)
 
     def _on_mod_item(self, node: TSNode) -> None:
         """

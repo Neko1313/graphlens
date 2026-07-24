@@ -362,6 +362,17 @@ def test_resolve_read_emits_references_with_access_metadata():
     assert refs[0].metadata["access"] == "read"
 
 
+def test_resolve_write_emits_references_with_access_metadata():
+    from graphlens import RelationKind
+
+    g = _resolution_graph()
+    ref = _ref("internal", file_path=Path("a.go"), line=5, col=6)
+    _resolve(g, _FakeResolver(ref), [_occ(role="write")])
+    refs = [r for r in g.relations if r.kind == RelationKind.REFERENCES]
+    assert len(refs) == 1
+    assert refs[0].metadata["access"] == "write"
+
+
 def test_resolve_external_creates_external_symbol():
     g = _resolution_graph()
     _resolve(g, _FakeResolver(_ref("stdlib")), [_occ()])
