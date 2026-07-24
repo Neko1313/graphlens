@@ -77,8 +77,8 @@
       "repo": "https://github.com/microsoft/reverse-proxy",
       "ref": "v2.3.0",
       "langs": ["csharp"],
-      "prepare": ["dotnet", "restore", "YARP.slnx"],
-      "description": "YARP: HTTP reverse proxy toolkit (medium, single net8.0 TFM verified via TFMs.props, one covering YARP.slnx at repo root — HTTP boundaries, a non-monorepo counterpoint to eShop's multi-root layout)"
+      "prepare": ["dotnet", "restore", "YARP.sln"],
+      "description": "YARP: HTTP reverse proxy toolkit (medium, single net8.0 TFM verified via TFMs.props, one covering YARP.sln at repo root — HTTP boundaries, a non-monorepo counterpoint to eShop's multi-root layout)"
     }
   ]
 }
