@@ -24,7 +24,8 @@ typescript = "graphlens_typescript:TypescriptAdapter"
 [dependency-groups]
 lint = [
     "bandit>=1.9.3",
-    "ruff>=0.15.0",
+    # Capped: see root pyproject.toml's lint group for why.
+    "ruff>=0.15.0,<0.16.0",
     "ty>=0.0.63",
 ]
 test = [
