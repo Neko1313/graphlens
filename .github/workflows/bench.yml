@@ -58,10 +58,10 @@ jobs:
       # `["python","php"]` — consumed directly by `benchmark`'s matrix.
       langs: ${{ steps.resolve.outputs.langs }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: github.event_name == 'push'
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         if: github.event_name == 'push'
         with:
@@ -218,7 +218,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout main
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
