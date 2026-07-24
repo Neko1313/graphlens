@@ -1,0 +1,23 @@
+{
+  "name": "apache/superset",
+  "langs": [
+    "python"
+  ],
+  "description": "Data exploration & visualization platform (Flask)",
+  "requested_ref": "6.1.0",
+  "commit": "c83fb2b",
+  "loc": 399519,
+  "files": 1886,
+  "nodes": 156063,
+  "relations": 379236,
+  "seconds": 142.825528066,
+  "peak_mem_mb": 2025.71484375,
+  "mem_source": "cgroup.v2",
+  "resolver_status": "ok",
+  "resolver_queries": 281667,
+  "resolver_resolved": 236490,
+  "resolver_seconds": 76.866,
+  "status": "ok",
+  "error": "",
+  "notes": []
+}

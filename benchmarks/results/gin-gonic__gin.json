@@ -1,0 +1,23 @@
+{
+  "name": "gin-gonic/gin",
+  "langs": [
+    "go"
+  ],
+  "description": "HTTP web framework (medium, HTTP boundaries)",
+  "requested_ref": "v1.12.0",
+  "commit": "73726dc",
+  "loc": 23672,
+  "files": 98,
+  "nodes": 7227,
+  "relations": 11882,
+  "seconds": 10.44038095000002,
+  "peak_mem_mb": 2119.62890625,
+  "mem_source": "cgroup.v2",
+  "resolver_status": "ok",
+  "resolver_queries": 8920,
+  "resolver_resolved": 8903,
+  "resolver_seconds": 9.725,
+  "status": "ok",
+  "error": "",
+  "notes": []
+}

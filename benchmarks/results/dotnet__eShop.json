@@ -1,0 +1,23 @@
+{
+  "name": "dotnet/eShop",
+  "langs": [
+    "csharp"
+  ],
+  "description": "Reference microservices app (21 of 24 projects are net10.0 and Linux-buildable per upstream's own CI filter, eShop.Web.slnf \u2014 3 MAUI mobile projects are skipped; a multi-root monorepo the resolver actually resolves, unlike Newtonsoft.Json's net20-net45 multi-targeting)",
+  "requested_ref": "main",
+  "commit": "9b4f943",
+  "loc": 25385,
+  "files": 527,
+  "nodes": 13124,
+  "relations": 29171,
+  "seconds": 25.565854166999998,
+  "peak_mem_mb": 2420.6171875,
+  "mem_source": "cgroup.v2",
+  "resolver_status": "ok",
+  "resolver_queries": 26629,
+  "resolver_resolved": 21370,
+  "resolver_seconds": 1.922,
+  "status": "ok",
+  "error": "",
+  "notes": []
+}

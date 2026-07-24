@@ -1,0 +1,23 @@
+{
+  "name": "casdoor/casdoor",
+  "langs": [
+    "go"
+  ],
+  "description": "Identity & access management / SSO (HTTP)",
+  "requested_ref": "v3.98.0",
+  "commit": "696bcf0",
+  "loc": 86898,
+  "files": 458,
+  "nodes": 14987,
+  "relations": 28276,
+  "seconds": 112.85425112299998,
+  "peak_mem_mb": 14636.984375,
+  "mem_source": "cgroup.v2",
+  "resolver_status": "ok",
+  "resolver_queries": 19421,
+  "resolver_resolved": 19421,
+  "resolver_seconds": 101.188,
+  "status": "ok",
+  "error": "",
+  "notes": []
+}

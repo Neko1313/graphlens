@@ -1,0 +1,25 @@
+{
+  "name": "microsoft/reverse-proxy",
+  "langs": [
+    "csharp"
+  ],
+  "description": "YARP: HTTP reverse proxy toolkit (medium, single net8.0 TFM verified via TFMs.props, one covering YARP.slnx at repo root \u2014 HTTP boundaries, a non-monorepo counterpoint to eShop's multi-root layout)",
+  "requested_ref": "v2.3.0",
+  "commit": "4154b6d",
+  "loc": 63236,
+  "files": 585,
+  "nodes": 9714,
+  "relations": 17756,
+  "seconds": 6.584670122000006,
+  "peak_mem_mb": 76.76953125,
+  "mem_source": "cgroup.v2",
+  "resolver_status": "unavailable",
+  "resolver_queries": 72295,
+  "resolver_resolved": 0,
+  "resolver_seconds": 4.653,
+  "status": "ok",
+  "error": "",
+  "notes": [
+    "prepare exited 155 (dotnet restore YARP.slnx)"
+  ]
+}

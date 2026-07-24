@@ -1,0 +1,23 @@
+{
+  "name": "colinhacks/zod",
+  "langs": [
+    "typescript"
+  ],
+  "description": "TypeScript-first schema validation library",
+  "requested_ref": "v4.4.3",
+  "commit": "1fb56a5",
+  "loc": 74194,
+  "files": 404,
+  "nodes": 8623,
+  "relations": 24557,
+  "seconds": 22.248773792999998,
+  "peak_mem_mb": 644.1015625,
+  "mem_source": "cgroup.v2",
+  "resolver_status": "ok",
+  "resolver_queries": 15771,
+  "resolver_resolved": 13674,
+  "resolver_seconds": 18.625,
+  "status": "ok",
+  "error": "",
+  "notes": []
+}
