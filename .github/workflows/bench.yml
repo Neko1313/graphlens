@@ -2,15 +2,22 @@ name: Benchmark
 
 # Two independent uses of the same load-benchmark script:
 #
-# - `benchmark` / `benchmark-render` (workflow_dispatch only): `benchmark` is
+# - `resolve-langs` / `benchmark` / `benchmark-render` (workflow_dispatch and
+#   push to main): `resolve-langs` decides which languages to benchmark this
+#   run — every language on a manual `workflow_dispatch`, or only the
+#   language(s) whose adapter changed since the previous commit on a `push`
+#   (via paths-filter, same idea as `pr-changes` below). `benchmark` is then
 #   a per-language matrix — N parallel jobs against the published image,
 #   each analysing only the projects tagged for its language — so one slow
-#   or hung language can no longer block or dominate a single giant job.
-#   `benchmark-render` then downloads every language's results, aggregates
-#   them, and refreshes the `## Benchmarks` block in README.md. Report-only
-#   — it never gates a release. No longer runs automatically on
-#   `release: published`; re-run it by hand from Actions after a release
-#   when you want README numbers refreshed.
+#   or hung language can no longer block or dominate a single giant job, and
+#   an unrelated commit no longer re-benchmarks every language.
+#   `benchmark-render` downloads the results of whichever languages just ran,
+#   overlays them onto the JSON result files already committed under
+#   `benchmarks/results/` (the persisted baseline for languages that did
+#   *not* run this time), re-renders the full `## Benchmarks` table in
+#   README.md from that merged set, and commits both. Report-only — it
+#   never gates a release. Re-run it by hand from Actions (workflow_dispatch)
+#   after a release when you want every language's numbers refreshed at once.
 # - `pr-changes` / `pr-benchmark` (pull_request): the same per-language
 #   matrix shape, run from the PR's own source (not the published image),
 #   that only benchmarks the language(s) whose adapter changed in the PR.
@@ -24,6 +31,8 @@ on:
         default: "latest"
   pull_request:
     branches: ["*"]
+  push:
+    branches: ["main"]
 
 permissions:
   contents: read
@@ -41,8 +50,61 @@ env:
   SCIP_DOTNET_VERSION: "0.2.14"
 
 jobs:
+  resolve-langs:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      # JSON array of language names to benchmark this run, e.g.
+      # `["python","php"]` — consumed directly by `benchmark`'s matrix.
+      langs: ${{ steps.resolve.outputs.langs }}
+    steps:
+      - uses: actions/checkout@v6
+        if: github.event_name == 'push'
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'push'
+        with:
+          filters: |
+            python:
+              - "packages/graphlens-python/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            typescript:
+              - "packages/graphlens-typescript/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            go:
+              - "packages/graphlens-go/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            rust:
+              - "packages/graphlens-rust/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            php:
+              - "packages/graphlens-php/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+            csharp:
+              - "packages/graphlens-csharp/**"
+              - "benchmarks/**"
+              - ".github/workflows/bench.yml"
+
+      - name: Resolve language list
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo 'langs=["python","typescript","go","rust","php","csharp"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'langs=${{ steps.filter.outputs.changes }}' >> "$GITHUB_OUTPUT"
+          fi
+
   benchmark:
-    if: github.event_name == 'workflow_dispatch'
+    needs: resolve-langs
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'push') &&
+      needs.resolve-langs.outputs.langs != '[]'
     permissions:
       contents: read
       packages: read
@@ -55,7 +117,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lang: [python, typescript, go, rust, php, csharp]
+        lang: ${{ fromJSON(needs.resolve-langs.outputs.langs) }}
     defaults:
       run:
         shell: bash
@@ -68,7 +130,7 @@ jobs:
       - name: Resolve image tag
         id: img
         run: |
-          tag="${{ github.event.inputs.image_tag }}"
+          tag="${{ github.event.inputs.image_tag || 'latest' }}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/neko1313/graphlens:${tag}" >> "$GITHUB_OUTPUT"
           echo "Benchmarking image ghcr.io/neko1313/graphlens:${tag} (${{ matrix.lang }})"
@@ -138,7 +200,10 @@ jobs:
     needs: benchmark
     # Aggregate + refresh README even if one language's matrix leg failed —
     # a missing language just omits its rows, per the report-only contract.
-    if: always() && github.event_name == 'workflow_dispatch'
+    # `needs.benchmark.result` is 'skipped' when resolve-langs found nothing
+    # to benchmark (e.g. a push that touched neither an adapter nor
+    # benchmarks/**) — nothing changed, so there's nothing to render either.
+    if: always() && needs.benchmark.result != 'skipped'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -162,10 +227,10 @@ jobs:
       - name: Resolve image tag
         id: img
         run: |
-          tag="${{ github.event.inputs.image_tag }}"
+          tag="${{ github.event.inputs.image_tag || 'latest' }}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
-      - name: Download per-language results
+      - name: Download this run's per-language results
         uses: actions/download-artifact@v6
         with:
           pattern: benchmark-results-*
@@ -174,6 +239,11 @@ jobs:
 
       - name: Render results
         run: |
+          # benchmarks/results/ now holds: the JSON already committed from
+          # the last full/partial run (checked out above, one file per
+          # project) overlaid with this run's fresh files for whichever
+          # languages resolve-langs picked — so unrun languages keep their
+          # last-known numbers instead of dropping out of the table.
           python3 benchmarks/run_benchmarks.py render \
             --results benchmarks/results \
             --readme README.md \
@@ -194,15 +264,15 @@ jobs:
           name: benchmark-results
           path: benchmarks/results/
 
-      - name: Commit refreshed README to main
+      - name: Commit refreshed README + results to main
         run: |
-          if git diff --quiet -- README.md; then
-            echo "README unchanged — nothing to commit"
+          if git diff --quiet -- README.md benchmarks/results; then
+            echo "README and results unchanged — nothing to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add README.md
+          git add README.md benchmarks/results
           git commit -m "docs(bench): refresh benchmark metrics for ${{ steps.img.outputs.tag }} [skip ci]"
           for i in 1 2 3 4; do
             if git push origin HEAD:main; then
