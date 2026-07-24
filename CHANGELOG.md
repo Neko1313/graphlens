@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1] - 2026-07-24
+### CI/CD
+
+- **bench**: ci(bench): split README-refreshing benchmark into a per-language matrix by @Neko1313 in [#38](https://github.com/Neko1313/graphlens/pull/38)
+- **bench**: ci(bench): only benchmark and refresh README for languages changed on push by @Neko1313 in [#40](https://github.com/Neko1313/graphlens/pull/40)
+
+### Documentation
+
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+
+### Miscellaneous
+
+- **deps**: chore(deps): incremental dependency upgrades across CI, Python and website by @Neko1313 in [#39](https://github.com/Neko1313/graphlens/pull/39)
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.8.0...v0.8.1
 ## [0.8.0] - 2026-07-22
 ### Documentation
 
