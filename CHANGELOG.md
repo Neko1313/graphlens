@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2] - 2026-07-24
+### Bug Fixes
+
+- **bench**: fix(bench): correct YARP solution file name in reverse-proxy manifest by @Neko1313 in [#41](https://github.com/Neko1313/graphlens/pull/41)
+- **adapters**: fix(adapters): build previously-missing TS type-refs, Rust implementors, Go references by @Neko1313 in [#42](https://github.com/Neko1313/graphlens/pull/42)
+
+### Documentation
+
+- **bench**: refresh benchmark metrics for latest [skip ci] by @github-actions[bot]
+
+
+
+
+**Full Changelog**: https://github.com/Neko1313/graphlens/compare/v0.8.1...v0.8.2
 ## [0.8.1] - 2026-07-24
 ### CI/CD
 
