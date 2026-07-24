@@ -80,8 +80,9 @@ class OccurrenceRef:
     """
     A use-site for the resolution pass to bind to a definition.
 
-    Coordinates are 1-based (matching :class:`Span`). The only role emitted
-    so far is ``call`` (CALLS); type/trait roles are staged separately.
+    Coordinates are 1-based (matching :class:`Span`). Roles emitted today
+    are ``call`` (CALLS) and ``base`` (INHERITS_FROM, for ``impl Trait for
+    Type``).
     """
 
     role: str
@@ -125,11 +126,27 @@ class RustStructureExtractor:
         self._dispatch(root)
 
     def _dispatch(self, node: TSNode) -> None:
-        """Dispatch each direct child of ``node`` to its handler."""
+        """
+        Dispatch each direct child of ``node`` to its handler.
+
+        ``impl`` blocks are dispatched in a second pass, after every other
+        item in this scope has been declared. Rust doesn't require a type
+        or trait to be declared before an ``impl`` that references it, so
+        without deferring, ``impl Trait for Type`` written above ``struct
+        Type`` / ``trait Trait`` in the same scope would silently miss the
+        ``base`` occurrence recorded in ``_collect_impl_trait`` (its type-id
+        lookup only finds already-declared nodes).
+        """
+        deferred_impls: list[TSNode] = []
         for child in node.children:
+            if child.type == "impl_item":
+                deferred_impls.append(child)
+                continue
             handler = getattr(self, f"_on_{child.type}", None)
             if handler is not None:
                 handler(child)
+        for child in deferred_impls:
+            self._on_impl_item(child)
 
     def _on_mod_item(self, node: TSNode) -> None:
         """
@@ -242,6 +259,7 @@ class RustStructureExtractor:
 
     def _on_impl_item(self, node: TSNode) -> None:
         type_name = self._impl_type_name(node)
+        self._collect_impl_trait(node, type_name)
         body = node.child_by_field_name("body")
         if body is None:
             return  # pragma: no cover
@@ -316,6 +334,32 @@ class RustStructureExtractor:
         self._graph.add_relation(
             Relation(imp_id, sym_id, RelationKind.RESOLVES_TO)
         )
+
+    def _collect_impl_trait(self, impl_node: TSNode, type_name: str) -> None:
+        """
+        Record ``impl Trait for Type`` as a ``base`` occurrence.
+
+        Rust declares this relationship on a separate ``impl`` item rather
+        than in the type's own declaration (unlike Python/Go base lists), so
+        the implementing type's own node id has to be recomputed here rather
+        than reused from ``_declare_named``.
+        """
+        trait_node = impl_node.child_by_field_name("trait")
+        if trait_node is None or not type_name:
+            return
+        idents = _walk_type(trait_node, "type_identifier")
+        trait_name_node = (
+            min(idents, key=lambda n: n.start_byte)
+            if idents
+            else trait_node
+        )
+        type_qname = f"{self._ctx.module_qname}::{type_name}"
+        type_id = make_node_id(
+            self._ctx.project_name, type_qname, NodeKind.CLASS.value
+        )
+        if type_id not in self._graph.nodes:
+            return
+        self._add_occurrence("base", trait_name_node, type_id)
 
     def _impl_type_name(self, impl_node: TSNode) -> str:
         type_node = impl_node.child_by_field_name("type")

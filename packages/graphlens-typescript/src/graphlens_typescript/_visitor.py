@@ -599,6 +599,61 @@ class TypescriptASTVisitor:
             self._visit_children(body)
         self._pop()
 
+    def _visit_property_signature(self, node: TSNode) -> None:
+        """Handle an interface field's type annotation (``x: T;``)."""
+        prop_node = next(
+            (c for c in node.children if c.type == "property_identifier"),
+            None,
+        )
+        if prop_node is None:
+            return
+        name = _node_text(prop_node)
+        qname = f"{self._scope_stack[-1]}.{name}"
+        attr_node = self._make_node(
+            NodeKind.ATTRIBUTE,
+            qname,
+            name,
+            node,
+            metadata={},
+            name_node=prop_node,
+        )
+        self._add_node_with_relation(attr_node, RelationKind.DECLARES)
+        type_ann = next(
+            (c for c in node.children if c.type == "type_annotation"), None
+        )
+        if type_ann is not None:
+            self._record_annotation(type_ann, attr_node.id)
+
+    def _visit_method_signature(self, node: TSNode) -> None:
+        """Handle an interface method signature (``foo(): T;``)."""
+        name_node = next(
+            (c for c in node.children if c.type in _METHOD_NAME_TYPES),
+            None,
+        )
+        if name_node is None:
+            return
+        name = _node_text(name_node)
+        qname = f"{self._scope_stack[-1]}.{name}"
+        method_node = self._make_node(
+            NodeKind.METHOD,
+            qname,
+            name,
+            node,
+            metadata={},
+            name_node=name_node,
+        )
+        self._add_node_with_relation(method_node, RelationKind.DECLARES)
+        type_ann = next(
+            (c for c in node.children if c.type == "type_annotation"), None
+        )
+        if type_ann is not None:
+            self._record_annotation(type_ann, method_node.id)
+        params_node = next(
+            (c for c in node.children if c.type == "formal_parameters"), None
+        )
+        if params_node:
+            self._extract_parameters(params_node, method_node.id, qname)
+
     # -------------------------------------------------------------------------
     # Function / method
     # -------------------------------------------------------------------------
@@ -708,9 +763,7 @@ class TypescriptASTVisitor:
 
             if value_node is not None:
                 # ---- Function / method path --------------------------------
-                self._handle_lexical_function(
-                    declarator, name_node, value_node
-                )
+                self._handle_lexical_function(name_node, value_node)
             else:
                 # ---- Plain variable / attribute path -----------------------
                 self._handle_lexical_variable(
@@ -719,7 +772,6 @@ class TypescriptASTVisitor:
 
     def _handle_lexical_function(
         self,
-        declarator: TSNode,
         name_node: TSNode,
         value_node: TSNode,
     ) -> None:
@@ -734,10 +786,13 @@ class TypescriptASTVisitor:
             else NodeKind.FUNCTION
         )
 
+        # The return-type annotation (`: Bar` in `(x: Foo): Bar => ...`) is a
+        # direct child of the arrow/function expression itself, not of the
+        # declarator — the declarator's own child is `identifier = value`.
         return_annotation: str | None = None
         type_ann = next(
             (
-                c for c in declarator.children
+                c for c in value_node.children
                 if c.type == "type_annotation"
             ),
             None,
@@ -758,6 +813,10 @@ class TypescriptASTVisitor:
             name_node=name_node,
         )
         self._add_node_with_relation(func_node, RelationKind.DECLARES)
+
+        # Record return type annotation occurrence
+        if type_ann is not None:
+            self._record_annotation(type_ann, func_node.id)
 
         self._push(qname, func_node.id, kind)
 
@@ -817,13 +876,30 @@ class TypescriptASTVisitor:
         # (file, function, or class) — not by the variable node itself.
         enclosing_id = self._container_stack[-1]
         self._record_occurrence("write", name_node, enclosing_id)
-        # Scan the initializer for reads/calls. The initializer is the named
-        # child after the '=' operator: the second named child of the
-        # declarator (the first named child is the binding identifier).
-        named_children = [c for c in declarator.children if c.is_named]
-        _init_index = 1
-        if len(named_children) > _init_index:
-            init_value = named_children[_init_index]
+
+        # Scan the type annotation, if any (`const x: T = value;`).
+        type_ann = next(
+            (c for c in declarator.children if c.type == "type_annotation"),
+            None,
+        )
+        if type_ann is not None:
+            self._record_annotation(type_ann, var_node.id)
+
+        # Scan the initializer for reads/calls. Filtering out the binding
+        # identifier and the (optional) type annotation instead of indexing
+        # by position — a type annotation shifts the initializer from the
+        # 2nd to the 3rd named child, and indexing by position alone would
+        # scan the type node instead of the real initializer.
+        init_value = next(
+            (
+                c for c in declarator.children
+                if c.is_named
+                and c is not name_node
+                and c.type != "type_annotation"
+            ),
+            None,
+        )
+        if init_value is not None:
             self._scan_value(init_value, enclosing_id)
 
     # -------------------------------------------------------------------------

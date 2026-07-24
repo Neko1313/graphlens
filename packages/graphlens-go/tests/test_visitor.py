@@ -185,6 +185,69 @@ def test_call_on_expression_result_is_skipped():
     assert ex.occurrences == []
 
 
+def test_selector_read_emits_reference_occurrence():
+    src = "package pkg\nfunc F() {\n  x := pkg.Var\n  _ = x\n}\n"
+    _g, ex = _extractor(src)
+    reads = [o for o in ex.occurrences if o.role == "read"]
+    assert len(reads) == 1
+    line = src.splitlines()[reads[0].line - 1]
+    assert line[reads[0].col - 1 :].startswith("Var")
+
+
+def test_selector_read_in_method_attributed_to_method():
+    g, ex = _extractor("package pkg\nfunc (r T) M() {\n  _ = r.Field\n}\n")
+    reads = [o for o in ex.occurrences if o.role == "read"]
+    assert len(reads) == 1
+    method = next(n for n in g.nodes.values() if n.kind == NodeKind.METHOD)
+    assert reads[0].enclosing_id == method.id
+
+
+def test_selector_call_not_double_counted_as_read():
+    # `pkg.Bar()` yields exactly one `call` occurrence, never also a `read`.
+    src = "package pkg\nfunc F() {\n  pkg.Bar()\n}\n"
+    _g, ex = _extractor(src)
+    assert len(ex.occurrences) == 1
+    assert ex.occurrences[0].role == "call"
+
+
+def test_selector_assignment_target_emits_write_not_read():
+    src = "package pkg\nfunc F() {\n  pkg.Var = 5\n}\n"
+    _g, ex = _extractor(src)
+    assert len(ex.occurrences) == 1
+    assert ex.occurrences[0].role == "write"
+
+
+def test_selector_augmented_assignment_target_emits_write():
+    src = "package pkg\nfunc F() {\n  pkg.Var += 1\n}\n"
+    _g, ex = _extractor(src)
+    assert len(ex.occurrences) == 1
+    assert ex.occurrences[0].role == "write"
+
+
+def test_selector_inc_dec_target_emits_write():
+    src = "package pkg\nfunc F() {\n  pkg.Var++\n}\n"
+    _g, ex = _extractor(src)
+    assert len(ex.occurrences) == 1
+    assert ex.occurrences[0].role == "write"
+
+
+def test_selector_on_rhs_of_assignment_still_emits_read():
+    # Only the LHS target is a `write`; a selector on the RHS is a `read`.
+    src = "package pkg\nfunc F() {\n  var x int\n  x = pkg.Var\n  _ = x\n}\n"
+    _g, ex = _extractor(src)
+    reads = [o for o in ex.occurrences if o.role == "read"]
+    writes = [o for o in ex.occurrences if o.role == "write"]
+    assert len(reads) == 1
+    assert writes == []
+
+
+def test_multi_assignment_selector_target_emits_write():
+    src = "package pkg\nfunc F() {\n  var a int\n  a, pkg.Var = 1, 2\n  _ = a\n}\n"
+    _g, ex = _extractor(src)
+    writes = [o for o in ex.occurrences if o.role == "write"]
+    assert len(writes) == 1
+
+
 def test_function_without_calls_has_no_occurrences():
     _g, ex = _extractor("package pkg\nfunc F() { x := 1; _ = x }\n")
     assert ex.occurrences == []

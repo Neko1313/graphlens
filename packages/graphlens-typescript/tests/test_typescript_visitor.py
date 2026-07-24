@@ -636,6 +636,58 @@ class TestBaseAndAnnotationOccurrences:
         anns = [o for o in v.occurrences if o.role == "annotation"]
         assert len(anns) >= 1
 
+    def test_interface_property_signature_annotation_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        graph, v = parse_and_visit_visitor(
+            "interface Foo { bar: SomeType; }"
+        )
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
+        attrs = nodes_of_kind(graph, NodeKind.ATTRIBUTE)
+        assert any(a.name == "bar" for a in attrs)
+
+    def test_interface_method_signature_annotation_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        graph, v = parse_and_visit_visitor(
+            "interface Foo { baz(): OtherType; }"
+        )
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
+        methods = nodes_of_kind(graph, NodeKind.METHOD)
+        assert any(m.name == "baz" for m in methods)
+
+    def test_arrow_function_return_type_annotation_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor(
+            "const f = (x: Foo): Bar => { return x; };"
+        )
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 2  # param annotation (Foo) + return type (Bar)
+
+    def test_variable_type_annotation_occurrence(self):
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("const x: Conversation = bar();")
+        anns = [o for o in v.occurrences if o.role == "annotation"]
+        assert len(anns) >= 1
+        calls = [o for o in v.occurrences if o.role == "call"]
+        assert len(calls) == 1
+
+    def test_annotated_variable_still_scans_initializer_call(self):
+        # Regression: a type annotation on the declarator used to shift the
+        # initializer scan onto the type node itself, silently dropping the
+        # call/read occurrences inside the real initializer expression.
+        from conftest import parse_and_visit_visitor
+        _, v = parse_and_visit_visitor("const x = bar();")
+        _, v_annotated = parse_and_visit_visitor(
+            "const x: Foo = bar();"
+        )
+        calls = [o for o in v.occurrences if o.role == "call"]
+        calls_annotated = [
+            o for o in v_annotated.occurrences if o.role == "call"
+        ]
+        assert len(calls) == 1
+        assert len(calls_annotated) == 1
+
     def test_no_inherits_from_relation(self):
         graph, _ = parse_and_visit("class Sub extends Base {}")
         inherits = [
