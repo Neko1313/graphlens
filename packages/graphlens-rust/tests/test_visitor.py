@@ -76,6 +76,8 @@ def test_impl_generic_type():
     assert any("S.run" in n.qualified_name for n in methods)
 
 
+
+
 def test_use_imports_create_external_symbols():
     g = _extract("use std::fmt;\n")
     assert "std::fmt" in _names(g, NodeKind.IMPORT)
@@ -175,6 +177,25 @@ def test_call_on_expression_result_is_skipped():
 def test_function_without_calls_has_no_occurrences():
     _g, ex = _extractor("fn f() { let x = 1; }\n")
     assert ex.occurrences == []
+
+
+def test_impl_trait_for_type_emits_base_occurrence():
+    g, ex = _extractor(
+        "struct S{} trait T{ fn run(&self); } impl T for S { fn run(&self){} }\n"
+    )
+    struct_id = next(
+        n.id
+        for n in g.nodes.values()
+        if n.name == "S" and n.kind == NodeKind.CLASS
+    )
+    base_occs = [o for o in ex.occurrences if o.role == "base"]
+    assert len(base_occs) == 1
+    assert base_occs[0].enclosing_id == struct_id
+
+
+def test_impl_inherent_no_trait_emits_no_base_occurrence():
+    _g, ex = _extractor("struct S{} impl S { fn run(&self){} }\n")
+    assert [o for o in ex.occurrences if o.role == "base"] == []
 
 
 def test_shared_external_symbol_reused_across_files():

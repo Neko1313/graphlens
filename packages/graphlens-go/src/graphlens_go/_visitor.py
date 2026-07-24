@@ -89,8 +89,9 @@ class OccurrenceRef:
     """
     A use-site for the resolution pass to bind to a definition.
 
-    Coordinates are 1-based (matching :class:`Span`). The only role emitted
-    so far is ``call`` (CALLS); type/embedding roles are staged separately.
+    Coordinates are 1-based (matching :class:`Span`). Roles emitted today
+    are ``call`` (CALLS), ``base`` (INHERITS_FROM, for embedded types), and
+    ``read`` (REFERENCES, for package-qualified / selector field access).
     """
 
     role: str
@@ -187,6 +188,28 @@ class GoStructureExtractor:
             if name_node is not None:
                 self._add_occurrence("call", name_node, enclosing_id)
 
+    def _collect_references(self, scope: TSNode, enclosing_id: str) -> None:
+        """
+        Record a ``read`` occurrence for each package/field selector use.
+
+        Skips selectors already recorded as a ``call`` occurrence by
+        ``_collect_calls`` (the ``pkg.Foo`` in ``pkg.Foo()``) so a use-site
+        never yields two occurrences.
+        """
+        for node in _descendants(scope):
+            if node.type != "selector_expression":
+                continue
+            parent = node.parent
+            if (
+                parent is not None
+                and parent.type == "call_expression"
+                and parent.child_by_field_name("function") == node
+            ):
+                continue
+            field = node.child_by_field_name("field")
+            if field is not None:
+                self._add_occurrence("read", field, enclosing_id)
+
     def _collect_bases(self, type_node: TSNode, enclosing_id: str) -> None:
         """Record a ``base`` occurrence for each embedded type."""
         if type_node.type == "struct_type":
@@ -235,6 +258,7 @@ class GoStructureExtractor:
             qname, _text(name_node), NodeKind.FUNCTION, node, name_node
         )
         self._collect_calls(node, node_id)
+        self._collect_references(node, node_id)
 
     def _on_method_declaration(self, node: TSNode) -> None:
         name_node = node.child_by_field_name("name")
@@ -247,6 +271,7 @@ class GoStructureExtractor:
             qname, _text(name_node), NodeKind.METHOD, node, name_node
         )
         self._collect_calls(node, node_id)
+        self._collect_references(node, node_id)
 
     def _on_type_declaration(self, node: TSNode) -> None:
         for spec in node.children:
