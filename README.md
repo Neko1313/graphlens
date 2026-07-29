@@ -1,3 +1,34 @@
+> [!IMPORTANT]
+> **graphlens is archived and no longer maintained. Its successor is
+> [callix](https://github.com/Callix-Tools/callix).**
+>
+> callix is a full rewrite of this project by the same author, with the
+> analysis moved to Rust. What it changes:
+>
+> - **One install, no assembly.** graphlens asks you to bring the language
+>   servers yourself — `ty`, `gopls`, `rust-analyzer`, `intelephense` — and to
+>   keep them on `PATH` and in step with each other. callix links the Python
+>   and TypeScript type checkers *into the module*, standard-library stubs
+>   included, so `pip install callix` is the whole setup. Go and Rust still use
+>   the toolchain your project already has, but no separate language server.
+> - **Faster.** 5.2× on apache/superset, 3.3× on colinhacks/zod, 2.6× on
+>   gin-gonic/gin. The resolution phase in particular, which used to be
+>   JSON-RPC round-trips, dropped from 39.1s to 8.9s on superset.
+> - **Lighter.** Resolving Rust no longer keeps an interactive `rust-analyzer`
+>   server resident — a batch SCIP index is written once and read statically,
+>   instead of a process that grows into tens of gigabytes on a large
+>   workspace.
+> - **Same graph.** The same 14 node kinds, 12 relation kinds, deterministic
+>   IDs and serialization format: a graph written here reads there and back.
+>   Structural parity is verified by diffing both implementations on superset,
+>   zod, gin, ripgrep and ruff.
+>
+> Not carried over: the CLI, the MCP server, the Neo4j backend, the HTML
+> visualization, and the PHP and C# adapters. If you depend on those, this
+> repository stays readable at its final state.
+>
+> → [Migration notes](https://callix-tools.github.io/callix/docs/project/migrating-from-graphlens)
+
 <div align="center">
 
   <h1>graphlens</h1>
