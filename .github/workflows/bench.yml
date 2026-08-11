@@ -136,7 +136,7 @@ jobs:
           echo "Benchmarking image ghcr.io/neko1313/graphlens:${tag} (${{ matrix.lang }})"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
